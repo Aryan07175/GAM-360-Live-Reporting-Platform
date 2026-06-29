@@ -6,23 +6,34 @@ for Claude-powered summarization and reporting.
 
 ## Architecture
 
-```
-GAM 360 SOAP API
-    │  (ReportService → runReportJob → poll → download CSV)
-    ▼
-extractor/gam_extractor.py   ← pulls revenue per app per day
-    │
-    ▼
-database/db.py               ← saves to PostgreSQL / SQLite
-    │
-    ▼
-mcp_server/server.py         ← MCP tools Claude calls
-    │
-    ▼
-Claude (summarize, report, alert)
-    │
-    ▼
-reports/                     ← saved daily summaries
+```mermaid
+graph TD
+    GAM[GAM 360 SOAP API] -->|Downloads Report CSV| Extractor(extractor/gam_extractor.py)
+    Extractor -->|Saves raw metrics & data| DB[(Database: db.py)]
+    
+    subgraph Daily Cron Job
+    Cron[run_pipeline.py] -->|1. Triggers Pull| Extractor
+    Cron -->|2. Queries DB| DB
+    Cron -->|3. Analyzes Anomalies| DB
+    Cron -->|4. Writes Report File| Reports[/reports/*.md/]
+    Cron -.->|5. Sends Alert| Slack[Slack Webhook]
+    end
+    
+    subgraph AI Integration via MCP
+    Claude[Claude AI Assistant] -->|Queries Data via MCP| MCPServer(mcp_server/server.py)
+    MCPServer -->|Runs SQL / Fetch| DB
+    MCPServer -->|Can trigger fresh pull| Extractor
+    end
+
+    classDef api fill:#4285F4,stroke:#333,stroke-width:2px,color:white;
+    classDef script fill:#f4b400,stroke:#333,stroke-width:2px,color:black;
+    classDef db fill:#0f9d58,stroke:#333,stroke-width:2px,color:white;
+    classDef ai fill:#db4437,stroke:#333,stroke-width:2px,color:white;
+    
+    class GAM api;
+    class Extractor,Cron script;
+    class DB db;
+    class Claude,MCPServer ai;
 ```
 
 ## Quick start
