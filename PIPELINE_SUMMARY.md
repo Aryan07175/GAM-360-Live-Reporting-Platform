@@ -2,6 +2,38 @@
 
 This document serves as a high-level overview of the pipeline's architecture and how its different components work together.
 
+## Architecture Diagram
+
+```mermaid
+graph TD
+    GAM[GAM 360 SOAP API] -->|Downloads Report CSV| Extractor(extractor/gam_extractor.py)
+    Extractor -->|Saves raw metrics & data| DB[(Database: db.py)]
+    
+    subgap1[Daily Cron Job]
+    Cron[run_pipeline.py] -->|1. Triggers Pull| Extractor
+    Cron -->|2. Queries DB| DB
+    Cron -->|3. Analyzes Anomalies| DB
+    Cron -->|4. Writes Report File| Reports[/reports/*.md/]
+    Cron -.->|5. Sends Alert| Slack[Slack Webhook]
+    end
+    
+    subgap2[AI Integration via MCP]
+    Claude[Claude AI Assistant] -->|Queries Data via MCP| MCPServer(mcp_server/server.py)
+    MCPServer -->|Runs SQL / Fetch| DB
+    MCPServer -->|Can trigger fresh pull| Extractor
+    end
+
+    classDef api fill:#4285F4,stroke:#333,stroke-width:2px,color:white;
+    classDef script fill:#f4b400,stroke:#333,stroke-width:2px,color:black;
+    classDef db fill:#0f9d58,stroke:#333,stroke-width:2px,color:white;
+    classDef ai fill:#db4437,stroke:#333,stroke-width:2px,color:white;
+    
+    class GAM api;
+    class Extractor,Cron script;
+    class DB db;
+    class Claude,MCPServer ai;
+```
+
 ## 1. The Extractor (`extractor/gam_extractor.py`)
 - **Purpose:** Connects to the GAM 360 SOAP API to run report jobs.
 - **Functionality:** It pulls down yesterday's ad revenue, impressions, eCPM, and fill rates. The data is broken down by individual mobile apps, which are represented as Ad Units in GAM.
