@@ -9,7 +9,7 @@ graph TD
     GAM[GAM 360 SOAP API] -->|Downloads Report CSV| Extractor(extractor/gam_extractor.py)
     Extractor -->|Saves raw metrics & data| DB[(Database: db.py)]
     
-    subgap1[Daily Cron Job]
+    subgraph Daily Cron Job
     Cron[run_pipeline.py] -->|1. Triggers Pull| Extractor
     Cron -->|2. Queries DB| DB
     Cron -->|3. Analyzes Anomalies| DB
@@ -17,7 +17,7 @@ graph TD
     Cron -.->|5. Sends Alert| Slack[Slack Webhook]
     end
     
-    subgap2[AI Integration via MCP]
+    subgraph AI Integration via MCP
     Claude[Claude AI Assistant] -->|Queries Data via MCP| MCPServer(mcp_server/server.py)
     MCPServer -->|Runs SQL / Fetch| DB
     MCPServer -->|Can trigger fresh pull| Extractor
