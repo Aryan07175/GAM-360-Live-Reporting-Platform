@@ -1,5 +1,7 @@
 # GAM 360 Revenue Pipeline — SOAP API + MCP
 
+**🚀 Live Dashboard:** [https://dashboard-np05vmznu-aryan07175s-projects.vercel.app](https://dashboard-np05vmznu-aryan07175s-projects.vercel.app)
+
 Full pipeline to extract revenue data from Google Ad Manager 360
 using the SOAP API, store it in a database, and expose it via MCP
 for Claude-powered summarization and reporting.
