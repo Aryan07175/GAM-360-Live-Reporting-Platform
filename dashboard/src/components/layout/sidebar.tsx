@@ -10,7 +10,8 @@ import {
   AlertTriangle, 
   Settings, 
   TrendingUp, 
-  History
+  History,
+  Bell
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +21,7 @@ const navItems = [
   { name: "Revenue Analytics", href: "/revenue", icon: BarChart3 },
   { name: "Trend Analysis", href: "/trends", icon: TrendingUp },
   { name: "Anomaly Detection", href: "/anomalies", icon: AlertTriangle },
+  { name: "Alerts", href: "/alerts", icon: Bell },
   { name: "Reports", href: "/reports", icon: FileText },
   { name: "Report History", href: "/history", icon: History },
   { name: "Settings", href: "/settings", icon: Settings },
@@ -57,7 +59,10 @@ export function Sidebar() {
                   isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"
                 )}
               />
-              {item.name}
+              <span className="flex-1">{item.name}</span>
+              {item.name === "Alerts" && (
+                <span className="h-1.5 w-1.5 rounded-full bg-red-500 mr-1" />
+              )}
             </Link>
           );
         })}

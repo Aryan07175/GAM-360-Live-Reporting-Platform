@@ -48,3 +48,12 @@ export interface ReportHistoryItem {
   status: "Queued" | "Running" | "Completed" | "Failed";
   rows: number;
 }
+
+export interface SystemAlert {
+  id: string;
+  title: string;
+  timeString: string;
+  metric: string;
+  severity: "critical" | "warning" | "info";
+  app_name: string;
+}

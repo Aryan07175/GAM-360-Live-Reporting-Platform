@@ -7,6 +7,7 @@ import {
   TrendDataPoint,
   Anomaly,
   ReportHistoryItem,
+  SystemAlert,
 } from "../types";
 
 // Connect to Neon PostgreSQL
@@ -303,4 +304,52 @@ function getFallbackReportHistory(): ReportHistoryItem[] {
       rows: 2450,
     },
   ];
+}
+
+export async function getSystemAlerts(date: string): Promise<SystemAlert[]> {
+  const alerts: SystemAlert[] = [];
+  try {
+    const apps = await getRevenueByApp(date);
+    let idCounter = 1;
+
+    for (const app of apps) {
+      if (app.impressions < 1000) {
+        alerts.push({
+          id: `alert-${idCounter++}`,
+          title: `Low impression volume detected in ${app.ad_unit_name}`,
+          timeString: "Detected today",
+          metric: "Impressions",
+          severity: "warning",
+          app_name: app.ad_unit_name,
+        });
+      }
+      
+      if (app.revenue_usd < 0.5) {
+        alerts.push({
+          id: `alert-${idCounter++}`,
+          title: `Revenue dropped below $0.50 in ${app.ad_unit_name}`,
+          timeString: "Detected today",
+          metric: "Revenue",
+          severity: "critical",
+          app_name: app.ad_unit_name,
+        });
+      }
+
+      if (app.fill_rate_pct !== null && app.fill_rate_pct < 50) {
+        alerts.push({
+          id: `alert-${idCounter++}`,
+          title: `Fill rate below 50% in ${app.ad_unit_name}`,
+          timeString: "Detected today",
+          metric: "Fill Rate",
+          severity: "critical",
+          app_name: app.ad_unit_name,
+        });
+      }
+    }
+
+    return alerts;
+  } catch (error) {
+    console.error("Error generating system alerts:", error);
+    return [];
+  }
 }

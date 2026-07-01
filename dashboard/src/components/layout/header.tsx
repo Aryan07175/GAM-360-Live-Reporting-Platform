@@ -1,7 +1,8 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { Moon, Sun, User, Calendar as CalendarIcon, RefreshCw, Download, Database } from "lucide-react";
+import { Moon, Sun, User, Calendar as CalendarIcon, RefreshCw, Download, Database, Bell } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { Button } from "@/components/ui/button";
 
@@ -12,6 +13,7 @@ interface HeaderProps {
 
 export function Header({ dataDate }: HeaderProps) {
   const { setTheme, theme } = useTheme();
+  const router = useRouter();
 
   const displayDate = dataDate
     ? format(parseISO(dataDate), "MMM dd, yyyy")
@@ -61,6 +63,17 @@ export function Header({ dataDate }: HeaderProps) {
           <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
           <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
           <span className="sr-only">Toggle theme</span>
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative h-9 w-9 rounded-full"
+          onClick={() => router.push("/alerts")}
+        >
+          <Bell className="h-[1.2rem] w-[1.2rem]" />
+          <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-red-600 border-2 border-background"></span>
+          <span className="sr-only">View alerts</span>
         </Button>
 
         <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full bg-muted">
