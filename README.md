@@ -87,13 +87,13 @@ graph TD
     Cron[run_pipeline.py] -->|1. Triggers Pull| Extractor
     Cron -->|2. Queries DB| DB
     Cron -->|3. Analyzes Anomalies| DB
-    Cron -->|4. Writes Report File| Reports[/reports/*.md/]
+    Cron -->|4. Writes Report File| Reports["reports/*.md"]
     Cron -.->|5. Sends Alert| Slack[Slack Webhook]
     end
 
     subgraph Next.js Dashboard on Vercel
     Dashboard[Live Dashboard] -->|Server Actions| DB
-    Dashboard -->|CSV Export| ExportAPI[/api/export]
+    Dashboard -->|CSV Export| ExportAPI["/api/export"]
     end
     
     subgraph AI Integration via MCP
