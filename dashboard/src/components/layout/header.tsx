@@ -4,17 +4,20 @@ import { useState } from "react";
 import { useTheme } from "next-themes";
 import {
   Moon, Sun, User, Calendar as CalendarIcon, RefreshCw,
-  Download, Database, Bell, ChevronLeft, ChevronRight,
+  Download, Database, Bell, ChevronLeft, ChevronRight, AlertCircle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { format, parseISO, subDays, addDays } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { useDateContext } from "@/contexts/DateContext";
 
 export function Header() {
   const { setTheme, theme } = useTheme();
   const router = useRouter();
-  const { selectedDate, latestDate, dateLoading, setSelectedDate, refresh, refreshing } = useDateContext();
+  const {
+    selectedDate, latestDate, availableDates, dateLoading,
+    setSelectedDate, refresh, refreshing,
+  } = useDateContext();
   const [showPicker, setShowPicker] = useState(false);
 
   const displayDate = selectedDate
@@ -24,22 +27,51 @@ export function Header() {
     : format(new Date(), "MMM dd, yyyy");
 
   const isLiveDate = selectedDate === latestDate && !!latestDate;
+  const hasData = selectedDate ? availableDates.includes(selectedDate) : false;
 
+  // Navigate to the previous date that actually has data
   const goToPrevDay = () => {
-    if (!selectedDate) return;
-    setSelectedDate(format(subDays(parseISO(selectedDate), 1), "yyyy-MM-dd"));
-  };
-
-  const goToNextDay = () => {
-    if (!selectedDate || !latestDate) return;
-    const next = addDays(parseISO(selectedDate), 1);
-    const latest = parseISO(latestDate);
-    if (next <= latest) {
-      setSelectedDate(format(next, "yyyy-MM-dd"));
+    if (!selectedDate || availableDates.length === 0) return;
+    const sorted = [...availableDates].sort();
+    const idx = sorted.indexOf(selectedDate);
+    if (idx > 0) {
+      setSelectedDate(sorted[idx - 1]);
+    } else if (idx === -1) {
+      // Current date isn't in available list — find nearest earlier date
+      const earlier = sorted.filter((d) => d < selectedDate);
+      if (earlier.length > 0) setSelectedDate(earlier[earlier.length - 1]);
     }
   };
 
-  const canGoNext = selectedDate && latestDate && selectedDate < latestDate;
+  // Navigate to the next date that actually has data
+  const goToNextDay = () => {
+    if (!selectedDate || availableDates.length === 0) return;
+    const sorted = [...availableDates].sort();
+    const idx = sorted.indexOf(selectedDate);
+    if (idx !== -1 && idx < sorted.length - 1) {
+      setSelectedDate(sorted[idx + 1]);
+    } else if (idx === -1) {
+      // Current date isn't in available list — find nearest later date
+      const later = sorted.filter((d) => d > selectedDate);
+      if (later.length > 0) setSelectedDate(later[0]);
+    }
+  };
+
+  const canGoNext = (() => {
+    if (!selectedDate || availableDates.length === 0) return false;
+    const sorted = [...availableDates].sort();
+    const idx = sorted.indexOf(selectedDate);
+    if (idx !== -1) return idx < sorted.length - 1;
+    return sorted.some((d) => d > selectedDate);
+  })();
+
+  const canGoPrev = (() => {
+    if (!selectedDate || availableDates.length === 0) return false;
+    const sorted = [...availableDates].sort();
+    const idx = sorted.indexOf(selectedDate);
+    if (idx !== -1) return idx > 0;
+    return sorted.some((d) => d < selectedDate);
+  })();
 
   return (
     <header className="flex h-16 shrink-0 items-center justify-between border-b bg-background px-6 shadow-sm">
@@ -57,8 +89,8 @@ export function Header() {
             size="icon"
             className="h-8 w-8"
             onClick={goToPrevDay}
-            disabled={!selectedDate}
-            title="Previous day"
+            disabled={!canGoPrev}
+            title="Previous date with data"
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
@@ -68,12 +100,24 @@ export function Header() {
               variant="outline"
               size="sm"
               className={`h-9 border-dashed min-w-[180px] font-medium ${
-                isLiveDate ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : ""
+                !hasData && selectedDate
+                  ? "border-amber-500/50 text-amber-600 dark:text-amber-400"
+                  : isLiveDate
+                  ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400"
+                  : ""
               }`}
-              title={selectedDate ? `Viewing data as of ${displayDate}. Click to change.` : "Loading date..."}
+              title={
+                !hasData && selectedDate
+                  ? `No data for ${displayDate}. Click to select a date with data.`
+                  : selectedDate
+                  ? `Viewing data as of ${displayDate}. Click to change.`
+                  : "Loading date..."
+              }
               onClick={() => setShowPicker((v) => !v)}
             >
-              {selectedDate ? (
+              {!hasData && selectedDate ? (
+                <AlertCircle className="mr-2 h-4 w-4 text-amber-500" />
+              ) : selectedDate ? (
                 <Database className={`mr-2 h-4 w-4 ${isLiveDate ? "text-emerald-500" : "text-muted-foreground"}`} />
               ) : (
                 <CalendarIcon className="mr-2 h-4 w-4" />
@@ -84,11 +128,16 @@ export function Header() {
                   LIVE
                 </span>
               )}
+              {!hasData && selectedDate && (
+                <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                  NO DATA
+                </span>
+              )}
             </Button>
 
             {/* Date picker dropdown */}
             {showPicker && (
-              <div className="absolute right-0 top-10 z-50 bg-background border rounded-xl shadow-xl p-4 w-64 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="absolute right-0 top-10 z-50 bg-background border rounded-xl shadow-xl p-4 w-72 animate-in fade-in slide-in-from-top-2 duration-200">
                 <p className="text-xs text-muted-foreground font-medium mb-3 uppercase tracking-wider">Select Date</p>
                 <input
                   type="date"
@@ -102,29 +151,44 @@ export function Header() {
                     }
                   }}
                 />
-                {latestDate && (
-                  <div className="mt-3 space-y-1">
-                    <p className="text-xs text-muted-foreground mb-2">Quick select:</p>
-                    {[
-                      { label: "Latest (Live)", date: latestDate },
-                      { label: "Yesterday", date: format(subDays(parseISO(latestDate), 1), "yyyy-MM-dd") },
-                      { label: "2 days ago", date: format(subDays(parseISO(latestDate), 2), "yyyy-MM-dd") },
-                      { label: "7 days ago", date: format(subDays(parseISO(latestDate), 7), "yyyy-MM-dd") },
-                    ].map(({ label, date }) => (
-                      <button
-                        key={label}
-                        className={`w-full text-left text-sm px-3 py-1.5 rounded-md transition-colors hover:bg-muted ${
-                          selectedDate === date ? "bg-muted font-medium text-foreground" : "text-muted-foreground"
-                        }`}
-                        onClick={() => {
-                          setSelectedDate(date);
-                          setShowPicker(false);
-                        }}
-                      >
-                        {label} — {format(parseISO(date), "MMM dd")}
-                      </button>
-                    ))}
+
+                {/* Available dates section */}
+                {availableDates.length > 0 && (
+                  <div className="mt-3">
+                    <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                      <Database className="h-3 w-3" />
+                      Dates with data ({availableDates.length}):
+                    </p>
+                    <div className="space-y-1 max-h-48 overflow-y-auto">
+                      {[...availableDates].sort().reverse().map((date) => (
+                        <button
+                          key={date}
+                          className={`w-full text-left text-sm px-3 py-1.5 rounded-md transition-colors hover:bg-muted flex items-center justify-between ${
+                            selectedDate === date
+                              ? "bg-muted font-medium text-foreground"
+                              : "text-muted-foreground"
+                          }`}
+                          onClick={() => {
+                            setSelectedDate(date);
+                            setShowPicker(false);
+                          }}
+                        >
+                          <span>{format(parseISO(date), "MMM dd, yyyy (EEE)")}</span>
+                          {date === latestDate && (
+                            <span className="text-[10px] font-semibold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded-full">
+                              LATEST
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+                )}
+
+                {availableDates.length === 0 && (
+                  <p className="mt-3 text-xs text-muted-foreground text-center py-2">
+                    No data found in database. Run the GAM pipeline to sync data.
+                  </p>
                 )}
               </div>
             )}
@@ -136,7 +200,7 @@ export function Header() {
             className="h-8 w-8"
             onClick={goToNextDay}
             disabled={!canGoNext}
-            title="Next day"
+            title="Next date with data"
           >
             <ChevronRight className="h-4 w-4" />
           </Button>

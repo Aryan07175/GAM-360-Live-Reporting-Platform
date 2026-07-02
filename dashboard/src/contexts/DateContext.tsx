@@ -1,13 +1,15 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { getLatestReportDate } from "@/services/api";
+import { getLatestReportDate, getAvailableDates } from "@/services/api";
 
 interface DateContextValue {
   /** The currently selected date for dashboard queries (YYYY-MM-DD) */
   selectedDate: string | null;
   /** The latest date with real data in Postgres */
   latestDate: string | null;
+  /** All dates that have data in the database */
+  availableDates: string[];
   /** Whether the date is still being fetched on first load */
   dateLoading: boolean;
   /** Update the selected date */
@@ -23,6 +25,7 @@ interface DateContextValue {
 const DateContext = createContext<DateContextValue>({
   selectedDate: null,
   latestDate: null,
+  availableDates: [],
   dateLoading: true,
   setSelectedDate: () => {},
   refresh: () => {},
@@ -33,6 +36,7 @@ const DateContext = createContext<DateContextValue>({
 export function DateProvider({ children }: { children: React.ReactNode }) {
   const [selectedDate, setSelectedDateState] = useState<string | null>(null);
   const [latestDate, setLatestDate] = useState<string | null>(null);
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [dateLoading, setDateLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -40,8 +44,12 @@ export function DateProvider({ children }: { children: React.ReactNode }) {
   const fetchLatest = useCallback(async () => {
     setRefreshing(true);
     try {
-      const latest = await getLatestReportDate();
+      const [latest, dates] = await Promise.all([
+        getLatestReportDate(),
+        getAvailableDates(),
+      ]);
       setLatestDate(latest);
+      setAvailableDates(dates);
       // Only auto-set the date on first load; after that, user controls it
       setSelectedDateState((prev) => (prev === null ? latest : prev));
     } finally {
@@ -72,8 +80,12 @@ export function DateProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const latest = await getLatestReportDate();
+      const [latest, dates] = await Promise.all([
+        getLatestReportDate(),
+        getAvailableDates(),
+      ]);
       setLatestDate(latest);
+      setAvailableDates(dates);
       setRefreshKey((k) => k + 1);
     } finally {
       setRefreshing(false);
@@ -85,6 +97,7 @@ export function DateProvider({ children }: { children: React.ReactNode }) {
       value={{
         selectedDate,
         latestDate,
+        availableDates,
         dateLoading,
         setSelectedDate,
         refresh,

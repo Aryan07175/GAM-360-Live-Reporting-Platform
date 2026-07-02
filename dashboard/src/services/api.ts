@@ -43,6 +43,28 @@ export async function getLatestReportDate(): Promise<string | null> {
 }
 
 /**
+ * Get all dates that have data in the database.
+ * Used by the date picker to show which dates are selectable.
+ */
+export async function getAvailableDates(): Promise<string[]> {
+  if (!isConfigured) return [];
+
+  try {
+    const result = await sql`
+      SELECT DISTINCT report_date
+      FROM gam_revenue
+      WHERE revenue_usd IS NOT NULL
+      ORDER BY report_date DESC
+    `;
+
+    return result.map((r: any) => new Date(r.report_date).toISOString().split("T")[0]);
+  } catch (error) {
+    console.error("Failed to fetch available dates:", error);
+    return [];
+  }
+}
+
+/**
  * Fetch the network-wide totals for a specific date.
  * Returns null when no data exists for the requested date (instead of
  * silently falling back to mock data).
