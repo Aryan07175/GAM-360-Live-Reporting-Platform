@@ -28,9 +28,12 @@ interface TrendChartProps {
   valueSuffix?: string;
 }
 
-// ── Color constants ────────────────────────────────────────────────────────────
-const X_TICK_COLOR = "#94a3b8"; // slate-400  — date labels on X axis
-const Y_TICK_COLOR = "#60a5fa"; // blue-400   — value labels on Y axis (bright blue)
+// ── Shared axis styles for dark theme visibility ──────────────────────────────
+const AXIS_TICK = { fill: "#E5E7EB", fontSize: 12 };          // light gray labels
+const AXIS_LINE = { stroke: "#6B7280" };                       // medium gray axis line
+const TICK_LINE = { stroke: "#6B7280" };                       // medium gray tick marks
+const GRID_STROKE = "#374151";                                 // dark gray grid lines
+const GRID_DASH = "4 4";
 
 // Shorten "2026-06-30" → "06/30"
 function formatDate(dateStr: string): string {
@@ -50,37 +53,6 @@ export function TrendChart({
   valuePrefix = "",
   valueSuffix = "",
 }: TrendChartProps) {
-  // ── Render functions (closures) — guaranteed to capture the right vars ──────
-  // Recharts calls these as functions and passes x, y, payload automatically.
-
-  const renderXTick = ({ x, y, payload }: any) => (
-    <text
-      x={x}
-      y={y + 14}
-      textAnchor="middle"
-      fill={X_TICK_COLOR}
-      fontSize={11}
-      fontWeight={500}
-      fontFamily="inherit"
-    >
-      {formatDate(String(payload?.value ?? ""))}
-    </text>
-  );
-
-  const renderYTick = ({ x, y, payload }: any) => (
-    <text
-      x={x - 6}
-      y={y + 4}
-      textAnchor="end"
-      fill={Y_TICK_COLOR}       // ← blue-400, always visible on dark bg
-      fontSize={11}
-      fontWeight={700}
-      fontFamily="inherit"
-    >
-      {`${valuePrefix}${Number(payload?.value ?? 0).toLocaleString()}${valueSuffix}`}
-    </text>
-  );
-
   return (
     <Card className="col-span-1">
       <CardHeader>
@@ -101,39 +73,45 @@ export function TrendChart({
                 </linearGradient>
               </defs>
 
-              {/* Grid: blue-tinted dashed lines, both horizontal and vertical */}
+              {/* Grid: dark gray dashed lines, both directions */}
               <CartesianGrid
-                strokeDasharray="4 4"
-                stroke="rgba(96, 165, 250, 0.18)"
+                stroke={GRID_STROKE}
+                strokeDasharray={GRID_DASH}
                 vertical={true}
               />
 
-              {/* X Axis: date labels in slate-400 */}
+              {/* X Axis: light gray date labels + visible axis/tick lines */}
               <XAxis
                 dataKey={xAxisKey}
-                tickLine={false}
-                axisLine={false}
+                tick={AXIS_TICK}
+                axisLine={AXIS_LINE}
+                tickLine={TICK_LINE}
+                tickFormatter={formatDate}
                 interval="preserveStartEnd"
-                tick={renderXTick}
+                dy={4}
               />
 
-              {/* Y Axis: value labels in bright blue-400 via render function */}
+              {/* Y Axis: light gray value labels + visible axis/tick lines */}
               <YAxis
-                tickLine={false}
-                axisLine={false}
+                tick={AXIS_TICK}
+                axisLine={AXIS_LINE}
+                tickLine={TICK_LINE}
                 width={68}
-                tick={renderYTick}
+                tickFormatter={(value) =>
+                  `${valuePrefix}${Number(value).toLocaleString()}${valueSuffix}`
+                }
               />
 
               <Tooltip
                 contentStyle={{
-                  backgroundColor: "hsl(var(--popover))",
-                  borderColor: "hsl(var(--border))",
+                  backgroundColor: "#1F2937",
+                  borderColor: "#374151",
                   borderRadius: "8px",
-                  boxShadow: "0 8px 30px rgba(0,0,0,0.4)",
+                  boxShadow: "0 8px 30px rgba(0,0,0,0.5)",
                   padding: "10px 14px",
+                  color: "#E5E7EB",
                 }}
-                labelStyle={{ color: X_TICK_COLOR, fontSize: 12, marginBottom: 4 }}
+                labelStyle={{ color: "#9CA3AF", fontSize: 12, marginBottom: 4 }}
                 itemStyle={{ color: color, fontWeight: 700, fontSize: 13 }}
                 labelFormatter={(label) => formatDate(label)}
                 formatter={(value: any) => [
@@ -157,7 +135,7 @@ export function TrendChart({
                   r: 6,
                   strokeWidth: 2,
                   stroke: color,
-                  fill: "hsl(var(--background))",
+                  fill: "#111827",
                   strokeOpacity: 0.9,
                 }}
               />
