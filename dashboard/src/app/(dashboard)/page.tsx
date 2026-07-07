@@ -203,7 +203,7 @@ export default function DashboardOverview() {
             dataKey="revenue_usd"
             xAxisKey="report_date"
             valuePrefix="$"
-            color="#4f46e5"
+            color="#818cf8"
           />
           <TrendChart
             title="Impressions Trend (30 Days)"
@@ -220,7 +220,7 @@ export default function DashboardOverview() {
             dataKey="ecpm_usd"
             xAxisKey="report_date"
             valuePrefix="$"
-            color="#10b981"
+            color="#2dd4bf"
           />
         </div>
 

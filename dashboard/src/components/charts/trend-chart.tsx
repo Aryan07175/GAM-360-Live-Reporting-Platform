@@ -95,18 +95,18 @@ export function TrendChart({
               data={data}
               margin={{ top: 10, right: 12, left: 8, bottom: 0 }}
             >
-              <defs>
+                <defs>
                 <linearGradient id={`color-${dataKey}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor={color} stopOpacity={0.35} />
-                  <stop offset="95%" stopColor={color} stopOpacity={0} />
+                  <stop offset="5%"  stopColor={color} stopOpacity={0.55} />
+                  <stop offset="95%" stopColor={color} stopOpacity={0.02} />
                 </linearGradient>
               </defs>
 
-              {/* Subtle grid lines — visible but not distracting */}
+              {/* Grid lines — visible dashed lines both horizontal and vertical */}
               <CartesianGrid
-                strokeDasharray="3 3"
-                vertical={false}
-                stroke="rgba(148,163,184,0.15)"
+                strokeDasharray="4 4"
+                stroke="rgba(96, 165, 250, 0.2)"
+                vertical={true}
               />
 
               {/* X Axis — custom tick component renders date labels in slate-400 */}
@@ -150,11 +150,11 @@ export function TrendChart({
                 type="monotone"
                 dataKey={dataKey}
                 stroke={color}
-                strokeWidth={2}
+                strokeWidth={2.5}
                 fillOpacity={1}
                 fill={`url(#color-${dataKey})`}
-                dot={false}
-                activeDot={{ r: 5, strokeWidth: 0, fill: color }}
+                dot={{ r: 2.5, fill: color, strokeWidth: 0, fillOpacity: 0.8 }}
+                activeDot={{ r: 6, strokeWidth: 2, stroke: color, fill: "hsl(var(--background))", strokeOpacity: 0.9 }}
               />
             </AreaChart>
           </ResponsiveContainer>
