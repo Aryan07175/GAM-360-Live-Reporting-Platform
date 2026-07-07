@@ -57,3 +57,67 @@ export interface SystemAlert {
   severity: "critical" | "warning" | "info";
   app_name: string;
 }
+
+// ── BI Report Types ──────────────────────────────────────────────────────────
+
+export interface BISummaryKPI {
+  label: string;
+  value: number;
+  formatted: string;
+  previousValue: number;
+  changePct: number;
+  direction: "up" | "down" | "flat";
+  sparkline: number[];
+}
+
+export interface BIAppRow {
+  rank: number;
+  ad_unit_name: string;
+  ad_unit_id: string;
+  revenue_usd: number;
+  impressions: number;
+  clicks: number;
+  ad_requests: number;
+  fill_rate_pct: number;
+  ctr_pct: number;
+  ecpm_usd: number;
+  revenue_pct: number; // % contribution to total
+}
+
+export interface BIDailyPoint {
+  report_date: string;
+  revenue_usd: number;
+  impressions: number;
+  clicks: number;
+  ecpm_usd: number;
+  ad_requests: number;
+}
+
+export interface BIAnomaly {
+  id: string;
+  ad_unit_name: string;
+  metric: string;
+  currentValue: number;
+  previousValue: number;
+  changePct: number;
+  severity: "High" | "Medium" | "Low";
+  description: string;
+}
+
+export interface BIInsight {
+  id: string;
+  category: "revenue" | "performance" | "anomaly" | "recommendation";
+  icon: string;
+  title: string;
+  description: string;
+}
+
+export interface BIReportData {
+  startDate: string;
+  endDate: string;
+  summary: BISummaryKPI[];
+  apps: BIAppRow[];
+  dailyTrend: BIDailyPoint[];
+  anomalies: BIAnomaly[];
+  insights: BIInsight[];
+}
