@@ -2,55 +2,39 @@
 
 **🚀 Live Dashboard:** [https://dashboard-gamma-snowy-42.vercel.app](https://dashboard-gamma-snowy-42.vercel.app)
 
-Full pipeline to extract revenue data from Google Ad Manager 360
-using the SOAP API, store it in a Neon PostgreSQL database, visualize it
-through a real-time Next.js dashboard, and expose it via MCP
-for Claude-powered summarization and reporting.
+A Next.js executive BI reporting dashboard that fetches ad revenue analytics in real-time from Google Ad Manager 360 using the Model Context Protocol (MCP) server, offering instant insights without the need for a traditional SQL database.
 
 ---
 
 ## 🏛️ System Architecture & Data Flow
 
-This project is a complete end-to-end analytics pipeline that pulls raw data from Google Ad Manager 360, stores it efficiently, and surfaces it in a real-time dashboard. 
+This project is a complete end-to-end analytics pipeline that pulls raw data from Google Ad Manager 360 and surfaces it in a real-time dashboard. 
 
 Here is exactly how the data moves through the system and updates the UI:
 
-### 1. Data Extraction (GAM API → PostgreSQL)
-* **The Extractor:** A Python script (`extractor/gam_extractor.py`) connects to the **Google Ad Manager 360 SOAP API**. It builds a specific `ReportQuery` to fetch daily revenue, impressions, and eCPM on a per-app (Ad Unit) basis.
-* **The Database:** The extracted CSV reports are parsed and immediately upserted into a **Neon serverless PostgreSQL** database. The script ensures no duplicates exist using composite unique keys (`network_code`, `report_date`, `ad_unit_id`).
-* **Automation:** A cron job runs this script automatically every day to keep the database synced with GAM's latest finalized numbers.
+### 1. Data Extraction (GAM API → MCP)
+* **The MCP Server:** A Python MCP server (`mcp_server/server.py`) connects to the **Google Ad Manager 360 SOAP API**. It builds a `ReportQuery` to fetch daily revenue, impressions, and eCPM on a per-app (Ad Unit) basis in real-time.
+* **Stateless Operation:** The architecture is entirely stateless. Data is fetched on-demand, removing the need for cron jobs, ETL pipelines, or permanent historical databases.
 
 ### 2. Dashboard State Management (React Context)
 * **Global Context:** The Next.js dashboard uses a global `DateContext` (React Context API) to manage the state of the entire application from a single source of truth.
-* **Auto-Discovery:** When the dashboard loads, it pings the database via Next.js Server Actions to discover **all available dates** that actually contain data. It does not blindly guess dates—if the GAM extractor hasn't pulled data for a day, the dashboard knows about it.
+* **Auto-Discovery:** When the dashboard loads, it pings the GAM API via the MCP server to discover **all available dates** that contain data. 
 * **Reactivity:** Every chart, table, and metric on every page subscribes to this `DateContext`. When the selected date changes, the context updates, and **all components instantly re-fetch their specific data** and re-render simultaneously.
 
-### 3. Live Updates & Auto-Refresh
-* **Polling:** The `DateContext` runs a silent background timer (`setInterval`) that polls the database every **5 minutes**.
-* **Seamless Refresh:** If the cron job pushes new GAM data into PostgreSQL while you have the dashboard open, the auto-refresh mechanism detects it. It bumps a `refreshKey` state variable, which instantly triggers all active charts and tables to seamlessly pull the fresh data without requiring a full page reload.
+### 3. Live Updates & Concurrency
+* **Concurrency Control:** The server uses `asyncio.Lock` for single-flight caching to prevent Google Ad Manager API rate limits when multiple users access the dashboard simultaneously.
+* **Progressive UI Loading:** Analytics are streamed incrementally (Executive Summary, App Metrics, AI Insights) so the UI remains highly responsive.
 
 ```mermaid
 sequenceDiagram
-    participant GAM as Google Ad Manager
-    participant Extractor as Python Extractor
-    participant DB as Neon PostgreSQL
-    participant Context as Next.js DateContext
     participant UI as Dashboard Components
+    participant MCP as MCP Server
+    participant GAM as Google Ad Manager
 
-    loop Daily Cron
-        Extractor->>GAM: Request Report (SOAP API)
-        GAM-->>Extractor: Download CSV
-        Extractor->>DB: Upsert Revenue Rows
-    end
-
-    loop Every 5 Minutes (Auto-Refresh)
-        Context->>DB: Poll for latest available dates
-        DB-->>Context: Return available dates array
-        Context->>Context: Update global state & refreshKey
-        Context->>UI: Trigger re-render
-        UI->>DB: Fetch component-specific data (Server Actions)
-        DB-->>UI: Return fresh data
-    end
+    UI->>MCP: Fetch Report Data
+    MCP->>GAM: Request Report (SOAP API)
+    GAM-->>MCP: Stream CSV / Data
+    MCP-->>UI: Return JSON Analytics
 ```
 
 ---
@@ -60,15 +44,15 @@ sequenceDiagram
 The dashboard is built to mimic and enhance the GAM 360 experience:
 
 ### Core Pages
+* **Real-Time BI Dashboard**: Generates comprehensive business intelligence reports dynamically using real-time data.
+* **Model Context Protocol (MCP)**: Directly queries Google Ad Manager 360 APIs using a high-performance Python MCP server, removing the need for a relational database.
 * **Overview:** Network-wide KPIs (Total Revenue, Impressions, Clicks, eCPM, Fill Rate, Ad Requests) and 30-day trend charts.
 * **Applications:** Per-app performance table with sortable columns and search functionality.
-* **Revenue Analytics:** Revenue & eCPM trend charts with a top earning applications breakdown.
 * **Anomaly Detection:** AI-driven anomaly detection comparing each app's daily revenue against its rolling 7-day average. Flags sudden drops > 20% with severity levels.
 * **System Alerts:** Live alert feed flagging low impressions, low revenue, and poor fill rates across all ad units.
-* **Reports:** Advanced report generator with configurable date presets (Yesterday, Last 7 Days, This Month, Custom Range). Tracks generation status and provides direct CSV downloads.
 
 ### Interactive UI
-* **Database-Aware Date Picker:** The header calendar strictly limits selection to dates that actually exist in the database. The left/right arrows smartly skip over days with no data.
+* **Date Picker:** The header calendar allows selection of relevant reporting periods.
 * **Dark Mode:** Full support for system-preference or manual light/dark themes.
 * **Instant Export:** One-click CSV export of the current day's revenue data.
 

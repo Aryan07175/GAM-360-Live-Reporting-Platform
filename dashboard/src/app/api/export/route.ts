@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRevenueByApp, getLatestReportDate } from "@/services/api";
+import { getRevenueByApp } from "@/services/api";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -7,8 +7,9 @@ export async function GET(request: Request) {
 
   // Fallback to latest available date if none provided
   if (!date) {
-    const latestDate = await getLatestReportDate();
-    date = latestDate || new Date().toISOString().split("T")[0];
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    date = yesterday.toISOString().split("T")[0];
   }
 
   const data = await getRevenueByApp(date);

@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { getBIReportData } from "@/services/report-api";
+import { getBIExecutiveSummary, getBIApps, getBITrend, getBIAnomalies } from "@/services/report-api";
 import { getReportHistory, triggerReportGeneration } from "@/services/api";
-import { BIReportData, ReportHistoryItem } from "@/types";
+import { BIReportData, ReportHistoryItem, BISummaryKPI, BIAppRow, BIDailyPoint, BIAnomaly, BIInsight } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -46,8 +46,12 @@ export default function ReportsPage() {
   const [endDate, setEndDate] = useState("");
   const [dimensions, setDimensions] = useState("app");
 
-  // BI Report state
-  const [biData, setBiData] = useState<BIReportData | null>(null);
+  // BI Report progressive state
+  const [biSummary, setBiSummary] = useState<{ summary: BISummaryKPI[], cached_at: string } | null>(null);
+  const [biApps, setBiApps] = useState<{ apps: BIAppRow[], cached_at: string } | null>(null);
+  const [biTrend, setBiTrend] = useState<{ trend: BIDailyPoint[], cached_at: string } | null>(null);
+  const [biAnomalies, setBiAnomalies] = useState<{ anomalies: BIAnomaly[], cached_at: string } | null>(null);
+  const [biInsights, setBiInsights] = useState<BIInsight[]>([]);
   const [biLoading, setBiLoading] = useState(false);
   const [biError, setBiError] = useState<string | null>(null);
 
@@ -112,7 +116,6 @@ export default function ReportsPage() {
     return () => clearInterval(interval);
   }, [history, loadHistory]);
 
-  // Generate BI report
   const handleGenerate = async () => {
     if (!startDate || !endDate) {
       alert("Please select a date range before generating a report.");
@@ -122,15 +125,22 @@ export default function ReportsPage() {
     setGenerating(true);
     setBiLoading(true);
     setBiError(null);
+    setBiSummary(null);
+    setBiApps(null);
+    setBiTrend(null);
+    setBiAnomalies(null);
+    setBiInsights([]);
 
     try {
-      // Trigger history item AND fetch BI data in parallel
-      const [_, biResult] = await Promise.all([
-        triggerReportGeneration({ datePreset, startDate, endDate, dimensions }),
-        getBIReportData(startDate, endDate),
-      ]);
+      triggerReportGeneration({ datePreset, startDate, endDate, dimensions });
 
-      setBiData(biResult);
+      // Fire all independently
+      const summaryPromise = getBIExecutiveSummary(startDate).then(res => setBiSummary(res));
+      const appsPromise = getBIApps(startDate).then(res => setBiApps(res));
+      const trendPromise = getBITrend(startDate, 7).then(res => setBiTrend(res));
+      const anomalyPromise = getBIAnomalies(startDate).then(res => setBiAnomalies(res));
+
+      await Promise.allSettled([summaryPromise, appsPromise, trendPromise, anomalyPromise]);
       await loadHistory();
     } catch (err) {
       setBiError("Failed to generate report. Please try again.");
@@ -173,59 +183,59 @@ export default function ReportsPage() {
     }
   };
 
-  // ── Computed chart data from biData ────────────────────────────────────────
+  // ── Computed chart data from biApps ────────────────────────────────────────
   const revenueByApp = useMemo(() => {
-    if (!biData) return [];
-    return biData.apps.map((a) => ({ name: a.ad_unit_name.length > 25 ? a.ad_unit_name.substring(0, 25) + "…" : a.ad_unit_name, value: a.revenue_usd, fullName: a.ad_unit_name }));
-  }, [biData]);
+    if (!biApps) return [];
+    return biApps.apps.map((a) => ({ name: a.ad_unit_name.length > 25 ? a.ad_unit_name.substring(0, 25) + "…" : a.ad_unit_name, value: a.revenue_usd, fullName: a.ad_unit_name }));
+  }, [biApps]);
 
   const top10 = useMemo(() => revenueByApp.slice(0, 10), [revenueByApp]);
   const bottom10 = useMemo(() => [...revenueByApp].reverse().slice(0, 10), [revenueByApp]);
 
   const impressionsByApp = useMemo(() => {
-    if (!biData) return [];
-    return biData.apps.slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 20 ? a.ad_unit_name.substring(0, 20) + "…" : a.ad_unit_name, value: a.impressions }));
-  }, [biData]);
+    if (!biApps) return [];
+    return biApps.apps.slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 20 ? a.ad_unit_name.substring(0, 20) + "…" : a.ad_unit_name, value: a.impressions }));
+  }, [biApps]);
 
   const clicksByApp = useMemo(() => {
-    if (!biData) return [];
-    return biData.apps.filter((a) => a.clicks > 0).slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 20 ? a.ad_unit_name.substring(0, 20) + "…" : a.ad_unit_name, value: a.clicks }));
-  }, [biData]);
+    if (!biApps) return [];
+    return biApps.apps.filter((a) => a.clicks > 0).slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 20 ? a.ad_unit_name.substring(0, 20) + "…" : a.ad_unit_name, value: a.clicks }));
+  }, [biApps]);
 
   const ecpmByApp = useMemo(() => {
-    if (!biData) return [];
-    return [...biData.apps].sort((a, b) => b.ecpm_usd - a.ecpm_usd).slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 25 ? a.ad_unit_name.substring(0, 25) + "…" : a.ad_unit_name, value: a.ecpm_usd }));
-  }, [biData]);
+    if (!biApps) return [];
+    return [...biApps.apps].sort((a, b) => b.ecpm_usd - a.ecpm_usd).slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 25 ? a.ad_unit_name.substring(0, 25) + "…" : a.ad_unit_name, value: a.ecpm_usd }));
+  }, [biApps]);
 
   const fillRateByApp = useMemo(() => {
-    if (!biData) return [];
-    return [...biData.apps].sort((a, b) => b.fill_rate_pct - a.fill_rate_pct).slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 20 ? a.ad_unit_name.substring(0, 20) + "…" : a.ad_unit_name, value: a.fill_rate_pct }));
-  }, [biData]);
+    if (!biApps) return [];
+    return [...biApps.apps].sort((a, b) => b.fill_rate_pct - a.fill_rate_pct).slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 20 ? a.ad_unit_name.substring(0, 20) + "…" : a.ad_unit_name, value: a.fill_rate_pct }));
+  }, [biApps]);
 
   const adRequestsByApp = useMemo(() => {
-    if (!biData) return [];
-    return [...biData.apps].sort((a, b) => b.ad_requests - a.ad_requests).slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 20 ? a.ad_unit_name.substring(0, 20) + "…" : a.ad_unit_name, value: a.ad_requests }));
-  }, [biData]);
+    if (!biApps) return [];
+    return [...biApps.apps].sort((a, b) => b.ad_requests - a.ad_requests).slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 20 ? a.ad_unit_name.substring(0, 20) + "…" : a.ad_unit_name, value: a.ad_requests }));
+  }, [biApps]);
 
   const ctrByApp = useMemo(() => {
-    if (!biData) return [];
-    return [...biData.apps].filter((a) => a.ctr_pct > 0).sort((a, b) => b.ctr_pct - a.ctr_pct).slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 20 ? a.ad_unit_name.substring(0, 20) + "…" : a.ad_unit_name, value: a.ctr_pct }));
-  }, [biData]);
+    if (!biApps) return [];
+    return [...biApps.apps].filter((a) => a.ctr_pct > 0).sort((a, b) => b.ctr_pct - a.ctr_pct).slice(0, 20).map((a) => ({ name: a.ad_unit_name.length > 20 ? a.ad_unit_name.substring(0, 20) + "…" : a.ad_unit_name, value: a.ctr_pct }));
+  }, [biApps]);
 
   const donutData = useMemo(() => {
-    if (!biData) return [];
-    const topN = biData.apps.slice(0, 8);
-    const rest = biData.apps.slice(8);
+    if (!biApps) return [];
+    const topN = biApps.apps.slice(0, 8);
+    const rest = biApps.apps.slice(8);
     const restTotal = rest.reduce((s, a) => s + a.revenue_usd, 0);
     const items = topN.map((a) => ({ name: a.ad_unit_name.length > 20 ? a.ad_unit_name.substring(0, 20) + "…" : a.ad_unit_name, value: a.revenue_usd }));
     if (restTotal > 0) items.push({ name: `Others (${rest.length})`, value: restTotal });
     return items;
-  }, [biData]);
+  }, [biApps]);
 
   // Daily comparison (last 2 days)
   const dailyComparison = useMemo(() => {
-    if (!biData || biData.dailyTrend.length < 2) return [];
-    const trend = biData.dailyTrend;
+    if (!biTrend || biTrend.trend.length < 2) return [];
+    const trend = biTrend.trend;
     const today = trend[trend.length - 1];
     const yesterday = trend[trend.length - 2];
     return [
@@ -233,13 +243,17 @@ export default function ReportsPage() {
       { name: "Impressions", today: today.impressions, yesterday: yesterday.impressions, diff: today.impressions - yesterday.impressions },
       { name: "Clicks", today: today.clicks, yesterday: yesterday.clicks, diff: today.clicks - yesterday.clicks },
     ];
-  }, [biData]);
+  }, [biTrend]);
 
   // Revenue contribution table
   const contributionTable = useMemo(() => {
-    if (!biData) return [];
-    return biData.apps.slice(0, 20);
-  }, [biData]);
+    if (!biApps || !biSummary) return [];
+    const totalRev = biSummary.summary.find(s => s.label === "Total Revenue")?.value || 1;
+    return biApps.apps.slice(0, 20).map(a => ({
+      ...a,
+      revenue_pct: (a.revenue_usd / totalRev) * 100
+    }));
+  }, [biApps, biSummary]);
 
   return (
     <div className="space-y-6 print:space-y-4">
@@ -255,7 +269,7 @@ export default function ReportsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {biData && <ReportExportBar data={biData} />}
+          {/* <ReportExportBar data={biData} /> */}
           <Button variant="outline" size="sm" onClick={loadHistory} disabled={loading} className="gap-2">
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             Refresh
@@ -366,21 +380,27 @@ export default function ReportsPage() {
       {/* ═══════════════════════════════════════════════════════════════════════
           BI REPORT SECTIONS
           ═══════════════════════════════════════════════════════════════════════ */}
-      {biData && !biLoading && biData.apps.length > 0 && (
-        <>
-          {/* ── 1. Executive Summary KPIs ─────────────────────────────────── */}
+      
+      {/* ── 1. Executive Summary KPIs ─────────────────────────────────── */}
+      {!biLoading && biSummary && biSummary.summary.length > 0 && (
           <div>
-            <h3 className="text-lg font-semibold mb-3">Executive Summary</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold">Executive Summary</h3>
+              <span className="text-xs text-muted-foreground">Data as of {new Date(biSummary.cached_at).toLocaleTimeString()}</span>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {biData.summary.map((kpi) => (
+              {biSummary.summary.map((kpi) => (
                 <ReportKPICard key={kpi.label} kpi={kpi} />
               ))}
             </div>
           </div>
+      )}
 
-          {/* ── 2. Revenue by Application + Contribution Table ────────────── */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* ── 2. Revenue by Application + Contribution Table ────────────── */}
+      {!biLoading && biApps && biApps.apps.length > 0 && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
             <div className="lg:col-span-2">
+              <div className="flex items-center justify-end mb-2"><span className="text-xs text-muted-foreground">Data as of {new Date(biApps.cached_at).toLocaleTimeString()}</span></div>
               <ReportBarChart
                 title="Revenue by Application"
                 description="Sorted by revenue (descending). Green = highest, Red = lowest."
@@ -428,95 +448,68 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
           </div>
+      )}
 
-          {/* ── 4. Revenue Distribution Donut ─────────────────────────────── */}
-          <ReportDonutChart
-            title="Revenue Distribution"
-            description="Application-wise revenue share"
-            data={donutData}
-          />
+      {/* ── 4. Revenue Distribution Donut ─────────────────────────────── */}
+      {!biLoading && biApps && biApps.apps.length > 0 && (
+          <div className="mt-6">
+            <ReportDonutChart
+              title="Revenue Distribution"
+              description="Application-wise revenue share"
+              data={donutData}
+            />
+          </div>
+      )}
 
-          {/* ── 5 & 6. Top 10 / Bottom 10 ─────────────────────────────────── */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* ── 5 & 6. Top 10 / Bottom 10 ─────────────────────────────────── */}
+      {!biLoading && biApps && biApps.apps.length > 0 && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
             <ReportBarChart title="Top 10 Applications" description="By revenue" data={top10} valuePrefix="$" color="#10b981" highlightMax={false} highlightMin={false} />
             <ReportBarChart title="Bottom 10 Applications" description="By revenue" data={bottom10} valuePrefix="$" color="#f43f5e" highlightMax={false} highlightMin={false} />
           </div>
+      )}
 
-          {/* ── 7 & 8. Impression + Click Analysis ─────────────────────────── */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <ReportBarChart title="Impression Analysis" description="Impressions by application" data={impressionsByApp} color="#38bdf8" />
-            <ReportBarChart title="Click Analysis" description="Clicks by application" data={clicksByApp} color="#fbbf24" />
-          </div>
-
-          {/* ── 9 & 10. eCPM + Fill Rate ───────────────────────────────────── */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <ReportBarChart title="eCPM Analysis" description="Average eCPM by application" data={ecpmByApp} layout="horizontal" valuePrefix="$" color="#a78bfa" height={Math.max(300, ecpmByApp.length * 28)} />
-            <ReportBarChart title="Fill Rate Analysis" description="Fill rate by application" data={fillRateByApp} valueSuffix="%" color="#34d399" />
-          </div>
-
-          {/* ── 11 & 12. Ad Requests + CTR ─────────────────────────────────── */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <ReportBarChart title="Ad Request Analysis" description="Ad requests by application" data={adRequestsByApp} color="#22d3ee" />
-            <ReportBarChart title="CTR Analysis" description="Click-through rate by application" data={ctrByApp} valueSuffix="%" color="#fb923c" />
-          </div>
-
-          {/* ── 13-16. Trend Charts ────────────────────────────────────────── */}
-          <div>
-            <h3 className="text-lg font-semibold mb-3">Trend Analysis</h3>
+      {/* ── 13-16. Trend Charts ────────────────────────────────────────── */}
+      {!biLoading && biTrend && biTrend.trend.length > 0 && (
+          <div className="mt-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold">Trend Analysis</h3>
+              <span className="text-xs text-muted-foreground">Data as of {new Date(biTrend.cached_at).toLocaleTimeString()}</span>
+            </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <ReportLineChart title="Revenue Trend" data={biData.dailyTrend} dataKey="revenue_usd" valuePrefix="$" color="#818cf8" />
-              <ReportLineChart title="Impression Trend" data={biData.dailyTrend} dataKey="impressions" color="#38bdf8" />
-              <ReportLineChart title="Click Trend" data={biData.dailyTrend} dataKey="clicks" color="#fbbf24" />
-              <ReportLineChart title="eCPM Trend" data={biData.dailyTrend} dataKey="ecpm_usd" valuePrefix="$" color="#10b981" />
+              <ReportLineChart title="Revenue Trend" data={biTrend.trend} dataKey="revenue_usd" valuePrefix="$" color="#818cf8" />
+              <ReportLineChart title="Impression Trend" data={biTrend.trend} dataKey="impressions" color="#38bdf8" />
             </div>
           </div>
+      )}
 
-          {/* ── 17. Daily Comparison ───────────────────────────────────────── */}
-          {dailyComparison.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Daily Comparison</CardTitle>
-                <CardDescription>Last two days in the selected range</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {dailyComparison.map((row) => (
-                    <div key={row.name} className="p-4 rounded-lg border bg-muted/20">
-                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">{row.name}</p>
-                      <div className="flex items-end justify-between">
-                        <div>
-                          <p className="text-xs text-muted-foreground">Yesterday</p>
-                          <p className="text-lg font-bold">{row.yesterday.toLocaleString(undefined, { maximumFractionDigits: 4 })}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-xs text-muted-foreground">Today</p>
-                          <p className="text-lg font-bold">{row.today.toLocaleString(undefined, { maximumFractionDigits: 4 })}</p>
-                        </div>
-                      </div>
-                      <div className={`mt-2 text-xs font-semibold ${row.diff >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                        {row.diff >= 0 ? "↑" : "↓"} {Math.abs(row.diff).toLocaleString(undefined, { maximumFractionDigits: 4 })}
-                        {row.yesterday > 0 && ` (${((row.diff / row.yesterday) * 100).toFixed(1)}%)`}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
+      {/* ── 18. App Performance Scorecard ──────────────────────────────── */}
+      {!biLoading && biApps && biApps.apps.length > 0 && (
+          <div className="mt-6">
+            <ReportDataTable data={biApps.apps} />
+          </div>
+      )}
 
-          {/* ── 18. App Performance Scorecard ──────────────────────────────── */}
-          <ReportDataTable data={biData.apps} />
+      {/* ── 19. Anomaly Detection ──────────────────────────────────────── */}
+      {!biLoading && biAnomalies && biAnomalies.anomalies.length > 0 && (
+          <div className="mt-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold">Detected Anomalies</h3>
+              <span className="text-xs text-muted-foreground">Data as of {new Date(biAnomalies.cached_at).toLocaleTimeString()}</span>
+            </div>
+            <ReportAnomalyCard anomalies={biAnomalies.anomalies} />
+          </div>
+      )}
 
-          {/* ── 19. Anomaly Detection ──────────────────────────────────────── */}
-          <ReportAnomalyCard anomalies={biData.anomalies} />
-
-          {/* ── 20 & 21. AI Insights & Recommendations ────────────────────── */}
-          <ReportInsights insights={biData.insights} />
-        </>
+      {/* ── 20 & 21. AI Insights & Recommendations ────────────────────── */}
+      {!biLoading && biInsights && biInsights.length > 0 && (
+          <div className="mt-6">
+            <ReportInsights insights={biInsights} />
+          </div>
       )}
 
       {/* Empty state */}
-      {biData && !biLoading && biData.apps.length === 0 && (
+      {!biLoading && !generating && biApps && biApps.apps.length === 0 && (
         <Card>
           <CardContent className="py-16 text-center">
             <BarChart3 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />

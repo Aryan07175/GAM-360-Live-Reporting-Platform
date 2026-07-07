@@ -1,1 +1,0 @@
-# GAM Revenue Extractor package

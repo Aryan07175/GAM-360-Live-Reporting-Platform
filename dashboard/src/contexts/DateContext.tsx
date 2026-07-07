@@ -1,24 +1,15 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { getLatestReportDate, getAvailableDates } from "@/services/api";
 
 interface DateContextValue {
-  /** The currently selected date for dashboard queries (YYYY-MM-DD) */
   selectedDate: string | null;
-  /** The latest date with real data in Postgres */
   latestDate: string | null;
-  /** All dates that have data in the database */
-  availableDates: string[];
-  /** Whether the date is still being fetched on first load */
+  availableDates: string[]; // Keep empty array to not break UI that mapped it
   dateLoading: boolean;
-  /** Update the selected date */
   setSelectedDate: (date: string) => void;
-  /** Refresh all data (re-fetches latest date + bumps refresh key) */
   refresh: () => void;
-  /** A counter that increments every time refresh() is called — pages can depend on this */
   refreshKey: number;
-  /** Whether a refresh is in progress */
   refreshing: boolean;
 }
 
@@ -44,14 +35,22 @@ export function DateProvider({ children }: { children: React.ReactNode }) {
   const fetchLatest = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [latest, dates] = await Promise.all([
-        getLatestReportDate(),
-        getAvailableDates(),
-      ]);
-      setLatestDate(latest);
+      // Latest date is just yesterday in the real-time MCP setup,
+      // because GAM finalizes yesterday's data by today.
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const latestStr = yesterday.toISOString().split("T")[0];
+      
+      const dates = [];
+      for(let i=0; i<180; i++) {
+        const d = new Date(yesterday);
+        d.setDate(d.getDate() - i);
+        dates.push(d.toISOString().split("T")[0]);
+      }
+      
+      setLatestDate(latestStr);
       setAvailableDates(dates);
-      // Only auto-set the date on first load; after that, user controls it
-      setSelectedDateState((prev) => (prev === null ? latest : prev));
+      setSelectedDateState((prev) => (prev === null ? latestStr : prev));
     } finally {
       setDateLoading(false);
       setRefreshing(false);
@@ -63,7 +62,7 @@ export function DateProvider({ children }: { children: React.ReactNode }) {
     fetchLatest();
   }, [fetchLatest]);
 
-  // Auto-refresh every 5 minutes to pick up new data
+  // Auto-refresh every 5 minutes
   useEffect(() => {
     const interval = setInterval(() => {
       fetchLatest();
@@ -80,12 +79,6 @@ export function DateProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [latest, dates] = await Promise.all([
-        getLatestReportDate(),
-        getAvailableDates(),
-      ]);
-      setLatestDate(latest);
-      setAvailableDates(dates);
       setRefreshKey((k) => k + 1);
     } finally {
       setRefreshing(false);
