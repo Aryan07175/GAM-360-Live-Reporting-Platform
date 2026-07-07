@@ -65,9 +65,9 @@ export function ReportDonutChart({ title, description, data, height = 350 }: Pro
               </Pie>
               <Tooltip
                 contentStyle={{ backgroundColor: "#1F2937", borderColor: "#374151", borderRadius: 8, color: "#E5E7EB" }}
-                formatter={(v: any, name: string) => {
+                formatter={(v: any, name: any) => {
                   const pct = total > 0 ? ((Number(v) / total) * 100).toFixed(1) : "0";
-                  return [`$${Number(v).toFixed(4)} (${pct}%)`, name];
+                  return [`$${Number(v).toFixed(4)} (${pct}%)`, String(name)];
                 }}
               />
               <Legend

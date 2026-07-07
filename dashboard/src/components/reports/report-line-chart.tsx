@@ -11,11 +11,11 @@ const AXIS_LINE = { stroke: "#6B7280" };
 const TICK_LINE = { stroke: "#6B7280" };
 const GRID = "#374151";
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: any): string {
   if (!dateStr) return "";
   const parts = String(dateStr).split("-");
   if (parts.length === 3) return `${parts[1]}/${parts[2]}`;
-  return dateStr;
+  return String(dateStr);
 }
 
 interface Props {

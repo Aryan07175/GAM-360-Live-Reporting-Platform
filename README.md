@@ -73,6 +73,7 @@ The dashboard is built to mimic and enhance the GAM 360 experience:
 * **Instant Export:** One-click CSV export of the current day's revenue data.
 
 ### Recent UI Updates
+* **Executive BI Reports Dashboard:** Transformed the simple report generator into a full-scale Business Intelligence dashboard featuring KPI sparklines, dynamic bar/donut charts, anomaly detection, AI-generated insights, and a sortable app scorecard table.
 * **Daily Active Users (DAU):** Added DAU tracking based on GAM ad requests, with a visual breakdown funnel in the Overview tab.
 * **Top Performing Apps Leaderboard:** Added a rich component showing the top 5 earning apps, including relative revenue bars, fill-rate health badges, and eCPM trending indicators.
 * **Dark-Theme Chart Visibility:** Completely refactored all Recharts instances (Revenue, Impressions, eCPM) with custom SVG tick elements and explicit hex colors to ensure axis labels (`#E5E7EB`), grid lines (`#374151`), and plotted gradients are highly visible on dark backgrounds.
