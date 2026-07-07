@@ -12,6 +12,7 @@ from starlette.routing import Route
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+sys.path.append(os.path.dirname(__file__))
 from gam_client import GAMClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
