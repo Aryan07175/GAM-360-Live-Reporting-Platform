@@ -43,6 +43,16 @@ sequenceDiagram
     Next.js App-->>User: Interactive Dashboard
 ```
 
+### 4. Detailed Execution Workflow
+1. **User Interaction:** The user interacts with the Next.js frontend (e.g., changing the date picker to a custom date range with specific hours like 09:00 to 17:00).
+2. **State Hydration:** The React Context (`LiveReportProvider`) immediately flags `isLoading=true` and triggers a refresh.
+3. **Server Action Dispatch:** Next.js Server Actions concurrently dispatch POST requests to the Python MCP Server's REST API endpoint (`/api/tool`), passing the start date, end date, start time, and end time.
+4. **Backend Parsing:** The Python backend parses the constraints in `server.py`, merging the dates and times into a format accepted by the Google Ads API (`PQL` query with `startDateTime` and `endDateTime`).
+5. **Report Generation:** `gam_client.py` uses the `AdManagerClient` to dynamically build a `ReportQuery` asking for `DATE`, `HOUR`, `AD_UNIT_NAME`, and financial metrics.
+6. **Data Processing:** The SOAP API completes the job, and the backend downloads the GZIP CSV, decompresses it into memory, and loads it into a `pandas` DataFrame.
+7. **JSON Serialization:** The pandas DataFrame is converted to JSON and sent back down the wire to Next.js.
+8. **UI Rendering:** Next.js receives the data and Recharts dynamically plots the new hour-level granular metrics for the user in real-time.
+
 ---
 
 ## 🌐 Dashboard Features
