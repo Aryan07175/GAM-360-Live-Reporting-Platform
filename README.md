@@ -141,7 +141,7 @@ gam360-pipeline/
 │   │   └── types/           # TypeScript type definitions
 │   └── package.json
 ├── requirements.txt         # Python dependencies
-└── GAM_DASHBOARD_README.md
+└── README.md
 ```
 
 ## License
