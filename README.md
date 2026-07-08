@@ -1,7 +1,5 @@
 # GAM 360 Live Reporting Platform
 
-**🚀 Live Dashboard:** [https://dashboard-gamma-snowy-42.vercel.app](https://dashboard-gamma-snowy-42.vercel.app)
-
 A Next.js executive BI reporting dashboard that fetches ad revenue analytics **in real-time** from Google Ad Manager 360 using the Model Context Protocol (MCP) server. 
 
 **Zero database. Zero cache. Zero ETL. 100% live.**
