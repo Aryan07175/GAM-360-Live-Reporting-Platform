@@ -1,3 +1,5 @@
+// ─── Core Metric Types ──────────────────────────────────────────────────────
+
 export interface AppMetrics {
   ad_unit_name: string;
   ad_unit_id: string;
@@ -21,6 +23,7 @@ export interface NetworkTotal {
   total_revenue_usd: number;
   avg_fill_rate: number | null;
   avg_ecpm: number;
+  avg_ctr: number;
   top_app_name: string;
   top_app_revenue: number;
 }
@@ -41,14 +44,6 @@ export interface Anomaly {
   confidence: number;
 }
 
-export interface ReportHistoryItem {
-  id: string;
-  name: string;
-  date: string;
-  status: "Queued" | "Running" | "Completed" | "Failed";
-  rows: number;
-}
-
 export interface SystemAlert {
   id: string;
   title: string;
@@ -58,7 +53,18 @@ export interface SystemAlert {
   app_name: string;
 }
 
-// ── BI Report Types ──────────────────────────────────────────────────────────
+// ─── Date & Filter Types ────────────────────────────────────────────────────
+
+export type DatePreset =
+  | "today"
+  | "yesterday"
+  | "last7days"
+  | "last30days"
+  | "thisMonth"
+  | "lastMonth"
+  | "custom";
+
+// ─── BI Report Types ────────────────────────────────────────────────────────
 
 export interface BISummaryKPI {
   label: string;
@@ -81,7 +87,7 @@ export interface BIAppRow {
   fill_rate_pct: number;
   ctr_pct: number;
   ecpm_usd: number;
-  revenue_pct: number; // % contribution to total
+  revenue_pct: number;
 }
 
 export interface BIDailyPoint {
@@ -112,12 +118,66 @@ export interface BIInsight {
   description: string;
 }
 
-export interface BIReportData {
+// ─── New Live Report Types ──────────────────────────────────────────────────
+
+export interface Recommendation {
+  id: string;
+  category: "revenue" | "performance" | "anomaly" | "recommendation";
+  icon: string;
+  priority: "High" | "Medium" | "Low";
+  title: string;
+  description: string;
+}
+
+export interface PerformanceRanking {
+  rank: number;
+  ad_unit_name: string;
+  ad_unit_id: string;
+  revenue_usd: number;
+  impressions: number;
+  clicks: number;
+  fill_rate_pct: number;
+  ctr_pct: number;
+  ecpm_usd: number;
+  score: number;
+}
+
+export interface WebsiteMetrics {
+  website: string;
+  revenue_usd: number;
+  impressions: number;
+  clicks: number;
+  ad_requests: number;
+}
+
+export interface LiveReportData {
   startDate: string;
   endDate: string;
+  fetchedAt: string;
   summary: BISummaryKPI[];
   apps: BIAppRow[];
+  topApps: BIAppRow[];
+  bottomApps: BIAppRow[];
   dailyTrend: BIDailyPoint[];
   anomalies: BIAnomaly[];
   insights: BIInsight[];
+  recommendations: Recommendation[];
+  rankings: PerformanceRanking[];
+}
+
+// ─── Report Progress ────────────────────────────────────────────────────────
+
+export type SectionLoadStatus = "pending" | "loading" | "done" | "error";
+
+export interface SectionStatus {
+  name: string;
+  status: SectionLoadStatus;
+  error?: string;
+}
+
+export interface ReportProgress {
+  total: number;
+  completed: number;
+  currentSection: string;
+  sections: SectionStatus[];
 }

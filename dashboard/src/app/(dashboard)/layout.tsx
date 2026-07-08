@@ -2,7 +2,7 @@
 
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
-import { DateProvider } from "@/contexts/DateContext";
+import { LiveReportProvider } from "@/contexts/DateContext";
 
 export default function DashboardLayout({
   children,
@@ -10,7 +10,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <DateProvider>
+    <LiveReportProvider>
       <div className="flex h-screen overflow-hidden bg-background">
         <Sidebar />
         <div className="flex flex-1 flex-col overflow-hidden">
@@ -22,6 +22,6 @@ export default function DashboardLayout({
           </main>
         </div>
       </div>
-    </DateProvider>
+    </LiveReportProvider>
   );
 }

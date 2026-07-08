@@ -1,156 +1,155 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getSystemAlerts } from "@/services/api";
-import { SystemAlert } from "@/types";
-import { Loader2, Bell, AlertTriangle, AlertCircle, Info, Settings2, RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useDateContext } from "@/contexts/DateContext";
+import { useEffect, useMemo } from "react";
+import { useLiveReport } from "@/contexts/DateContext";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Bell, AlertTriangle, TrendingDown, Eye, DollarSign, Zap } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { KPISkeleton } from "@/components/live/section-skeleton";
 
 export default function AlertsPage() {
-  const { selectedDate, dateLoading, refreshKey, refresh, refreshing } = useDateContext();
-  const [alerts, setAlerts] = useState<SystemAlert[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { startDate, endDate, appsData, isLoading, generateReport } = useLiveReport();
 
   useEffect(() => {
-    if (dateLoading || !selectedDate) return;
+    if (!appsData) generateReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, endDate]);
 
-    async function load() {
-      setLoading(true);
-      const data = await getSystemAlerts(selectedDate!);
-      setAlerts(data);
-      setLoading(false);
+  const displayRange =
+    startDate === endDate
+      ? format(parseISO(startDate), "MMM dd, yyyy")
+      : `${format(parseISO(startDate), "MMM dd")} → ${format(parseISO(endDate), "MMM dd, yyyy")}`;
+
+  // Generate alerts from live data
+  const alerts = useMemo(() => {
+    if (!appsData) return [];
+    const result: any[] = [];
+    let id = 1;
+
+    for (const app of appsData.apps) {
+      if (app.impressions > 0 && app.impressions < 1000) {
+        result.push({
+          id: `alert-${id++}`,
+          title: `Low impression volume in ${app.ad_unit_name}`,
+          timeString: "Detected from live data",
+          metric: "Impressions",
+          severity: "warning",
+          value: app.impressions,
+          icon: Eye,
+        });
+      }
+      if (app.revenue_usd > 0 && app.revenue_usd < 0.5) {
+        result.push({
+          id: `alert-${id++}`,
+          title: `Revenue below $0.50 in ${app.ad_unit_name}`,
+          timeString: "Detected from live data",
+          metric: "Revenue",
+          severity: "critical",
+          value: `$${app.revenue_usd.toFixed(4)}`,
+          icon: DollarSign,
+        });
+      }
+      if (app.fill_rate_pct > 0 && app.fill_rate_pct < 30) {
+        result.push({
+          id: `alert-${id++}`,
+          title: `Very low fill rate (${app.fill_rate_pct.toFixed(1)}%) in ${app.ad_unit_name}`,
+          timeString: "Detected from live data",
+          metric: "Fill Rate",
+          severity: "warning",
+          value: `${app.fill_rate_pct.toFixed(1)}%`,
+          icon: TrendingDown,
+        });
+      }
     }
-    load();
-  }, [selectedDate, dateLoading, refreshKey]);
 
-  const getAlertIcon = (severity: string) => {
-    switch (severity) {
-      case "critical":
-        return (
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-500/10 dark:bg-red-500/20">
-            <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
-          </div>
-        );
-      case "warning":
-        return (
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-500/10 dark:bg-orange-500/20">
-            <AlertCircle className="h-5 w-5 text-orange-600 dark:text-orange-400" />
-          </div>
-        );
-      case "info":
-        return (
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-500/10 dark:bg-blue-500/20">
-            <Info className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-          </div>
-        );
-      default:
-        return (
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-500/10 dark:bg-gray-500/20">
-            <Bell className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-          </div>
-        );
-    }
-  };
+    return result;
+  }, [appsData]);
 
-  const displayDate = selectedDate ? format(parseISO(selectedDate), "MMM dd, yyyy") : "";
+  const criticalCount = alerts.filter((a) => a.severity === "critical").length;
+  const warningCount = alerts.filter((a) => a.severity === "warning").length;
 
   return (
-    <div className="space-y-8 pb-10">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">System Alerts</h2>
-          <p className="text-muted-foreground mt-1">
-            AI-detected anomalies and critical system warnings.
-            {displayDate && (
-              <span className="ml-2 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                • {displayDate}
-              </span>
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+          <Zap className="h-5 w-5 text-indigo-500" />
+          Live Alerts
+        </h2>
+        <p className="text-muted-foreground">
+          Real-time alerts generated from live GAM data • {displayRange}
+        </p>
+      </div>
+
+      {isLoading && !appsData ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => <KPISkeleton key={i} />)}
+        </div>
+      ) : alerts.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="py-16 text-center">
+            <Bell className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-medium mb-2">All Clear</h3>
+            <p className="text-sm text-muted-foreground">
+              No alerts detected. All metrics are within healthy ranges.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <div className="flex items-center gap-3">
+            {criticalCount > 0 && (
+              <Badge className="bg-rose-500/10 text-rose-600 border-rose-500/30 hover:bg-rose-500/20">
+                {criticalCount} Critical
+              </Badge>
             )}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={refresh}
-            disabled={refreshing}
-            className="gap-2"
-          >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </Button>
-          <div className="flex items-center text-sm font-medium text-emerald-600 dark:text-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 px-3 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-900/50">
-            <span className="relative flex h-2 w-2 mr-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            Live from local server
+            {warningCount > 0 && (
+              <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/30 hover:bg-amber-500/20">
+                {warningCount} Warning
+              </Badge>
+            )}
           </div>
-        </div>
-      </div>
 
-      <div className="rounded-xl border bg-card/50 shadow-sm backdrop-blur-sm overflow-hidden">
-        <div className="flex items-center justify-between border-b px-6 py-4 bg-muted/30">
-          <div className="flex items-center space-x-2">
-            <Bell className="h-5 w-5 text-indigo-500" />
-            <h3 className="text-lg font-semibold">Active Alerts ({alerts.length})</h3>
+          <div className="space-y-3">
+            {alerts.map((alert) => {
+              const Icon = alert.icon;
+              return (
+                <Card
+                  key={alert.id}
+                  className={`border-l-4 ${
+                    alert.severity === "critical"
+                      ? "border-l-rose-500"
+                      : "border-l-amber-500"
+                  }`}
+                >
+                  <CardContent className="py-4">
+                    <div className="flex items-start gap-3">
+                      <div className={`p-2 rounded-lg ${
+                        alert.severity === "critical"
+                          ? "bg-rose-500/10"
+                          : "bg-amber-500/10"
+                      }`}>
+                        <Icon className={`h-4 w-4 ${
+                          alert.severity === "critical"
+                            ? "text-rose-500"
+                            : "text-amber-500"
+                        }`} />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">{alert.title}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{alert.timeString}</p>
+                      </div>
+                      <Badge variant="outline" className="text-[10px]">
+                        {alert.metric}
+                      </Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
-          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-muted">
-            <Settings2 className="h-4 w-4" />
-          </Button>
-        </div>
-
-        <div className="px-6 py-2 bg-muted/10">
-          <p className="text-sm text-muted-foreground">Items requiring immediate attention</p>
-        </div>
-
-        <div className="divide-y divide-border/50">
-          {loading ? (
-            <div className="flex h-40 items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : alerts.length === 0 ? (
-            <div className="flex h-40 items-center justify-center flex-col text-muted-foreground">
-              <Bell className="h-10 w-10 mb-4 opacity-20" />
-              <p>No active alerts for {displayDate || "this date"}.</p>
-            </div>
-          ) : (
-            alerts.map((alert) => (
-              <div
-                key={alert.id}
-                className="group flex flex-col sm:flex-row sm:items-center justify-between p-6 transition-colors hover:bg-muted/50"
-              >
-                <div className="flex items-start space-x-4">
-                  {getAlertIcon(alert.severity)}
-                  <div>
-                    <h4 className="text-base font-semibold leading-none mb-2">{alert.title}</h4>
-                    <p className="text-sm text-muted-foreground flex items-center">
-                      {alert.timeString}
-                      <span className="mx-2 opacity-50">•</span>
-                      Metric: <span className="text-foreground ml-1 font-medium">{alert.metric}</span>
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-4 sm:mt-0 flex items-center space-x-3 sm:ml-4 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-9 px-4"
-                    onClick={() => setAlerts((prev) => prev.filter((a) => a.id !== alert.id))}
-                  >
-                    Dismiss
-                  </Button>
-                  <Button size="sm" className="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm">
-                    Investigate
-                  </Button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }

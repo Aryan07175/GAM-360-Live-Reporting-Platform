@@ -1,147 +1,113 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getAnomalies } from "@/services/api";
-import { Anomaly } from "@/types";
+import { useEffect } from "react";
+import { useLiveReport } from "@/contexts/DateContext";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { AlertTriangle, TrendingDown, Loader2, Info } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { useDateContext } from "@/contexts/DateContext";
+import { AlertTriangle, TrendingDown, TrendingUp, Zap } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { KPISkeleton } from "@/components/live/section-skeleton";
 
 export default function AnomaliesPage() {
-  const { selectedDate, dateLoading, refreshKey } = useDateContext();
-  const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { startDate, endDate, anomalyData, isLoading, generateReport } = useLiveReport();
 
   useEffect(() => {
-    if (dateLoading || !selectedDate) return;
+    if (!anomalyData) generateReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, endDate]);
 
-    async function load() {
-      setLoading(true);
-      const data = await getAnomalies(selectedDate!);
-      setAnomalies(data);
-      setLoading(false);
-    }
-    load();
-  }, [selectedDate, dateLoading, refreshKey]);
+  const anomalies = anomalyData?.anomalies || [];
 
-  const getSeverityBadge = (severity: string) => {
-    switch (severity) {
-      case "High":
-        return <Badge variant="destructive">High</Badge>;
-      case "Medium":
-        return (
-          <Badge variant="secondary" className="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300">
-            Medium
-          </Badge>
-        );
-      case "Low":
-        return <Badge variant="outline" className="text-muted-foreground">Low</Badge>;
-      default:
-        return <Badge variant="outline">{severity}</Badge>;
-    }
-  };
-
-  const displayDate = selectedDate ? format(parseISO(selectedDate), "MMM dd, yyyy") : "";
+  const displayRange =
+    startDate === endDate
+      ? format(parseISO(startDate), "MMM dd, yyyy")
+      : `${format(parseISO(startDate), "MMM dd")} → ${format(parseISO(endDate), "MMM dd, yyyy")}`;
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight">Anomaly Detection</h2>
+        <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+          <Zap className="h-5 w-5 text-indigo-500" />
+          Anomaly Detection
+        </h2>
         <p className="text-muted-foreground">
-          AI-driven detection of revenue spikes, drops, and unusual patterns.
-          {displayDate && (
-            <span className="ml-2 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-              • {displayDate}
-            </span>
-          )}
+          Live comparison of current vs previous period • {displayRange}
         </p>
       </div>
 
-      <Alert>
-        <Info className="h-4 w-4" />
-        <AlertTitle>How it works</AlertTitle>
-        <AlertDescription>
-          The system compares the selected date&apos;s performance against a rolling 7-day moving average.
-          Statistical outliers are flagged automatically based on standard deviation thresholds.
-        </AlertDescription>
-      </Alert>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Detected Anomalies</CardTitle>
-          <CardDescription>
-            Found {anomalies.length} potential issue{anomalies.length !== 1 ? "s" : ""} requiring attention
-            {displayDate ? ` for ${displayDate}` : ""}.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Ad Unit / Entity</TableHead>
-                <TableHead>Severity</TableHead>
-                <TableHead className="text-right">Today&apos;s Revenue</TableHead>
-                <TableHead className="text-right">7D Average</TableHead>
-                <TableHead className="text-right">Deviation</TableHead>
-                <TableHead className="text-right">AI Confidence</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center">
-                    <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
-                  </TableCell>
-                </TableRow>
-              ) : anomalies.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                    No anomalies detected for this date. All systems normal.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                anomalies.map((item, idx) => (
-                  <TableRow key={idx}>
-                    <TableCell className="font-medium">
-                      <div className="flex items-center">
-                        <AlertTriangle className="h-4 w-4 text-orange-500 mr-2" />
-                        {item.ad_unit_name}
-                      </div>
-                    </TableCell>
-                    <TableCell>{getSeverityBadge(item.severity)}</TableCell>
-                    <TableCell className="text-right font-medium text-red-500">
-                      ${item.today_revenue.toFixed(4)}
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground">
-                      ${item.avg_revenue_7d.toFixed(4)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end text-red-500">
-                        <TrendingDown className="mr-1 h-3 w-3" />
-                        {item.drop_pct}%
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {(item.confidence * 100).toFixed(0)}%
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      {isLoading && !anomalyData ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => <KPISkeleton key={i} />)}
+        </div>
+      ) : anomalies.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="py-16 text-center">
+            <AlertTriangle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-medium mb-2">No Anomalies Detected</h3>
+            <p className="text-sm text-muted-foreground">
+              All metrics are within normal ranges for this period.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="border-amber-500/30 text-amber-600">
+              {anomalies.length} anomalies detected
+            </Badge>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {anomalies.map((anomaly: any) => (
+              <Card
+                key={anomaly.id}
+                className={`border-l-4 ${
+                  anomaly.severity === "High"
+                    ? "border-l-rose-500"
+                    : anomaly.severity === "Medium"
+                    ? "border-l-amber-500"
+                    : "border-l-sky-500"
+                }`}
+              >
+                <CardContent className="pt-4 pb-3">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      {anomaly.changePct < 0 ? (
+                        <TrendingDown className="h-4 w-4 text-rose-500" />
+                      ) : (
+                        <TrendingUp className="h-4 w-4 text-emerald-500" />
+                      )}
+                      <span className="text-sm font-semibold truncate max-w-[200px]">
+                        {anomaly.ad_unit_name}
+                      </span>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] ${
+                        anomaly.severity === "High"
+                          ? "border-rose-500/30 text-rose-500"
+                          : anomaly.severity === "Medium"
+                          ? "border-amber-500/30 text-amber-500"
+                          : "border-sky-500/30 text-sky-500"
+                      }`}
+                    >
+                      {anomaly.severity}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-2">{anomaly.description}</p>
+                  <div className="flex items-center gap-4 text-xs">
+                    <span className="text-muted-foreground">
+                      {anomaly.metric}: {anomaly.changePct > 0 ? "+" : ""}{anomaly.changePct.toFixed(1)}%
+                    </span>
+                    <span className="text-muted-foreground">
+                      ${typeof anomaly.previousValue === 'number' ? anomaly.previousValue.toFixed(4) : anomaly.previousValue} → ${typeof anomaly.currentValue === 'number' ? anomaly.currentValue.toFixed(4) : anomaly.currentValue}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

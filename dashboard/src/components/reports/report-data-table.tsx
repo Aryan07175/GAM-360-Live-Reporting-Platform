@@ -59,7 +59,7 @@ export function ReportDataTable({ data, title = "App Performance Scorecard" }: P
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageData = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-  const SortHeader = ({ label, field }: { label: string; field: SortKey }) => (
+  const renderSortHeader = (label: string, field: SortKey) => (
     <Button
       variant="ghost"
       size="sm"
@@ -102,15 +102,15 @@ export function ReportDataTable({ data, title = "App Performance Scorecard" }: P
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-12 pl-4"><SortHeader label="#" field="rank" /></TableHead>
-                <TableHead><SortHeader label="Application" field="ad_unit_name" /></TableHead>
-                <TableHead className="text-right"><SortHeader label="Revenue" field="revenue_usd" /></TableHead>
-                <TableHead className="text-right"><SortHeader label="Impressions" field="impressions" /></TableHead>
-                <TableHead className="text-right"><SortHeader label="Clicks" field="clicks" /></TableHead>
-                <TableHead className="text-right"><SortHeader label="CTR" field="ctr_pct" /></TableHead>
-                <TableHead className="text-right"><SortHeader label="eCPM" field="ecpm_usd" /></TableHead>
-                <TableHead className="text-right"><SortHeader label="Fill Rate" field="fill_rate_pct" /></TableHead>
-                <TableHead className="text-right"><SortHeader label="Ad Req" field="ad_requests" /></TableHead>
+                <TableHead className="w-12 pl-4">{renderSortHeader("#", "rank")}</TableHead>
+                <TableHead><div className="ml-2">{renderSortHeader("App Name", "ad_unit_name")}</div></TableHead>
+                <TableHead className="text-right">{renderSortHeader("Revenue", "revenue_usd")}</TableHead>
+                <TableHead className="text-right">{renderSortHeader("Impressions", "impressions")}</TableHead>
+                <TableHead className="text-right">{renderSortHeader("Clicks", "clicks")}</TableHead>
+                <TableHead className="text-right">{renderSortHeader("CTR", "ctr_pct")}</TableHead>
+                <TableHead className="text-right">{renderSortHeader("eCPM", "ecpm_usd")}</TableHead>
+                <TableHead className="text-right">{renderSortHeader("Fill Rate", "fill_rate_pct")}</TableHead>
+                <TableHead className="text-right">{renderSortHeader("Ad Req", "ad_requests")}</TableHead>
                 <TableHead className="text-right pr-4">Status</TableHead>
               </TableRow>
             </TableHeader>

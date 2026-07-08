@@ -1,10 +1,19 @@
+"""
+GAM Client — Live-Only Mode
+Every call generates a fresh report from Google Ad Manager.
+No persistent cache. No database. No ETL.
+
+Request-scoped deduplication (30s window) prevents duplicate concurrent
+requests for the same date range during a single page load's Promise.all().
+"""
+
 import os
 import io
 import gzip
-import time
 import asyncio
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
+from typing import Optional, Callable
 import pandas as pd
 from googleads import ad_manager
 
@@ -12,9 +21,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("gam_client")
 
 API_VERSION = os.getenv("GAM_API_VERSION", "v202602")
-TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "300")) # 5 minutes
+REQUEST_TIMEOUT = int(os.getenv("GAM_REQUEST_TIMEOUT", "120"))  # seconds
+MAX_PARALLEL = int(os.getenv("GAM_MAX_PARALLEL_REQUESTS", "5"))
 
-DIMENSIONS = ["DATE", "AD_UNIT_NAME", "AD_UNIT_ID"]
+DIMENSIONS = ["DATE", "HOUR", "AD_UNIT_NAME", "AD_UNIT_ID"]
 COLUMNS = [
     "AD_SERVER_IMPRESSIONS",
     "AD_SERVER_CLICKS",
@@ -25,51 +35,66 @@ COLUMNS = [
     "AD_SERVER_WITHOUT_CPD_AVERAGE_ECPM",
 ]
 
-class CacheManager:
-    """
-    In-memory cache with single-flight request deduplication.
-    """
-    def __init__(self):
-        self.store = {} # { cache_key: { "data": df, "cached_at": datetime } }
-        self.locks = {} # { cache_key: asyncio.Lock }
-    
-    def get(self, key: str):
-        entry = self.store.get(key)
-        if entry:
-            age = (datetime.now(timezone.utc) - entry["cached_at"]).total_seconds()
-            if age < TTL_SECONDS:
-                return entry["data"], entry["cached_at"]
-            else:
-                del self.store[key]
-        return None, None
-        
-    def set(self, key: str, data):
-        self.store[key] = {
-            "data": data,
-            "cached_at": datetime.now(timezone.utc)
-        }
-        
-    def get_lock(self, key: str) -> asyncio.Lock:
-        if key not in self.locks:
-            self.locks[key] = asyncio.Lock()
-        return self.locks[key]
-        
-    async def cleanup_loop(self):
-        while True:
-            await asyncio.sleep(60)
-            now = datetime.now(timezone.utc)
-            keys_to_delete = []
-            for k, v in self.store.items():
-                if (now - v["cached_at"]).total_seconds() >= TTL_SECONDS:
-                    keys_to_delete.append(k)
-            for k in keys_to_delete:
-                del self.store[k]
-            # also cleanup unused locks
-            for k in list(self.locks.keys()):
-                if k not in self.store and not self.locks[k].locked():
-                    del self.locks[k]
 
-cache_manager = CacheManager()
+class RequestDeduplicator:
+    """
+    Prevents duplicate concurrent GAM requests for the same date range.
+    NOT a persistent cache — entries expire after 30 seconds.
+    Used only within a single page load's parallel requests.
+    """
+
+    def __init__(self, ttl_seconds: int = 30):
+        self.ttl = ttl_seconds
+        self._inflight: dict[str, asyncio.Task] = {}
+        self._results: dict[str, tuple[pd.DataFrame, datetime]] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _key(self, network_code: str, start: date, end: date) -> str:
+        return f"{network_code}_{start.isoformat()}_{end.isoformat()}"
+
+    def _get_lock(self, key: str) -> asyncio.Lock:
+        if key not in self._locks:
+            self._locks[key] = asyncio.Lock()
+        return self._locks[key]
+
+    def get_if_fresh(self, key: str) -> Optional[pd.DataFrame]:
+        """Return result only if it was fetched within the TTL window."""
+        entry = self._results.get(key)
+        if entry:
+            df, fetched_at = entry
+            age = (datetime.now(timezone.utc) - fetched_at).total_seconds()
+            if age < self.ttl:
+                return df
+            else:
+                del self._results[key]
+        return None
+
+    def store(self, key: str, df: pd.DataFrame):
+        self._results[key] = (df, datetime.now(timezone.utc))
+
+    def clear(self):
+        """Force-clear all deduplication entries."""
+        self._results.clear()
+        self._inflight.clear()
+
+    async def cleanup(self):
+        """Remove expired entries."""
+        now = datetime.now(timezone.utc)
+        expired = [
+            k for k, (_, t) in self._results.items()
+            if (now - t).total_seconds() >= self.ttl
+        ]
+        for k in expired:
+            del self._results[k]
+        # Cleanup unused locks
+        for k in list(self._locks.keys()):
+            if k not in self._results and k not in self._inflight:
+                if not self._locks[k].locked():
+                    del self._locks[k]
+
+
+_dedup = RequestDeduplicator()
+
 
 class GAMClient:
     def __init__(self, network_code: str = None):
@@ -88,6 +113,7 @@ class GAMClient:
         return {"year": d.year, "month": d.month, "day": d.day}
 
     def run_report(self, start: date, end: date) -> int:
+        """Submit a report job to Google Ad Manager."""
         report_service = self._report_service()
         report_query = {
             "dimensions": DIMENSIONS,
@@ -98,20 +124,31 @@ class GAMClient:
         }
         report_job = {"reportQuery": report_query}
         report_job = report_service.runReportJob(report_job)
+        log.info(f"GAM report job submitted: {report_job['id']} ({start} to {end})")
         return report_job["id"]
 
-    async def wait_for_report(self, job_id: int, poll_interval: int = 5) -> bool:
+    async def wait_for_report(self, job_id: int, poll_interval: int = 3) -> bool:
+        """Poll GAM until report is ready. Non-blocking via asyncio.sleep."""
         report_service = self._report_service()
+        start_time = datetime.now()
         while True:
-            # We use asyncio.sleep to not block the event loop in MCP server
+            elapsed = (datetime.now() - start_time).total_seconds()
+            if elapsed > REQUEST_TIMEOUT:
+                log.error(f"Report job {job_id} timed out after {REQUEST_TIMEOUT}s")
+                raise TimeoutError(f"GAM report generation timed out after {REQUEST_TIMEOUT} seconds")
+
             status = report_service.getReportJobStatus(job_id)
+            log.info(f"Report job {job_id} status: {status} ({elapsed:.0f}s)")
+
             if status == "COMPLETED":
                 return True
             elif status == "FAILED":
-                return False
+                raise RuntimeError(f"GAM report job {job_id} failed")
+
             await asyncio.sleep(poll_interval)
 
     def download_report(self, job_id: int) -> pd.DataFrame:
+        """Download and parse the completed report into a DataFrame."""
         report_service = self._report_service()
         report_url = report_service.getReportDownloadUrlWithOptions(
             job_id,
@@ -131,8 +168,19 @@ class GAMClient:
             raw = raw.decode("utf-8")
 
         df = pd.read_csv(io.StringIO(raw))
-        df.columns = [c.strip().lower().replace(" ", "_").replace("dimension.", "").replace("column.", "") for c in df.columns]
+        df.columns = [
+            c.strip().lower().replace(" ", "_").replace("dimension.", "").replace("column.", "")
+            for c in df.columns
+        ]
         
+        # Ensure all expected columns exist (GAM might omit them if not enabled)
+        expected = [c.lower() for c in COLUMNS]
+        for c in expected:
+            if c not in df.columns:
+                df[c] = 0.0
+
+
+        # Convert revenue from micros to dollars if needed
         revenue_cols = [c for c in df.columns if "revenue" in c or "ecpm" in c or "cpm" in c]
         use_micros = os.getenv("REVENUE_IN_MICROS", "false").lower() == "true"
         if not use_micros:
@@ -142,34 +190,93 @@ class GAMClient:
         for col in revenue_cols:
             if col in df.columns:
                 df[col] = df[col].round(6)
-        
-        # We enforce types to float for stats
+
         df = df.fillna(0)
         return df
 
-    async def get_cached_data(self, target_date: date) -> tuple[pd.DataFrame, str]:
+    async def get_live_data(
+        self, start: date, end: date, force_refresh: bool = False
+    ) -> pd.DataFrame:
         """
-        Returns (DataFrame, cached_at_iso_string)
-        """
-        cache_key = f"gam_data_{self.network_code}_{target_date.isoformat()}"
-        lock = cache_manager.get_lock(cache_key)
+        Fetch LIVE data from Google Ad Manager. Always generates a new report.
         
+        If force_refresh=False, uses request-scoped deduplication (30s window)
+        to avoid duplicate requests within a single page load's Promise.all().
+        
+        If force_refresh=True, always generates a brand-new report.
+        """
+        key = _dedup._key(self.network_code, start, end)
+        lock = _dedup._get_lock(key)
+
         async with lock:
-            data, cached_at = cache_manager.get(cache_key)
-            if data is not None:
-                return data, cached_at.isoformat()
-            
-            # Cache miss - fetch from GAM
-            log.info(f"Cache miss for {cache_key}. Fetching from GAM API...")
-            
-            # Run blocking API calls in executor to prevent freezing the MCP event loop
-            job_id = await asyncio.to_thread(self.run_report, target_date, target_date)
-            success = await self.wait_for_report(job_id)
-            if not success:
-                raise RuntimeError(f"GAM Report job failed.")
-                
+            # Check deduplication (only if not force refresh)
+            if not force_refresh:
+                existing = _dedup.get_if_fresh(key)
+                if existing is not None:
+                    log.info(f"Dedup hit for {key} (within 30s window)")
+                    return existing
+
+            # Always fetch fresh from GAM
+            log.info(f"Fetching LIVE data from GAM: {start} to {end}")
+
+            # Run blocking API calls in executor
+            job_id = await asyncio.to_thread(self.run_report, start, end)
+            await self.wait_for_report(job_id)
             df = await asyncio.to_thread(self.download_report, job_id)
-            cache_manager.set(cache_key, df)
-            
-            data, cached_at = cache_manager.get(cache_key)
-            return data, cached_at.isoformat()
+
+            # Store for deduplication (30s only)
+            _dedup.store(key, df)
+
+            log.info(f"LIVE data fetched: {len(df)} rows ({start} to {end})")
+            return df
+
+    async def get_live_data_multi_day(
+        self, start: date, end: date, force_refresh: bool = False
+    ) -> pd.DataFrame:
+        """
+        For multi-day ranges, fetch each day's data in parallel (with concurrency limit).
+        This avoids a single massive report that might timeout.
+        
+        For single-day ranges, just calls get_live_data directly.
+        """
+        day_count = (end - start).days + 1
+
+        if day_count <= 1:
+            return await self.get_live_data(start, end, force_refresh)
+
+        # For ranges up to 7 days, fetch as a single report
+        if day_count <= 7:
+            return await self.get_live_data(start, end, force_refresh)
+
+        # For larger ranges, split into weekly chunks and fetch in parallel
+        semaphore = asyncio.Semaphore(MAX_PARALLEL)
+        chunks = []
+        current = start
+        while current <= end:
+            chunk_end = min(current + timedelta(days=6), end)
+            chunks.append((current, chunk_end))
+            current = chunk_end + timedelta(days=1)
+
+        async def fetch_chunk(s: date, e: date) -> pd.DataFrame:
+            async with semaphore:
+                return await self.get_live_data(s, e, force_refresh)
+
+        results = await asyncio.gather(
+            *(fetch_chunk(s, e) for s, e in chunks),
+            return_exceptions=True
+        )
+
+        # Combine all successful results
+        dfs = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                log.error(f"Chunk {chunks[i]} failed: {result}")
+            else:
+                dfs.append(result)
+
+        if not dfs:
+            raise RuntimeError("All GAM report chunks failed")
+
+        combined = pd.concat(dfs, ignore_index=True)
+        log.info(f"Combined {len(dfs)} chunks: {len(combined)} total rows")
+        return combined

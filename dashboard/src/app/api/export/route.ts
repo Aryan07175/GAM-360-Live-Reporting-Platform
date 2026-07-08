@@ -1,40 +1,42 @@
 import { NextResponse } from "next/server";
-import { getRevenueByApp } from "@/services/api";
+import { fetchRevenueByApplication } from "@/actions/report-actions";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   let date = searchParams.get("date");
 
-  // Fallback to latest available date if none provided
+  // Fallback to yesterday if no date provided
   if (!date) {
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     date = yesterday.toISOString().split("T")[0];
   }
 
-  const data = await getRevenueByApp(date);
+  const result = await fetchRevenueByApplication(date, date);
+
+  if (!result || !result.apps) {
+    return new NextResponse("No data available", { status: 404 });
+  }
 
   // Generate CSV content
   const header = [
-    "Date",
+    "Rank",
     "App Name",
     "Ad Unit ID",
-    "Network Code",
     "Revenue (USD)",
     "Impressions",
     "Clicks",
     "Ad Requests",
     "Fill Rate (%)",
     "CTR (%)",
-    "eCPM (USD)"
+    "eCPM (USD)",
   ].join(",");
 
-  const rows = data.map((row) =>
+  const rows = result.apps.map((row) =>
     [
-      row.report_date,
-      `"${row.ad_unit_name}"`, // Quote strings to handle commas
+      row.rank,
+      `"${row.ad_unit_name}"`,
       `"${row.ad_unit_id}"`,
-      `"${row.network_code}"`,
       row.revenue_usd,
       row.impressions,
       row.clicks,
@@ -50,7 +52,7 @@ export async function GET(request: Request) {
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv",
-      "Content-Disposition": `attachment; filename="gam_revenue_report_${date}.csv"`,
+      "Content-Disposition": `attachment; filename="gam_live_report_${date}.csv"`,
     },
   });
 }

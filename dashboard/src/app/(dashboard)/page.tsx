@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import {
   DollarSign,
   MousePointerClick,
@@ -8,262 +8,283 @@ import {
   Activity,
   Percent,
   ArrowRightLeft,
-  AlertCircle,
-  Users,
   Trophy,
   ArrowRight,
   TrendingUp,
   TrendingDown,
+  Zap,
+  BarChart3,
+  Users,
 } from "lucide-react";
 import { KPICard } from "@/components/cards/kpi-card";
 import { TrendChart } from "@/components/charts/trend-chart";
-import { getNetworkTotal, getRevenueTrend, getRevenueByApp } from "@/services/api";
-import { NetworkTotal, TrendDataPoint, AppMetrics } from "@/types";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { useDateContext } from "@/contexts/DateContext";
+import { Button } from "@/components/ui/button";
+import { useLiveReport } from "@/contexts/DateContext";
+import { LiveProgressBar } from "@/components/live/live-progress-bar";
+import { KPISkeleton, ChartSkeleton } from "@/components/live/section-skeleton";
 import { format, parseISO } from "date-fns";
 import Link from "next/link";
 
 export default function DashboardOverview() {
-  const { selectedDate, dateLoading, refreshKey } = useDateContext();
-  const [total, setTotal] = useState<NetworkTotal | null>(null);
-  const [trend, setTrend] = useState<TrendDataPoint[]>([]);
-  const [topApps, setTopApps] = useState<AppMetrics[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [noData, setNoData] = useState(false);
+  const {
+    startDate,
+    endDate,
+    datePreset,
+    summaryData,
+    appsData,
+    trendData,
+    isLoading,
+    progress,
+    lastFetchedAt,
+    generateReport,
+  } = useLiveReport();
 
+  // Auto-generate report on mount
   useEffect(() => {
-    if (dateLoading || !selectedDate) return;
+    generateReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, endDate]);
 
-    async function loadData() {
-      setLoading(true);
-      setNoData(false);
+  const displayRange =
+    startDate === endDate
+      ? format(parseISO(startDate), "MMM dd, yyyy")
+      : `${format(parseISO(startDate), "MMM dd")} → ${format(parseISO(endDate), "MMM dd, yyyy")}`;
 
-      const [totalData, trendData, appsData] = await Promise.all([
-        getNetworkTotal(selectedDate!),
-        getRevenueTrend(30),
-        getRevenueByApp(selectedDate!),
-      ]);
+  // Extract values from summary
+  const getKPI = (label: string) =>
+    summaryData?.summary.find((s) => s.label === label);
 
-      if (!totalData) {
-        setNoData(true);
-      }
+  const totalRev = getKPI("Total Revenue");
+  const totalImp = getKPI("Total Impressions");
+  const totalClicks = getKPI("Total Clicks");
+  const avgEcpm = getKPI("Average eCPM");
+  const ctr = getKPI("CTR");
+  const fillRate = getKPI("Fill Rate");
+  const adRequests = getKPI("Ad Requests");
+  const activeApps = getKPI("Active Apps");
 
-      setTotal(totalData);
-      setTrend(trendData.reverse());
-      setTopApps(appsData.slice(0, 5));
-      setLoading(false);
-    }
-    loadData();
-  }, [selectedDate, dateLoading, refreshKey]);
+  // Calculate DAU as Ad Requests / 5
+  const dauValue = adRequests?.raw ? Math.round(adRequests.raw / 5) : 0;
+  const dauFormatted = dauValue.toLocaleString();
 
-  const displayDate = selectedDate
-    ? format(parseISO(selectedDate), "MMM dd, yyyy")
-    : null;
+  const topApps = (appsData?.apps || []).slice(0, 5);
+  const maxAppRevenue =
+    topApps.length > 0
+      ? Math.max(...topApps.map((a) => a.revenue_usd))
+      : 1;
 
-  // Compute max revenue among top apps (for relative bar widths)
-  const maxAppRevenue = topApps.length > 0
-    ? Math.max(...topApps.map((a) => a.revenue_usd))
-    : 1;
+  const trendPoints = (trendData?.trend || []).map(p => ({
+    ...p,
+    dau: Math.round((p.ad_requests || 0) / 5)
+  }));
+
+  const hasData = !!summaryData || !!appsData || !!trendData;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Overview</h2>
-        <p className="text-muted-foreground">
-          Monitor your network&apos;s high-level metrics and trends.
-          {displayDate && (
-            <span className="ml-2 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-              • Showing data for {displayDate}
+      {/* Page Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <Zap className="h-6 w-6 text-indigo-500" />
+            Live Dashboard
+          </h2>
+          <p className="text-muted-foreground">
+            Real-time network metrics from Google Ad Manager
+            <span className="ml-2 text-xs font-medium text-indigo-500">
+              • {displayRange}
             </span>
-          )}
-        </p>
+          </p>
+        </div>
+        {lastFetchedAt && (
+          <Badge
+            variant="outline"
+            className="border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
+            Live Data
+          </Badge>
+        )}
       </div>
 
-      {/* No data warning banner */}
-      {noData && !loading && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>No data available for {displayDate}</AlertTitle>
-          <AlertDescription>
-            No revenue data was found in the database for this date.
-            This typically means the GAM pipeline has not yet synced data for this day.
-            Try selecting a different date using the date picker in the header.
-          </AlertDescription>
-        </Alert>
+      {/* Progress */}
+      <LiveProgressBar progress={progress} isLoading={isLoading} />
+
+      {/* Empty state - show prompt */}
+      {!hasData && !isLoading && (
+        <Card className="border-dashed">
+          <CardContent className="py-16 text-center">
+            <BarChart3 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-medium mb-2">
+              Ready to Fetch Live Data
+            </h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Select a date range and click Refresh to fetch live data from
+              Google Ad Manager.
+            </p>
+            <Button
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              onClick={() => generateReport()}
+            >
+              <Zap className="h-4 w-4 mr-2" />
+              Generate Live Report
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
-      {/* ── KPI Grid ─────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KPICard
-          title="Total Revenue"
-          value={
-            total
-              ? `$${total.total_revenue_usd.toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 6,
-                })}`
-              : noData ? "—" : "$0.00"
-          }
-          icon={<DollarSign className="h-4 w-4" />}
-          loading={loading}
-          subtitle={noData ? "No data for this date" : undefined}
-        />
-        <KPICard
-          title="Impressions"
-          value={total ? total.total_impressions.toLocaleString() : noData ? "—" : "0"}
-          icon={<Eye className="h-4 w-4" />}
-          loading={loading}
-          subtitle={noData ? "No data for this date" : undefined}
-        />
-        {/* ── DAILY ACTIVE USERS (DAU) ── */}
-        <KPICard
-          title="Daily Active Users"
-          value={
-            total
-              ? total.total_ad_requests > 0
-                ? total.total_ad_requests.toLocaleString()
-                : total.total_impressions > 0
-                  ? total.total_impressions.toLocaleString()
-                  : "—"
-              : noData ? "—" : "0"
-          }
-          icon={<Users className="h-4 w-4" />}
-          loading={loading}
-          subtitle={
-            noData
-              ? "No data for this date"
-              : total && total.total_ad_requests > 0
-              ? "Based on ad requests"
-              : total && total.total_impressions > 0
-              ? "Based on impressions"
-              : undefined
-          }
-        />
-        <KPICard
-          title="Avg eCPM"
-          value={total ? `$${total.avg_ecpm.toFixed(6)}` : noData ? "—" : "$0.00"}
-          icon={<Activity className="h-4 w-4" />}
-          loading={loading}
-          subtitle={noData ? "No data for this date" : undefined}
-        />
+      {/* KPI Grid */}
+      {(isLoading && !summaryData) ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <KPISkeleton key={i} />
+          ))}
+        </div>
+      ) : summaryData ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <KPICard
+            title="Total Revenue"
+            value={totalRev?.formatted || "$0.00"}
+            icon={<DollarSign className="h-4 w-4" />}
+            loading={false}
+          />
+          <KPICard
+            title="Impressions"
+            value={totalImp?.formatted || "0"}
+            icon={<Eye className="h-4 w-4" />}
+            loading={false}
+          />
+          <KPICard
+            title="Clicks"
+            value={totalClicks?.formatted || "0"}
+            icon={<MousePointerClick className="h-4 w-4" />}
+            loading={false}
+          />
+          <KPICard
+            title="Avg eCPM"
+            value={avgEcpm?.formatted || "$0.00"}
+            icon={<Activity className="h-4 w-4" />}
+            loading={false}
+          />
+          <KPICard
+            title="Daily Active Users"
+            value={dauFormatted}
+            icon={<Users className="h-4 w-4" />}
+            loading={false}
+          />
+          <KPICard
+            title="Fill Rate"
+            value={fillRate?.formatted || "0.00%"}
+            icon={<Percent className="h-4 w-4" />}
+            loading={false}
+          />
+          <KPICard
+            title="Ad Requests"
+            value={adRequests?.formatted || "0"}
+            icon={<ArrowRightLeft className="h-4 w-4" />}
+            loading={false}
+          />
+          <KPICard
+            title="Active Apps"
+            value={activeApps?.formatted || "0"}
+            icon={<Activity className="h-4 w-4" />}
+            loading={false}
+          />
+        </div>
+      ) : null}
 
-        <KPICard
-          title="Fill Rate"
-          value={
-            total
-              ? total.avg_fill_rate !== null
-                ? `${total.avg_fill_rate.toFixed(1)}%`
-                : "N/A"
-              : noData ? "—" : "N/A"
-          }
-          icon={<Percent className="h-4 w-4" />}
-          loading={loading}
-          subtitle={
-            total && total.avg_fill_rate === null
-              ? "No ad requests recorded for this date"
-              : noData
-              ? "No data for this date"
-              : undefined
-          }
-        />
-        <KPICard
-          title="Clicks"
-          value={total ? total.total_clicks.toLocaleString() : noData ? "—" : "0"}
-          icon={<MousePointerClick className="h-4 w-4" />}
-          loading={loading}
-          subtitle={noData ? "No data for this date" : undefined}
-        />
-        <KPICard
-          title="Ad Requests"
-          value={total ? total.total_ad_requests.toLocaleString() : noData ? "—" : "0"}
-          icon={<ArrowRightLeft className="h-4 w-4" />}
-          loading={loading}
-          subtitle={noData ? "No data for this date" : undefined}
-        />
-        <KPICard
-          title="Active Apps"
-          value={total ? total.app_count.toLocaleString() : noData ? "—" : "0"}
-          icon={<Activity className="h-4 w-4" />}
-          loading={loading}
-          subtitle={noData ? "No data for this date" : "Ad units with revenue"}
-        />
-      </div>
-
-      {/* ── Charts + Top Apps ─────────────────────────────────────────────────── */}
+      {/* Charts + Top Apps */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Left: Trend Charts */}
         <div className="lg:col-span-2 space-y-6">
-          <TrendChart
-            title="Revenue Trend (30 Days)"
-            description="Daily total revenue in USD"
-            data={trend}
-            dataKey="revenue_usd"
-            xAxisKey="report_date"
-            valuePrefix="$"
-            color="#818cf8"
-          />
-          <TrendChart
-            title="Impressions Trend (30 Days)"
-            description="Daily ad impressions"
-            data={trend}
-            dataKey="impressions"
-            xAxisKey="report_date"
-            color="#0ea5e9"
-          />
-          <TrendChart
-            title="eCPM Trend (30 Days)"
-            description="Average effective cost per mille"
-            data={trend}
-            dataKey="ecpm_usd"
-            xAxisKey="report_date"
-            valuePrefix="$"
-            color="#2dd4bf"
-          />
+          {(isLoading && !trendData) ? (
+            <>
+              <ChartSkeleton />
+              <ChartSkeleton />
+            </>
+          ) : trendPoints.length > 0 ? (
+            <>
+              <TrendChart
+                title="Revenue Trend"
+                description={`Daily revenue (${displayRange})`}
+                data={trendPoints}
+                dataKey="revenue_usd"
+                xAxisKey="report_date"
+                valuePrefix="$"
+                color="#818cf8"
+              />
+              <TrendChart
+                title="Daily Active Users"
+                description={`Estimated DAU (${displayRange})`}
+                data={trendPoints}
+                dataKey="dau"
+                xAxisKey="report_date"
+                color="#f59e0b"
+              />
+              <TrendChart
+                title="Impressions Trend"
+                description={`Daily impressions (${displayRange})`}
+                data={trendPoints}
+                dataKey="impressions"
+                xAxisKey="report_date"
+                color="#0ea5e9"
+              />
+              <TrendChart
+                title="eCPM Trend"
+                description={`Daily eCPM (${displayRange})`}
+                data={trendPoints}
+                dataKey="ecpm_usd"
+                xAxisKey="report_date"
+                valuePrefix="$"
+                color="#2dd4bf"
+              />
+            </>
+          ) : null}
         </div>
 
-        {/* Right: Top Performing Apps */}
+        {/* Right: Top Apps */}
         <div className="space-y-6">
-          <Card className="h-fit">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Trophy className="h-5 w-5 text-amber-500" />
-                  <CardTitle className="text-base">Top Performing Apps</CardTitle>
-                </div>
-                <Link
-                  href="/applications"
-                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
-                >
-                  View all <ArrowRight className="h-3 w-3" />
-                </Link>
-              </div>
-              <CardDescription>
-                By revenue {displayDate ? `on ${displayDate}` : ""}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
+          {(isLoading && !appsData) ? (
+            <Card>
+              <CardContent className="pt-6">
                 <div className="space-y-4">
-                  {[...Array(5)].map((_, i) => (
+                  {Array.from({ length: 5 }).map((_, i) => (
                     <div key={i} className="animate-pulse space-y-2">
                       <div className="h-4 bg-muted rounded w-3/4" />
                       <div className="h-2 bg-muted rounded w-full" />
                     </div>
                   ))}
                 </div>
-              ) : topApps.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">
-                  No app data for this date.
-                </p>
-              ) : (
+              </CardContent>
+            </Card>
+          ) : topApps.length > 0 ? (
+            <Card className="h-fit">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Trophy className="h-5 w-5 text-amber-500" />
+                    <CardTitle className="text-base">
+                      Top Performing Apps
+                    </CardTitle>
+                  </div>
+                  <Link
+                    href="/applications"
+                    className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+                  >
+                    View all <ArrowRight className="h-3 w-3" />
+                  </Link>
+                </div>
+                <CardDescription>By revenue • {displayRange}</CardDescription>
+              </CardHeader>
+              <CardContent>
                 <div className="space-y-4">
                   {topApps.map((app, idx) => {
-                    const pct = maxAppRevenue > 0
-                      ? (app.revenue_usd / maxAppRevenue) * 100
-                      : 0;
+                    const pct =
+                      maxAppRevenue > 0
+                        ? (app.revenue_usd / maxAppRevenue) * 100
+                        : 0;
                     const rankColors = [
                       "text-amber-500",
                       "text-slate-400",
@@ -279,22 +300,20 @@ export default function DashboardOverview() {
                       "bg-rose-500",
                     ];
 
-                    // Fill rate health badge
-                    const fillRate = app.fill_rate_pct;
+                    const fillRateVal = app.fill_rate_pct;
                     const healthLabel =
-                      fillRate > 80
+                      fillRateVal > 80
                         ? "Healthy"
-                        : fillRate > 50
+                        : fillRateVal > 50
                         ? "Fair"
                         : "Low";
                     const healthClass =
-                      fillRate > 80
+                      fillRateVal > 80
                         ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                        : fillRate > 50
+                        : fillRateVal > 50
                         ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
                         : "bg-rose-500/10 text-rose-500 border-rose-500/20";
 
-                    // Revenue trend icon (compare vs ecpm as proxy)
                     const isTrending = app.ecpm_usd > 0.003;
 
                     return (
@@ -315,7 +334,6 @@ export default function DashboardOverview() {
                           </span>
                         </div>
 
-                        {/* Revenue bar */}
                         <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
                           <div
                             className={`h-full rounded-full transition-all duration-500 ${barColors[idx]}`}
@@ -323,10 +341,11 @@ export default function DashboardOverview() {
                           />
                         </div>
 
-                        {/* Meta row */}
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <div className="flex items-center gap-2">
-                            <span>{app.impressions.toLocaleString()} impr.</span>
+                            <span>
+                              {app.impressions.toLocaleString()} impr.
+                            </span>
                             <span>•</span>
                             <span>eCPM ${app.ecpm_usd.toFixed(4)}</span>
                           </div>
@@ -347,65 +366,9 @@ export default function DashboardOverview() {
                     );
                   })}
                 </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* DAU Breakdown card */}
-          {total && !noData && !loading && (
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center gap-2">
-                  <Users className="h-5 w-5 text-sky-500" />
-                  <CardTitle className="text-base">Daily Active Users</CardTitle>
-                </div>
-                <CardDescription>Ad engagement breakdown</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {[
-                  {
-                    label: "Total Ad Requests",
-                    value: total.total_ad_requests.toLocaleString(),
-                    pct: 100,
-                    color: "bg-indigo-500",
-                    sub: "Unique user sessions",
-                  },
-                  {
-                    label: "Served Impressions",
-                    value: total.total_impressions.toLocaleString(),
-                    pct: total.total_ad_requests > 0
-                      ? Math.round((total.total_impressions / total.total_ad_requests) * 100)
-                      : total.avg_fill_rate ?? 0,
-                    color: "bg-sky-500",
-                    sub: `${total.avg_fill_rate?.toFixed(1) ?? "N/A"}% fill rate`,
-                  },
-                  {
-                    label: "Clicks",
-                    value: total.total_clicks.toLocaleString(),
-                    pct: total.total_impressions > 0
-                      ? Math.min(Math.round((total.total_clicks / total.total_impressions) * 10000) / 100, 100)
-                      : 0,
-                    color: "bg-emerald-500",
-                    sub: "CTR engagement",
-                  },
-                ].map((row) => (
-                  <div key={row.label} className="space-y-1.5">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">{row.label}</span>
-                      <span className="font-semibold">{row.value}</span>
-                    </div>
-                    <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${row.color}`}
-                        style={{ width: `${Math.min(row.pct, 100)}%` }}
-                      />
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">{row.sub}</p>
-                  </div>
-                ))}
               </CardContent>
             </Card>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
