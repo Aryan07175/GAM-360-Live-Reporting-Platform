@@ -60,8 +60,7 @@ export default function ReportsPage() {
     if (!reportData) {
       generateReport();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [reportData, generateReport]);
 
   const displayRange =
     startDate === endDate

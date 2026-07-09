@@ -13,8 +13,7 @@ export default function TrendAnalysisPage() {
 
   useEffect(() => {
     if (!trendData) generateReport();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate]);
+  }, [trendData, generateReport]);
 
   const trendPoints = trendData?.trend || [];
 

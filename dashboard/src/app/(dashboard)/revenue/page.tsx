@@ -16,8 +16,7 @@ export default function RevenueAnalyticsPage() {
 
   useEffect(() => {
     if (!appsData) generateReport();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate]);
+  }, [appsData, generateReport]);
 
   const displayRange =
     startDate === endDate

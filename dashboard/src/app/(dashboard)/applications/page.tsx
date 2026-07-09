@@ -25,8 +25,7 @@ export default function ApplicationsPage() {
 
   useEffect(() => {
     if (!appsData) generateReport();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate]);
+  }, [appsData, generateReport]);
 
   const apps = appsData?.apps || [];
 

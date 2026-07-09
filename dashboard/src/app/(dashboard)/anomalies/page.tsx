@@ -13,8 +13,7 @@ export default function AnomaliesPage() {
 
   useEffect(() => {
     if (!anomalyData) generateReport();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate]);
+  }, [anomalyData, generateReport]);
 
   const anomalies = anomalyData?.anomalies || [];
 
