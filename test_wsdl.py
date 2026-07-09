@@ -1,0 +1,1 @@
+import urllib.request, re; wsdl = urllib.request.urlopen('https://ads.google.com/apis/ads/publisher/v202511/ReportService?wsdl').read().decode('utf-8'); print([e for e in re.findall(r'<enumeration value=\"(.*?)\"/>', wsdl) if 'TOTAL' in e or 'EXCHANGE' in e or 'REVENUE' in e])

@@ -26,13 +26,24 @@ MAX_PARALLEL = int(os.getenv("GAM_MAX_PARALLEL_REQUESTS", "5"))
 
 DIMENSIONS = ["DATE", "HOUR", "AD_UNIT_NAME", "AD_UNIT_ID"]
 COLUMNS = [
-    "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
-    "TOTAL_LINE_ITEM_LEVEL_CLICKS",
+    # --- Ad Server (direct-sold) ---
+    "AD_SERVER_IMPRESSIONS",
+    "AD_SERVER_CLICKS",
     "AD_SERVER_CTR",
     "AD_SERVER_AD_REQUESTS",
     "AD_SERVER_FILL_RATE",
-    "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
+    "AD_SERVER_CPM_AND_CPC_REVENUE",
     "AD_SERVER_WITHOUT_CPD_AVERAGE_ECPM",
+
+    # --- AdSense backfill ---
+    "ADSENSE_LINE_ITEM_LEVEL_IMPRESSIONS",
+    "ADSENSE_LINE_ITEM_LEVEL_CLICKS",
+    "ADSENSE_LINE_ITEM_LEVEL_REVENUE",
+
+    # --- Ad Exchange (programmatic) ---
+    "AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS",
+    "AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS",
+    "AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE",
 ]
 
 
@@ -173,27 +184,48 @@ class GAMClient:
             c.strip().lower().replace(" ", "_").replace("dimension.", "").replace("column.", "")
             for c in df.columns
         ]
-        
-        # Rename "total" columns back to "ad_server" so frontend stays happy
-        df = df.rename(columns={
-            "total_line_item_level_impressions": "ad_server_impressions",
-            "total_line_item_level_clicks": "ad_server_clicks",
-            "total_line_item_level_cpm_and_cpc_revenue": "ad_server_cpm_and_cpc_revenue",
-        })
-        
-        # Ensure all expected columns exist (GAM might omit them if not enabled)
-        expected = [
-            "ad_server_impressions",
-            "ad_server_clicks",
-            "ad_server_ctr",
-            "ad_server_ad_requests",
-            "ad_server_fill_rate",
-            "ad_server_cpm_and_cpc_revenue",
-            "ad_server_without_cpd_average_ecpm"
+
+        # Ensure all channel columns exist (GAM omits them if channel has no data)
+        channel_cols = [
+            "ad_server_impressions", "ad_server_clicks", "ad_server_cpm_and_cpc_revenue",
+            "adsense_line_item_level_impressions", "adsense_line_item_level_clicks",
+            "adsense_line_item_level_revenue",
+            "ad_exchange_line_item_level_impressions", "ad_exchange_line_item_level_clicks",
+            "ad_exchange_line_item_level_revenue",
+            "ad_server_ctr", "ad_server_ad_requests", "ad_server_fill_rate",
+            "ad_server_without_cpd_average_ecpm",
         ]
-        for c in expected:
+        for c in channel_cols:
             if c not in df.columns:
                 df[c] = 0.0
+
+        # Convert all metric columns to numeric before summing
+        for c in channel_cols:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+
+        # ── Sum all channels into unified "ad_server_*" columns ──
+        # This makes the frontend see the TRUE network total without code changes.
+        df["ad_server_impressions"] = (
+            df["ad_server_impressions"]
+            + df["adsense_line_item_level_impressions"]
+            + df["ad_exchange_line_item_level_impressions"]
+        )
+        df["ad_server_clicks"] = (
+            df["ad_server_clicks"]
+            + df["adsense_line_item_level_clicks"]
+            + df["ad_exchange_line_item_level_clicks"]
+        )
+        df["ad_server_cpm_and_cpc_revenue"] = (
+            df["ad_server_cpm_and_cpc_revenue"]
+            + df["adsense_line_item_level_revenue"]
+            + df["ad_exchange_line_item_level_revenue"]
+        )
+        log.info(
+            "Channel merge complete — impressions: %.0f, clicks: %.0f, revenue: %.2f",
+            df["ad_server_impressions"].sum(),
+            df["ad_server_clicks"].sum(),
+            df["ad_server_cpm_and_cpc_revenue"].sum(),
+        )
 
 
         # Convert revenue from micros to dollars if needed
