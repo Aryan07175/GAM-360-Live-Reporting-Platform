@@ -26,12 +26,12 @@ MAX_PARALLEL = int(os.getenv("GAM_MAX_PARALLEL_REQUESTS", "5"))
 
 DIMENSIONS = ["DATE", "HOUR", "AD_UNIT_NAME", "AD_UNIT_ID"]
 COLUMNS = [
-    "AD_SERVER_IMPRESSIONS",
-    "AD_SERVER_CLICKS",
+    "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
+    "TOTAL_LINE_ITEM_LEVEL_CLICKS",
     "AD_SERVER_CTR",
     "AD_SERVER_AD_REQUESTS",
     "AD_SERVER_FILL_RATE",
-    "AD_SERVER_CPM_AND_CPC_REVENUE",
+    "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
     "AD_SERVER_WITHOUT_CPD_AVERAGE_ECPM",
 ]
 
@@ -174,8 +174,23 @@ class GAMClient:
             for c in df.columns
         ]
         
+        # Rename "total" columns back to "ad_server" so frontend stays happy
+        df = df.rename(columns={
+            "total_line_item_level_impressions": "ad_server_impressions",
+            "total_line_item_level_clicks": "ad_server_clicks",
+            "total_line_item_level_cpm_and_cpc_revenue": "ad_server_cpm_and_cpc_revenue",
+        })
+        
         # Ensure all expected columns exist (GAM might omit them if not enabled)
-        expected = [c.lower() for c in COLUMNS]
+        expected = [
+            "ad_server_impressions",
+            "ad_server_clicks",
+            "ad_server_ctr",
+            "ad_server_ad_requests",
+            "ad_server_fill_rate",
+            "ad_server_cpm_and_cpc_revenue",
+            "ad_server_without_cpd_average_ecpm"
+        ]
         for c in expected:
             if c not in df.columns:
                 df[c] = 0.0
