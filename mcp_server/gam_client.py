@@ -315,23 +315,25 @@ class GAMClient:
 
         log.info(f"Created {len(chunks)} chunks for parallel fetch")
 
-        async def fetch_chunk(s: date, e: date) -> pd.DataFrame:
-            async with semaphore:
-                return await self.get_live_data(s, e, force_refresh)
+        async def fetch_chunk(s: date, e: date, retries: int = 3) -> pd.DataFrame:
+            for attempt in range(retries):
+                try:
+                    async with semaphore:
+                        return await self.get_live_data(s, e, force_refresh)
+                except Exception as e_in:
+                    if attempt == retries - 1:
+                        log.error(f"Chunk {s} to {e} failed after {retries} attempts: {e_in}")
+                        raise e_in
+                    log.warning(f"Chunk {s} to {e} failed (attempt {attempt+1}/{retries}). Retrying... Error: {e_in}")
+                    await asyncio.sleep(2 ** attempt)
 
         results = await asyncio.gather(
             *(fetch_chunk(s, e) for s, e in chunks),
-            return_exceptions=True
+            return_exceptions=False
         )
 
         # Combine all successful results
-        dfs = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                log.error(f"Chunk {chunks[i]} failed: {result}")
-            else:
-                dfs.append(result)
-
+        dfs = list(results)
         if not dfs:
             raise RuntimeError("All GAM report chunks failed")
 
