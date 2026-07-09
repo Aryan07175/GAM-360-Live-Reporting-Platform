@@ -126,8 +126,16 @@ class GAMClient:
     def run_report(self, start: date, end: date) -> int:
         """Submit a report job to Google Ad Manager."""
         report_service = self._report_service()
+        
+        # Omit HOUR dimension for large ranges to prevent millions of rows and OOM crashes.
+        # Only keep HOUR for single or 2-day ranges where hourly filtering is useful.
+        day_count = (end - start).days + 1
+        report_dims = ["DATE", "AD_UNIT_NAME", "AD_UNIT_ID"]
+        if day_count <= 2:
+            report_dims.insert(1, "HOUR")
+            
         report_query = {
-            "dimensions": DIMENSIONS,
+            "dimensions": report_dims,
             "columns": COLUMNS,
             "dateRangeType": "CUSTOM_DATE",
             "startDate": self._to_gam_date(start),
