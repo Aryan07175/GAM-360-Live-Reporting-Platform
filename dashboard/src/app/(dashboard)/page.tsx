@@ -41,11 +41,10 @@ export default function DashboardOverview() {
     generateReport,
   } = useLiveReport();
 
-  // Auto-generate report on mount
+  // Auto-generate report on mount and when dates change
   useEffect(() => {
     generateReport();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate]);
+  }, [generateReport]);
 
   const displayRange =
     startDate === endDate
