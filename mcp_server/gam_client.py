@@ -211,15 +211,26 @@ class GAMClient:
         for c in channel_cols:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
 
-        # ── Map Ad Exchange (Programmatic) directly to the output ──
-        # The user explicitly wants the dashboard to match their Programmatic GAM report,
-        # so we ignore Ad Server (Direct) and AdSense, mapping only Ad Exchange to the frontend.
-        df["ad_server_impressions"] = df["ad_exchange_line_item_level_impressions"]
-        df["ad_server_clicks"] = df["ad_exchange_line_item_level_clicks"]
-        df["ad_server_cpm_and_cpc_revenue"] = df["ad_exchange_line_item_level_revenue"]
+        # ── Combine all channels for Total Network Metrics ──
+        # Combine Ad Server (Direct), AdSense, and Ad Exchange (Programmatic)
+        df["ad_server_impressions"] = (
+            df["ad_server_impressions"] +
+            df["adsense_line_item_level_impressions"] +
+            df["ad_exchange_line_item_level_impressions"]
+        )
+        df["ad_server_clicks"] = (
+            df["ad_server_clicks"] +
+            df["adsense_line_item_level_clicks"] +
+            df["ad_exchange_line_item_level_clicks"]
+        )
+        df["ad_server_cpm_and_cpc_revenue"] = (
+            df["ad_server_cpm_and_cpc_revenue"] +
+            df["adsense_line_item_level_revenue"] +
+            df["ad_exchange_line_item_level_revenue"]
+        )
 
         log.info(
-            "Programmatic metrics mapped — impressions: %.0f, clicks: %.0f, revenue: %.2f",
+            "Total Network metrics mapped — impressions: %.0f, clicks: %.0f, revenue: %.2f",
             df["ad_server_impressions"].sum(),
             df["ad_server_clicks"].sum(),
             df["ad_server_cpm_and_cpc_revenue"].sum(),
