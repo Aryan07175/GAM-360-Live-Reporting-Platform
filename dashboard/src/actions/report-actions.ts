@@ -320,7 +320,7 @@ export async function fetchFullReport(
   try {
     const res = await callMcpTool(
       "generateFullReport",
-      baseArgs(startDate, endDate, forceRefresh)
+      baseArgs(startDate, endDate, "00:00", "23:59", forceRefresh)
     );
     if (!res || res.status === "error") return null;
 

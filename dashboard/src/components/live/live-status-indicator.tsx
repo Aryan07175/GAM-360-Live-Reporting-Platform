@@ -1,5 +1,7 @@
 "use client";
 
+import { useState, useEffect } from "react";
+
 interface Props {
   isLoading: boolean;
   lastFetchedAt: string | null;
@@ -7,8 +9,16 @@ interface Props {
 }
 
 export function LiveStatusIndicator({ isLoading, lastFetchedAt, error }: Props) {
+  const [now, setNow] = useState<number | null>(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   const getTimeAgo = (isoString: string): string => {
-    const diff = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
+    if (now === null) return "just now";
+    const diff = Math.floor((now - new Date(isoString).getTime()) / 1000);
     if (diff < 10) return "just now";
     if (diff < 60) return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;

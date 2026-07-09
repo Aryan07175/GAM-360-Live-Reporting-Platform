@@ -9,6 +9,7 @@ venv/
 env.bak/
 venv.bak/
 config/service_account.json
+config/googleads.yaml
 config/.env
 *.db
 reports/output/*

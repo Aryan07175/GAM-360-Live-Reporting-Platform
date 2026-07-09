@@ -9,7 +9,6 @@
       "env": {
         "GAM_NETWORK_CODE": "22846411849",
         "GAM_CREDENTIALS_PATH": "C:\\Users\\Lenovo\\Desktop\\gam360-pipeline\\config\\googleads.yaml",
-        "DATABASE_URL": "postgresql://user:password@localhost:5432/gam_revenue",
         "GAM_API_VERSION": "v202602",
         "ANOMALY_THRESHOLD_PCT": "20",
         "REPORTS_OUTPUT_DIR": "C:\\Users\\Lenovo\\Desktop\\gam360-pipeline\\reports\\output",

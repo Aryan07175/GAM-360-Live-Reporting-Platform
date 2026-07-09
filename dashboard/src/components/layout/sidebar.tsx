@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -31,8 +32,16 @@ export function Sidebar() {
   const pathname = usePathname();
   const { isLoading, lastFetchedAt } = useLiveReport();
 
+  const [now, setNow] = useState<number | null>(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   const getTimeAgo = (iso: string): string => {
-    const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (now === null) return "just now";
+    const diff = Math.floor((now - new Date(iso).getTime()) / 1000);
     if (diff < 60) return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     return `${Math.floor(diff / 3600)}h ago`;

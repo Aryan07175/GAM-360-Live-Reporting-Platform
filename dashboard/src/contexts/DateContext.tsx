@@ -153,6 +153,8 @@ const LiveReportContext = createContext<LiveReportContextValue>({
   datePreset: "yesterday",
   startDate: "",
   endDate: "",
+  startTime: "00:00",
+  endTime: "23:59",
   customStartDate: "",
   customEndDate: "",
   customStartTime: "00:00",
@@ -418,7 +420,7 @@ export function LiveReportProvider({
       setLastFetchedAt(new Date().toISOString());
       setIsLoading(false);
     },
-    [startDate, endDate, updateSection]
+    [startDate, endDate, startTime, endTime, updateSection]
   );
 
   // ─── Refresh (force new GAM request) ──────────────────────────────────────

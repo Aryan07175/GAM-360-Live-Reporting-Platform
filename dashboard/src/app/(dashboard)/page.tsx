@@ -66,7 +66,7 @@ export default function DashboardOverview() {
   const activeApps = getKPI("Active Apps");
 
   // Calculate DAU as Ad Requests / 5
-  const dauValue = adRequests?.raw ? Math.round(adRequests.raw / 5) : 0;
+  const dauValue = adRequests?.value ? Math.round(adRequests.value / 5) : 0;
   const dauFormatted = dauValue.toLocaleString();
 
   const topApps = (appsData?.apps || []).slice(0, 5);

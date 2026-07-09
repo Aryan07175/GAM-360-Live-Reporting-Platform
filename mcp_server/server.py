@@ -40,6 +40,23 @@ sse = SseServerTransport("/messages/")
 gam = GAMClient()
 
 
+# ─── Domain Extraction ───────────────────────────────────────────────────────
+
+def _extract_domain(ad_unit_name: str) -> str:
+    """Robustly extract the domain/website from an ad unit name."""
+    if not isinstance(ad_unit_name, str):
+        return str(ad_unit_name)
+    name = ad_unit_name.strip()
+    if " - " in name:
+        name = name.split(" - ")[0]
+    if " (" in name:
+        name = name.split(" (")[0]
+    if "/" in name:
+        parts = name.split("/")
+        name = parts[-1] if len(parts) > 1 else parts[0]
+    return name.strip()
+
+
 # ─── Date Resolution ─────────────────────────────────────────────────────────
 
 def _resolve_dates(args: dict) -> tuple[date, date, int, int]:
@@ -477,9 +494,7 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             # Parse website/domain from ad unit names
             if not df.empty:
                 df_copy = df.copy()
-                df_copy["website"] = df_copy["ad_unit_name"].apply(
-                    lambda x: x.split(" - ")[0].split(" (")[0].strip() if " - " in x or " (" in x else x.split("/")[0].strip()
-                )
+                df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
                 website_summary = df_copy.groupby("website").agg({
                     "ad_server_cpm_and_cpc_revenue": "sum",
                     "ad_server_impressions": "sum",
@@ -504,9 +519,7 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             limit = int(arguments.get("limit", 10))
             if not df.empty:
                 df_copy = df.copy()
-                df_copy["website"] = df_copy["ad_unit_name"].apply(
-                    lambda x: x.split(" - ")[0].split(" (")[0].strip() if " - " in x or " (" in x else x.split("/")[0].strip()
-                )
+                df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
                 ws = df_copy.groupby("website")["ad_server_cpm_and_cpc_revenue"].sum().reset_index()
                 ws = ws.sort_values("ad_server_cpm_and_cpc_revenue", ascending=False).head(limit)
                 result["websites"] = ws.to_dict(orient="records")
@@ -517,9 +530,7 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             limit = int(arguments.get("limit", 10))
             if not df.empty:
                 df_copy = df.copy()
-                df_copy["website"] = df_copy["ad_unit_name"].apply(
-                    lambda x: x.split(" - ")[0].split(" (")[0].strip() if " - " in x or " (" in x else x.split("/")[0].strip()
-                )
+                df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
                 ws = df_copy.groupby("website")["ad_server_cpm_and_cpc_revenue"].sum().reset_index()
                 ws = ws.sort_values("ad_server_cpm_and_cpc_revenue", ascending=True).head(limit)
                 result["websites"] = ws.to_dict(orient="records")

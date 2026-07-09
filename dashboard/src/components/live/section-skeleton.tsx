@@ -29,12 +29,12 @@ export function ChartSkeleton({ height = 300 }: { height?: number }) {
           className="flex items-end justify-between gap-1 px-4"
           style={{ height }}
         >
-          {Array.from({ length: 12 }).map((_, i) => (
+          {[40, 70, 30, 80, 50, 20, 60, 90, 40, 75, 35, 85].map((h, i) => (
             <Skeleton
               key={i}
               className="w-full rounded-t"
               style={{
-                height: `${Math.random() * 60 + 20}%`,
+                height: `${h}%`,
                 animationDelay: `${i * 100}ms`,
               }}
             />
