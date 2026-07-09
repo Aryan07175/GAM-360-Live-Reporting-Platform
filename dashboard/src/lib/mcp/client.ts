@@ -23,7 +23,7 @@ export async function callMcpTool(
   args: McpToolArgs = {},
   options?: { signal?: AbortSignal; timeout?: number }
 ): Promise<any> {
-  const timeout = options?.timeout ?? 120_000; // 2 minutes default for live GAM requests
+  const timeout = options?.timeout ?? 300_000; // 5 minutes default for live GAM requests
 
   const controller = new AbortController();
   const signal = options?.signal

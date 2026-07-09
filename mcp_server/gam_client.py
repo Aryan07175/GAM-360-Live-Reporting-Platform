@@ -272,28 +272,29 @@ class GAMClient:
         self, start: date, end: date, force_refresh: bool = False
     ) -> pd.DataFrame:
         """
-        For multi-day ranges, fetch each day's data in parallel (with concurrency limit).
-        This avoids a single massive report that might timeout.
+        Fetch data for a date range from Google Ad Manager.
         
-        For single-day ranges, just calls get_live_data directly.
+        The GAM API can handle date ranges up to a full year in a single report,
+        so we only split into chunks for very large ranges (> 90 days).
+        Chunks are 30-day blocks fetched in parallel with concurrency limits.
         """
         day_count = (end - start).days + 1
 
-        if day_count <= 1:
+        # For ranges up to 90 days, fetch as a single GAM report
+        if day_count <= 90:
             return await self.get_live_data(start, end, force_refresh)
 
-        # For ranges up to 7 days, fetch as a single report
-        if day_count <= 7:
-            return await self.get_live_data(start, end, force_refresh)
-
-        # For larger ranges, split into weekly chunks and fetch in parallel
+        # For larger ranges, split into 30-day chunks and fetch in parallel
+        log.info(f"Splitting {day_count}-day range into 30-day chunks")
         semaphore = asyncio.Semaphore(MAX_PARALLEL)
         chunks = []
         current = start
         while current <= end:
-            chunk_end = min(current + timedelta(days=6), end)
+            chunk_end = min(current + timedelta(days=29), end)
             chunks.append((current, chunk_end))
             current = chunk_end + timedelta(days=1)
+
+        log.info(f"Created {len(chunks)} chunks for parallel fetch")
 
         async def fetch_chunk(s: date, e: date) -> pd.DataFrame:
             async with semaphore:
@@ -318,3 +319,4 @@ class GAMClient:
         combined = pd.concat(dfs, ignore_index=True)
         log.info(f"Combined {len(dfs)} chunks: {len(combined)} total rows")
         return combined
+
