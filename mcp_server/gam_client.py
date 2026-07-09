@@ -160,7 +160,7 @@ class GAMClient:
                 job_id, export_format="CSV_DUMP", use_gzip_compression=True
             )
         except Exception as e:
-            logger.warning(f"DownloadReportAsString failed, falling back to manual download: {e}")
+            log.warning(f"DownloadReportAsString failed, falling back to manual download: {e}")
             import urllib.request
             with urllib.request.urlopen(report_url) as resp:
                 raw = resp.read()
