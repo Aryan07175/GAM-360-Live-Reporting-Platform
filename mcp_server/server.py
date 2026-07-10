@@ -34,12 +34,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from mcp_server.gam_client import GAMClient
 
-# Anthropic (lazy — only imported when chat is used)
+# Google Gemini (lazy — only imported when chat is used)
 try:
-    import anthropic
-    HAS_ANTHROPIC = True
+    import google.generativeai as genai
+    from google.generativeai.types import content_types
+    HAS_GEMINI = True
 except ImportError:
-    HAS_ANTHROPIC = False
+    HAS_GEMINI = False
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("mcp_server")
@@ -298,52 +299,54 @@ You have access to a data summary of the dashboard's current view. This summary 
 
 # ─── Chat Endpoint ───────────────────────────────────────────────────────────
 
-QUERY_DATA_TOOL = {
-    "name": "query_data",
-    "description": "Query the current dashboard's GAM data with whitelisted aggregations. Use this for comparisons, filtering, sorting, or detailed breakdowns not already in the data summary.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "operation": {
-                "type": "string",
-                "enum": ["sum", "mean", "max", "min", "top_n", "bottom_n", "compare", "count"],
-                "description": "The aggregation operation to perform."
-            },
-            "dimension": {
-                "type": "string",
-                "enum": ["app", "date"],
-                "description": "The dimension to group by (app = ad unit, date = calendar day)."
-            },
-            "metric": {
-                "type": "string",
-                "enum": ["revenue", "impressions", "clicks", "ad_requests", "ecpm", "ctr", "fill_rate"],
-                "description": "The metric to aggregate."
-            },
-            "filters": {
-                "type": "object",
-                "description": "Optional filters: app_name (substring match), date (exact YYYY-MM-DD), min_revenue (number).",
-                "properties": {
-                    "app_name": {"type": "string"},
-                    "date": {"type": "string"},
-                    "min_revenue": {"type": "number"}
+def get_query_data_tool():
+    """Returns the tool definition for Gemini."""
+    return {
+        "function_declarations": [
+            {
+                "name": "query_data",
+                "description": "Query the current dashboard's GAM data with whitelisted aggregations. Use this for comparisons, filtering, sorting, or detailed breakdowns not already in the data summary.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "operation": {
+                            "type": "STRING",
+                            "description": "The aggregation operation to perform (sum, mean, max, min, top_n, bottom_n, compare, count)."
+                        },
+                        "dimension": {
+                            "type": "STRING",
+                            "description": "The dimension to group by (app = ad unit, date = calendar day)."
+                        },
+                        "metric": {
+                            "type": "STRING",
+                            "description": "The metric to aggregate (revenue, impressions, clicks, ad_requests, ecpm, ctr, fill_rate)."
+                        },
+                        "filters": {
+                            "type": "OBJECT",
+                            "description": "Optional filters: app_name (substring match), date (exact YYYY-MM-DD), min_revenue (number).",
+                            "properties": {
+                                "app_name": {"type": "STRING"},
+                                "date": {"type": "STRING"},
+                                "min_revenue": {"type": "NUMBER"}
+                            }
+                        },
+                        "limit": {
+                            "type": "INTEGER",
+                            "description": "Max number of results for top_n/bottom_n (default 10)."
+                        }
+                    },
+                    "required": ["operation"]
                 }
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Max number of results for top_n/bottom_n (default 10).",
-                "default": 10
             }
-        },
-        "required": ["operation"]
+        ]
     }
-}
 
 
 async def handle_chat(request):
     """
     POST /api/chat — SSE streaming chat endpoint.
     Accepts { session_id, message, history[], date_range: { startDate, endDate } }
-    Streams Claude responses token-by-token as SSE events.
+    Streams Gemini responses token-by-token as SSE events.
     """
     if request.method == "OPTIONS":
         return JSONResponse({}, headers={
@@ -352,17 +355,17 @@ async def handle_chat(request):
             "Access-Control-Allow-Headers": "Content-Type",
         })
 
-    if not HAS_ANTHROPIC:
+    if not HAS_GEMINI:
         return JSONResponse(
-            {"error": "Anthropic SDK not installed. Run: pip install anthropic"},
+            {"error": "Google Generative AI SDK not installed. Run: pip install google-generativeai"},
             status_code=500,
             headers={"Access-Control-Allow-Origin": "*"},
         )
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         return JSONResponse(
-            {"error": "ANTHROPIC_API_KEY not set"},
+            {"error": "GEMINI_API_KEY not set"},
             status_code=500,
             headers={"Access-Control-Allow-Origin": "*"},
         )
@@ -389,7 +392,6 @@ async def handle_chat(request):
 
         cached = _session_cache.get(cache_key)
         if not cached:
-            # Try any available cache entry as fallback
             if _session_cache:
                 cache_key = list(_session_cache.keys())[-1]
                 cached = _session_cache[cache_key]
@@ -397,126 +399,89 @@ async def handle_chat(request):
         data_summary = cached["summary"] if cached else {"metrics": {}, "revenue_trend": [], "top_apps": [], "all_apps": []}
         cached_df = cached["df"] if cached else pd.DataFrame()
 
-        # Build messages array
+        # Build messages array for Gemini
         system_prompt = CHAT_SYSTEM_PROMPT.format(
             data_summary=json.dumps(data_summary, indent=2, default=str)
         )
 
-        messages = []
-        # Add history (up to last 20 messages for context window management)
+        gemini_history = []
         for h in history[-20:]:
-            messages.append({"role": h.get("role", "user"), "content": h.get("content", "")})
-        # Add current message
-        messages.append({"role": "user", "content": message})
+            # Gemini roles: 'user' and 'model'
+            role = "model" if h.get("role") == "assistant" else "user"
+            gemini_history.append({
+                "role": role,
+                "parts": [{"text": h.get("content", "")}]
+            })
 
         log.info(f"[Chat] session={cache_key} message={message[:80]}...")
 
         async def stream_response():
             try:
-                client = anthropic.Anthropic(api_key=api_key)
+                genai.configure(api_key=api_key)
+                
+                # Create the model with system instruction and tools
+                model = genai.GenerativeModel(
+                    model_name="gemini-1.5-flash",
+                    system_instruction=system_prompt,
+                    tools=get_query_data_tool()
+                )
 
-                # Tool-use loop: Claude may call query_data, then we feed results back
-                current_messages = list(messages)
-                max_tool_rounds = 5
-
-                for tool_round in range(max_tool_rounds):
-                    with client.messages.stream(
-                        model="claude-sonnet-4-6",
-                        max_tokens=1024,
-                        system=system_prompt,
-                        messages=current_messages,
-                        tools=[QUERY_DATA_TOOL],
-                    ) as stream:
-                        full_text = ""
-                        tool_use_blocks = []
-                        current_tool_input = ""
-                        current_tool_id = None
-                        current_tool_name = None
-                        is_tool_use = False
-
-                        for event in stream:
-                            if event.type == "content_block_start":
-                                if hasattr(event.content_block, 'type'):
-                                    if event.content_block.type == "tool_use":
-                                        is_tool_use = True
-                                        current_tool_id = event.content_block.id
-                                        current_tool_name = event.content_block.name
-                                        current_tool_input = ""
-                                    else:
-                                        is_tool_use = False
-
-                            elif event.type == "content_block_delta":
-                                if is_tool_use:
-                                    if hasattr(event.delta, 'partial_json'):
-                                        current_tool_input += event.delta.partial_json
-                                else:
-                                    if hasattr(event.delta, 'text'):
-                                        text = event.delta.text
-                                        full_text += text
-                                        yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
-
-                            elif event.type == "content_block_stop":
-                                if is_tool_use and current_tool_id:
-                                    try:
-                                        tool_input = json.loads(current_tool_input) if current_tool_input else {}
-                                    except json.JSONDecodeError:
-                                        tool_input = {}
-                                    tool_use_blocks.append({
-                                        "id": current_tool_id,
-                                        "name": current_tool_name,
-                                        "input": tool_input,
-                                    })
-                                    is_tool_use = False
-
-                        # Get the final message for stop_reason
-                        final_message = stream.get_final_message()
-                        stop_reason = final_message.stop_reason if final_message else "end_turn"
-
-                    # If Claude used tools, execute them and continue
-                    if stop_reason == "tool_use" and tool_use_blocks:
-                        # Build assistant message with all content blocks
-                        assistant_content = []
-                        if full_text:
-                            assistant_content.append({"type": "text", "text": full_text})
-                        for tb in tool_use_blocks:
-                            assistant_content.append({
-                                "type": "tool_use",
-                                "id": tb["id"],
-                                "name": tb["name"],
-                                "input": tb["input"],
-                            })
-
-                        current_messages.append({"role": "assistant", "content": assistant_content})
-
-                        # Execute each tool and build tool results
-                        tool_results = []
-                        for tb in tool_use_blocks:
-                            log.info(f"[Chat] Tool call: {tb['name']}({json.dumps(tb['input'])})")
-                            if tb["name"] == "query_data":
+                # Initialize chat session
+                chat = model.start_chat(history=gemini_history)
+                
+                # Send the message
+                response = chat.send_message(message, stream=True)
+                
+                tool_called = False
+                
+                # We need to process the stream
+                for chunk in response:
+                    # Check for function calls
+                    for part in chunk.parts:
+                        if part.function_call:
+                            tool_called = True
+                            fc = part.function_call
+                            tool_name = fc.name
+                            
+                            # Convert protobuf Struct to dict
+                            kwargs = {}
+                            for k, v in fc.args.items():
+                                kwargs[k] = v
+                                
+                            log.info(f"[Chat] Tool call: {tool_name}({kwargs})")
+                            
+                            if tool_name == "query_data":
                                 result = execute_query_data(
                                     cached_df,
-                                    operation=tb["input"].get("operation", "sum"),
-                                    dimension=tb["input"].get("dimension"),
-                                    metric=tb["input"].get("metric"),
-                                    filters=tb["input"].get("filters"),
-                                    limit=tb["input"].get("limit", 10),
+                                    operation=kwargs.get("operation", "sum"),
+                                    dimension=kwargs.get("dimension"),
+                                    metric=kwargs.get("metric"),
+                                    filters=kwargs.get("filters"),
+                                    limit=int(kwargs.get("limit", 10)),
                                 )
                             else:
-                                result = {"error": f"Unknown tool: {tb['name']}"}
-
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": tb["id"],
-                                "content": json.dumps(result, default=str),
-                            })
-
-                        current_messages.append({"role": "user", "content": tool_results})
-                        tool_use_blocks = []
-                        # Loop continues — Claude will process tool results
-                    else:
-                        # No tool use, we're done
-                        break
-
+                                result = {"error": f"Unknown tool: {tool_name}"}
+                            
+                            # Send tool result back to Gemini (this doesn't stream natively in the same way, 
+                            # we have to send a new message with the result and stream that)
+                            tool_response_parts = [
+                                genai.protos.Part(
+                                    function_response=genai.protos.FunctionResponse(
+                                        name=tool_name,
+                                        response=result
+                                    )
+                                )
+                            ]
+                            
+                            # Stream the model's response to the tool result
+                            second_response = chat.send_message(tool_response_parts, stream=True)
+                            for second_chunk in second_response:
+                                if second_chunk.text:
+                                    yield f"data: {json.dumps({'type': 'token', 'content': second_chunk.text})}\n\n"
+                                    
+                        elif part.text:
+                            yield f"data: {json.dumps({'type': 'token', 'content': part.text})}\n\n"
+                            
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
             except Exception as e:

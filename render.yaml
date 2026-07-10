@@ -26,5 +26,5 @@ services:
         value: "5"
       - key: REVENUE_IN_MICROS
         value: "false"
-      - key: ANTHROPIC_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
