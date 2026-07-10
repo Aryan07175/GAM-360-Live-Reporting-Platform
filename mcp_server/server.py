@@ -164,16 +164,21 @@ def compute_revenue_trend(df: pd.DataFrame) -> list[dict]:
         "ad_server_cpm_and_cpc_revenue": "sum",
         "ad_server_impressions": "sum",
         "ad_server_clicks": "sum",
-        "ad_server_without_cpd_average_ecpm": "mean",
         "ad_server_ad_requests": "sum",
     }).reset_index()
+    # Compute eCPM correctly: (Revenue * 1000) / Impressions
+    # Never average daily eCPMs — always derive from totals.
+    daily["ecpm_usd"] = daily.apply(
+        lambda r: (r["ad_server_cpm_and_cpc_revenue"] / r["ad_server_impressions"] * 1000)
+        if r["ad_server_impressions"] > 0 else 0,
+        axis=1,
+    )
     daily = daily.sort_values("date")
     return daily.rename(columns={
         "date": "report_date",
         "ad_server_cpm_and_cpc_revenue": "revenue_usd",
         "ad_server_impressions": "impressions",
         "ad_server_clicks": "clicks",
-        "ad_server_without_cpd_average_ecpm": "ecpm_usd",
         "ad_server_ad_requests": "ad_requests",
     }).to_dict(orient="records")
 
@@ -195,10 +200,21 @@ def compute_performance_ranking(df: pd.DataFrame) -> list[dict]:
         "ad_server_impressions": "sum",
         "ad_server_clicks": "sum",
         "ad_server_ad_requests": "sum",
-        "ad_server_fill_rate": "mean",
-        "ad_server_ctr": "mean",
-        "ad_server_without_cpd_average_ecpm": "mean",
     }).reset_index()
+
+    # Derive rate metrics from totals — never average pre-computed rates.
+    summary["ad_server_fill_rate"] = (
+        (summary["ad_server_impressions"] / summary["ad_server_ad_requests"] * 100)
+        .where(summary["ad_server_ad_requests"] > 0, 0)
+    )
+    summary["ad_server_ctr"] = (
+        (summary["ad_server_clicks"] / summary["ad_server_impressions"] * 100)
+        .where(summary["ad_server_impressions"] > 0, 0)
+    )
+    summary["ad_server_without_cpd_average_ecpm"] = (
+        (summary["ad_server_cpm_and_cpc_revenue"] / summary["ad_server_impressions"] * 1000)
+        .where(summary["ad_server_impressions"] > 0, 0)
+    )
 
     # Composite score: weighted combination
     max_rev = summary["ad_server_cpm_and_cpc_revenue"].max() or 1
@@ -410,6 +426,7 @@ DATE_SCHEMA = {
         "startTime": {"type": "string", "description": "Start time (HH:MM). Defaults to 00:00."},
         "endTime": {"type": "string", "description": "End time (HH:MM). Defaults to 23:59."},
         "date": {"type": "string", "description": "Single date (YYYY-MM-DD) or preset. Used if startDate not provided."},
+        "demand_channel": {"type": "string", "description": "Filter by demand channel: 'all' or 'programmatic' (default 'all')"},
         "force_refresh": {"type": "boolean", "description": "If true, bypass deduplication and generate a fresh GAM report."},
     },
 }
@@ -459,14 +476,30 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
     try:
         start_date, end_date, start_hour, end_hour = _resolve_dates(arguments)
         force_refresh = arguments.get("force_refresh", False)
+        demand_channel = arguments.get("demand_channel", "all")
 
         # Fetch live data from GAM
-        df = await gam.get_live_data_multi_day(start_date, end_date, force_refresh)
+        df = await gam.get_live_data_multi_day(start_date, end_date, force_refresh, demand_channel)
         
         # Filter by hour if hour dimension is present and hour bounds are restrictive
         if "hour" in df.columns and not df.empty:
             if start_hour > 0 or end_hour < 23:
                 df = df[(df["hour"] >= start_hour) & (df["hour"] <= end_hour)]
+
+        # ── Debug logging: raw totals before any formatting ──
+        if not df.empty:
+            raw_rev = float(df["ad_server_cpm_and_cpc_revenue"].sum())
+            raw_imp = int(df["ad_server_impressions"].sum())
+            raw_ecpm = (raw_rev / raw_imp * 1000) if raw_imp > 0 else 0
+            log.info(
+                "[DEBUG] Tool=%s | Date=%s→%s | Demand=%s\n"
+                "  Raw Revenue:     %.6f\n"
+                "  Raw Impressions: %d\n"
+                "  Raw eCPM:        %.6f\n"
+                "  Total rows:      %d",
+                name, start_date, end_date, demand_channel,
+                raw_rev, raw_imp, raw_ecpm, len(df),
+            )
 
         result = {
             "status": "ok",
@@ -580,7 +613,6 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 by_app = df.groupby("ad_unit_name").agg({
                     "ad_server_cpm_and_cpc_revenue": "sum",
                     "ad_server_impressions": "sum",
-                    "ad_server_without_cpd_average_ecpm": "mean",
                 }).reset_index()
                 by_app["ecpm"] = (by_app["ad_server_cpm_and_cpc_revenue"] / by_app["ad_server_impressions"] * 1000).where(by_app["ad_server_impressions"] > 0, 0)
                 by_app = by_app.sort_values("ecpm", ascending=False)
@@ -597,7 +629,6 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 by_app = df.groupby("ad_unit_name").agg({
                     "ad_server_impressions": "sum",
                     "ad_server_ad_requests": "sum",
-                    "ad_server_fill_rate": "mean",
                 }).reset_index()
                 by_app["fill_rate"] = (by_app["ad_server_impressions"] / by_app["ad_server_ad_requests"] * 100).where(by_app["ad_server_ad_requests"] > 0, 0)
                 by_app = by_app.sort_values("fill_rate", ascending=False)
