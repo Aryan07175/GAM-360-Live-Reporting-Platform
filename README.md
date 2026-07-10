@@ -8,6 +8,20 @@ A Next.js executive BI reporting dashboard that fetches ad revenue analytics **i
 
 ## 🏛️ System Architecture & Data Flow
 
+```mermaid
+graph TD
+    User([User]) -->|Views Dashboard & Asks Questions| NextJS[Next.js Dashboard UI]
+    NextJS -->|REST API & SSE Streams| Python[Python Backend Server]
+    
+    Python -->|Fetches Live Analytics| GAM[Google Ad Manager API]
+    GAM -->|Returns Raw Data| Python
+    
+    Python -->|Data Summary & Tools| Gemini[Google Gemini AI]
+    Gemini -.->|Streams Chat Response| Python
+    
+    Python -->|Formats & Caches Data| NextJS
+```
+
 This project is a complete end-to-end analytics pipeline that pulls raw data from Google Ad Manager 360 and surfaces it in a real-time dashboard.
 
 ### 1. Unified Data Extraction (GAM API)
