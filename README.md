@@ -30,11 +30,12 @@ This project is a complete end-to-end analytics pipeline that pulls raw data fro
 
 The dashboard provides a premium, real-time BI experience:
 
-* **Real-Time BI Dashboard**: Generates comprehensive business intelligence reports dynamically using live data.
+* **Ask GAM 360 (AI Chat):** A built-in AI assistant powered by Google Gemini. Open the chat drawer from the sidebar or the floating action button to ask questions about your live data in natural language (e.g., "Which app has the highest revenue?"). It uses an in-memory cache and strict tool calling to guarantee zero hallucinated numbers, and streams the response token-by-token.
+* **Real-Time BI Dashboard:** Generates comprehensive business intelligence reports dynamically using live data.
 * **Unified Revenue:** Combines Ad Server, AdSense, and Ad Exchange into a single consolidated view.
-* **18+ Live Analytics Tools**: Exposes comprehensive tools covering: executive summaries, revenue by app, trends, top/bottom apps, impressions, clicks, CTR, eCPM, fill rate, and ad requests.
+* **18+ Live Analytics Tools:** Exposes comprehensive tools covering: executive summaries, revenue by app, trends, top/bottom apps, impressions, clicks, CTR, eCPM, fill rate, and ad requests.
 * **AI Anomaly Detection:** Compares current performance against historical averages to detect sudden drops or spikes in real-time.
-* **Interactive UI**: Custom date ranges (down to the hour), dark mode, and progressive loading skeletons.
+* **Interactive UI:** Custom date ranges (down to the hour), dark mode, and progressive loading skeletons.
 
 ---
 
@@ -46,11 +47,13 @@ The dashboard provides a premium, real-time BI experience:
 * **Tailwind CSS**
 * **shadcn/ui**
 * **Recharts**
+* **Framer Motion** (for Chat UI animations)
 
 ### Backend — MCP Server (`/mcp_server`)
 * **Python 3.12**
 * **Google Ads API (SOAP)**
-* **Starlette & Uvicorn**
+* **Google Generative AI SDK (Gemini)**
+* **Starlette & Uvicorn** (REST & SSE streaming)
 * **Pandas** for data merging and processing
 
 ---
@@ -65,13 +68,15 @@ pip install -r requirements.txt
 ### 2. Configure credentials
 ```bash
 cp config/googleads.yaml.example config/googleads.yaml
+cp config/.env.example config/.env
 # Fill in: network_code, path_to_private_key_file, application_name
+# Fill in: GEMINI_API_KEY in .env
 ```
 
 ### 3. Start the backend server
 ```bash
 cd mcp_server
-python server.py
+python -m uvicorn server:starlette_app --reload
 # Server runs on http://localhost:8000
 ```
 
@@ -88,16 +93,16 @@ npm run dev
 
 ## 📂 Project Structure
 
-```
+```text
 gam360-pipeline/
 ├── config/                  # GAM API credentials & env vars
 ├── mcp_server/              # Python backend connecting to GAM SOAP API
-│   ├── server.py            # API server exposing live analytics endpoints
+│   ├── server.py            # API server exposing live analytics endpoints & chat SSE stream
 │   └── gam_client.py        # Live data extraction, unified metrics merging, and request deduplication
 ├── dashboard/               # Next.js analytics dashboard
 │   ├── src/
 │   │   ├── app/             # App Router pages (Dashboard, Reports, Revenue, etc.)
-│   │   ├── components/      # Live UI components (header, charts, KPI cards, skeletons)
+│   │   ├── components/      # Live UI components (header, charts, KPI cards, chat panel)
 │   │   ├── contexts/        # React Context for global state management
 │   │   └── actions/         # Next.js Server Actions calling the backend API
 │   └── package.json
