@@ -181,3 +181,21 @@ export interface ReportProgress {
   currentSection: string;
   sections: SectionStatus[];
 }
+
+// ─── Chat Types ─────────────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  isStreaming?: boolean;
+  error?: string;
+}
+
+export interface ChatDateRange {
+  startDate: string;
+  endDate: string;
+  demandChannel?: string;
+}
+

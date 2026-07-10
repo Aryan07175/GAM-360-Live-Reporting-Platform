@@ -13,9 +13,11 @@ import {
   TrendingUp,
   Bell,
   Zap,
+  MessageCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLiveReport } from "@/contexts/DateContext";
+import { OPEN_CHAT_EVENT } from "@/components/chat/chat-drawer";
 
 const navItems = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -25,6 +27,7 @@ const navItems = [
   { name: "Anomaly Detection", href: "/anomalies", icon: AlertTriangle },
   { name: "Alerts", href: "/alerts", icon: Bell },
   { name: "Reports", href: "/reports", icon: FileText },
+  { name: "Ask GAM 360", href: "#chat", icon: MessageCircle },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -64,21 +67,34 @@ export function Sidebar() {
       <nav className="flex-1 space-y-1">
         {navItems.map((item) => {
           const isActive = pathname === item.href;
+          const isChat = item.name === "Ask GAM 360";
+          
+          const linkProps = isChat
+            ? {
+                href: "#",
+                onClick: (e: React.MouseEvent) => {
+                  e.preventDefault();
+                  window.dispatchEvent(new Event(OPEN_CHAT_EVENT));
+                },
+              }
+            : { href: item.href };
+
           return (
             <Link
               key={item.name}
-              href={item.href}
+              {...linkProps}
               className={cn(
                 "group flex items-center rounded-md px-3 py-2 text-sm font-medium transition-all duration-200",
                 isActive
                   ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                isChat && "text-indigo-600 dark:text-indigo-400"
               )}
             >
               <item.icon
                 className={cn(
                   "mr-3 h-5 w-5 flex-shrink-0 transition-colors",
-                  isActive
+                  isActive || isChat
                     ? "text-indigo-500"
                     : "text-muted-foreground group-hover:text-foreground"
                 )}

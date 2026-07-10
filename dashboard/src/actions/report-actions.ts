@@ -40,9 +40,10 @@ function baseArgs(
   endDate: string,
   startTime: string = "00:00",
   endTime: string = "23:59",
+  demandChannel: string = "all",
   forceRefresh: boolean = false
 ): McpToolArgs {
-  return { startDate, endDate, startTime, endTime, force_refresh: forceRefresh };
+  return { startDate, endDate, startTime, endTime, demand_channel: demandChannel, force_refresh: forceRefresh };
 }
 
 // ─── Executive Summary ──────────────────────────────────────────────────────
@@ -52,12 +53,13 @@ export async function fetchExecutiveSummary(
   endDate: string,
   startTime: string = "00:00",
   endTime: string = "23:59",
+  demandChannel: string = "all",
   forceRefresh: boolean = false
 ): Promise<{ summary: BISummaryKPI[]; fetchedAt: string } | null> {
   try {
     const res = await callMcpTool(
       "getExecutiveSummary",
-      baseArgs(startDate, endDate, startTime, endTime, forceRefresh)
+      baseArgs(startDate, endDate, startTime, endTime, demandChannel, forceRefresh)
     );
     if (!res || res.status === "error") return null;
 
@@ -159,12 +161,13 @@ export async function fetchRevenueByApplication(
   endDate: string,
   startTime: string = "00:00",
   endTime: string = "23:59",
+  demandChannel: string = "all",
   forceRefresh: boolean = false
 ): Promise<{ apps: BIAppRow[]; fetchedAt: string } | null> {
   try {
     const res = await callMcpTool(
       "getRevenueByApplication",
-      baseArgs(startDate, endDate, startTime, endTime, forceRefresh)
+      baseArgs(startDate, endDate, startTime, endTime, demandChannel, forceRefresh)
     );
     if (!res || res.status === "error" || !res.apps) return null;
 
@@ -196,12 +199,13 @@ export async function fetchRevenueTrend(
   endDate: string,
   startTime: string = "00:00",
   endTime: string = "23:59",
+  demandChannel: string = "all",
   forceRefresh: boolean = false
 ): Promise<{ trend: BIDailyPoint[]; fetchedAt: string } | null> {
   try {
     const res = await callMcpTool(
       "getRevenueTrend",
-      baseArgs(startDate, endDate, startTime, endTime, forceRefresh)
+      baseArgs(startDate, endDate, startTime, endTime, demandChannel, forceRefresh)
     );
     if (!res || res.status === "error" || !res.trend) return null;
 
@@ -228,11 +232,12 @@ export async function fetchAnomalies(
   endDate: string,
   startTime: string = "00:00",
   endTime: string = "23:59",
+  demandChannel: string = "all",
   forceRefresh: boolean = false
 ): Promise<{ anomalies: BIAnomaly[]; fetchedAt: string } | null> {
   try {
     const res = await callMcpTool("getAnomalies", {
-      ...baseArgs(startDate, endDate, startTime, endTime, forceRefresh),
+      ...baseArgs(startDate, endDate, startTime, endTime, demandChannel, forceRefresh),
       threshold_pct: 20,
     });
     if (!res || res.status === "error") return null;
@@ -254,12 +259,13 @@ export async function fetchRecommendations(
   endDate: string,
   startTime: string = "00:00",
   endTime: string = "23:59",
+  demandChannel: string = "all",
   forceRefresh: boolean = false
 ): Promise<{ recommendations: Recommendation[]; fetchedAt: string } | null> {
   try {
     const res = await callMcpTool(
       "getRecommendations",
-      baseArgs(startDate, endDate, startTime, endTime, forceRefresh)
+      baseArgs(startDate, endDate, startTime, endTime, demandChannel, forceRefresh)
     );
     if (!res || res.status === "error") return null;
 
@@ -280,12 +286,13 @@ export async function fetchPerformanceRanking(
   endDate: string,
   startTime: string = "00:00",
   endTime: string = "23:59",
+  demandChannel: string = "all",
   forceRefresh: boolean = false
 ): Promise<{ rankings: PerformanceRanking[]; fetchedAt: string } | null> {
   try {
     const res = await callMcpTool(
       "getPerformanceRanking",
-      baseArgs(startDate, endDate, startTime, endTime, forceRefresh)
+      baseArgs(startDate, endDate, startTime, endTime, demandChannel, forceRefresh)
     );
     if (!res || res.status === "error") return null;
 
@@ -320,7 +327,7 @@ export async function fetchFullReport(
   try {
     const res = await callMcpTool(
       "generateFullReport",
-      baseArgs(startDate, endDate, "00:00", "23:59", forceRefresh)
+      baseArgs(startDate, endDate, "00:00", "23:59", "all", forceRefresh)
     );
     if (!res || res.status === "error") return null;
 

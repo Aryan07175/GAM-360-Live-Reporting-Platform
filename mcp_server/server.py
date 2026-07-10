@@ -7,15 +7,18 @@ No database. No cache. No ETL. No stored reports.
 18+ tools covering: Executive Summary, Revenue, Trends, Applications,
 Websites, Impressions, Clicks, CTR, eCPM, Fill Rate, Ad Requests,
 Performance Ranking, Anomalies, Recommendations, and Full Report.
+
+Plus: Ask GAM 360 — AI chat grounded in live dashboard data.
 """
 
 import json
 import logging
+import asyncio
 from datetime import date, timedelta, datetime
 
 from starlette.applications import Starlette
 from starlette.routing import Route
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from mcp.server import Server
@@ -31,6 +34,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from mcp_server.gam_client import GAMClient
 
+# Anthropic (lazy — only imported when chat is used)
+try:
+    import anthropic
+    HAS_ANTHROPIC = True
+except ImportError:
+    HAS_ANTHROPIC = False
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("mcp_server")
 
@@ -38,6 +48,499 @@ app = Server("gam360-live-reporting")
 sse = SseServerTransport("/messages/")
 
 gam = GAMClient()
+
+
+# ─── In-Memory Data Cache (for Ask GAM 360 chat) ─────────────────────────────
+
+_session_cache: dict[str, dict] = {}
+# Structure: { "session_key": { "df": DataFrame, "summary": dict, "stored_at": datetime, "start": str, "end": str } }
+
+
+def _cache_key(start_date: str, end_date: str, demand_channel: str = "all") -> str:
+    return f"{start_date}_{end_date}_{demand_channel}"
+
+
+def build_data_summary(df: pd.DataFrame, start: date, end: date) -> dict:
+    """
+    Build a compact JSON data summary from the report DataFrame.
+    This is the chat's SINGLE SOURCE OF TRUTH — Claude answers only from this.
+    """
+    if df.empty:
+        return {
+            "period": f"{start} to {end}",
+            "metrics": {},
+            "revenue_trend": [],
+            "top_apps": [],
+            "all_apps": [],
+        }
+
+    rev = float(df["ad_server_cpm_and_cpc_revenue"].sum())
+    imp = int(df["ad_server_impressions"].sum())
+    clicks = int(df["ad_server_clicks"].sum())
+    ad_requests = int(df["ad_server_ad_requests"].sum())
+    ecpm = (rev / imp * 1000) if imp > 0 else 0.0
+    ctr = (clicks / imp * 100) if imp > 0 else 0.0
+    fill_rate = (imp / ad_requests * 100) if ad_requests > 0 else 0.0
+    dau = ad_requests // 5 if ad_requests > 0 else 0
+
+    app_summary = df.groupby("ad_unit_name").agg({
+        "ad_server_cpm_and_cpc_revenue": "sum",
+        "ad_server_impressions": "sum",
+        "ad_server_clicks": "sum",
+        "ad_server_ad_requests": "sum",
+    }).reset_index()
+    app_summary = app_summary.sort_values("ad_server_cpm_and_cpc_revenue", ascending=False)
+
+    # Per-app metrics
+    all_apps = []
+    for _, row in app_summary.iterrows():
+        a_imp = int(row["ad_server_impressions"])
+        a_rev = float(row["ad_server_cpm_and_cpc_revenue"])
+        a_clicks = int(row["ad_server_clicks"])
+        a_req = int(row["ad_server_ad_requests"])
+        all_apps.append({
+            "name": row["ad_unit_name"],
+            "revenue_usd": round(a_rev, 6),
+            "impressions": a_imp,
+            "clicks": a_clicks,
+            "ad_requests": a_req,
+            "ecpm_usd": round((a_rev / a_imp * 1000), 6) if a_imp > 0 else 0.0,
+            "ctr_pct": round((a_clicks / a_imp * 100), 4) if a_imp > 0 else 0.0,
+            "fill_rate_pct": round((a_imp / a_req * 100), 2) if a_req > 0 else 0.0,
+        })
+
+    # Revenue trend
+    revenue_trend = []
+    if "date" in df.columns:
+        daily = df.groupby("date").agg({
+            "ad_server_cpm_and_cpc_revenue": "sum",
+            "ad_server_impressions": "sum",
+            "ad_server_clicks": "sum",
+            "ad_server_ad_requests": "sum",
+        }).reset_index().sort_values("date")
+        for _, row in daily.iterrows():
+            d_imp = int(row["ad_server_impressions"])
+            d_rev = float(row["ad_server_cpm_and_cpc_revenue"])
+            revenue_trend.append({
+                "date": str(row["date"]),
+                "revenue_usd": round(d_rev, 6),
+                "impressions": d_imp,
+                "clicks": int(row["ad_server_clicks"]),
+                "ad_requests": int(row["ad_server_ad_requests"]),
+                "ecpm_usd": round((d_rev / d_imp * 1000), 6) if d_imp > 0 else 0.0,
+            })
+
+    return {
+        "period": f"{start} to {end}",
+        "metrics": {
+            "total_revenue_usd": round(rev, 6),
+            "total_impressions": imp,
+            "total_clicks": clicks,
+            "total_ad_requests": ad_requests,
+            "avg_ecpm_usd": round(ecpm, 6),
+            "avg_ctr_pct": round(ctr, 4),
+            "fill_rate_pct": round(fill_rate, 2),
+            "active_apps": len(app_summary),
+            "daily_active_users": dau,
+        },
+        "revenue_trend": revenue_trend,
+        "top_apps": all_apps[:10],
+        "all_apps": all_apps,
+    }
+
+
+def execute_query_data(df: pd.DataFrame, operation: str, dimension: str = None,
+                       metric: str = None, filters: dict = None, limit: int = 10) -> dict:
+    """
+    Execute whitelisted Pandas aggregations against the cached DataFrame.
+    This is the single tool given to Claude — never arbitrary code execution.
+    """
+    METRIC_MAP = {
+        "revenue": "ad_server_cpm_and_cpc_revenue",
+        "impressions": "ad_server_impressions",
+        "clicks": "ad_server_clicks",
+        "ad_requests": "ad_server_ad_requests",
+        "ecpm": "ad_server_cpm_and_cpc_revenue",  # will compute
+        "ctr": "ad_server_clicks",  # will compute
+        "fill_rate": "ad_server_impressions",  # will compute
+    }
+    DIM_MAP = {
+        "app": "ad_unit_name",
+        "date": "date",
+    }
+
+    if df.empty:
+        return {"result": "No data available for this query."}
+
+    try:
+        work_df = df.copy()
+
+        # Apply filters
+        if filters:
+            if "app_name" in filters and filters["app_name"]:
+                name_filter = filters["app_name"].lower()
+                work_df = work_df[work_df["ad_unit_name"].str.lower().str.contains(name_filter, na=False)]
+            if "date" in filters and filters["date"]:
+                work_df = work_df[work_df["date"] == filters["date"]]
+            if "min_revenue" in filters:
+                grouped = work_df.groupby("ad_unit_name")["ad_server_cpm_and_cpc_revenue"].sum()
+                valid_apps = grouped[grouped >= float(filters["min_revenue"])].index
+                work_df = work_df[work_df["ad_unit_name"].isin(valid_apps)]
+
+        if work_df.empty:
+            return {"result": "No data matches the specified filters."}
+
+        col = METRIC_MAP.get(metric, "ad_server_cpm_and_cpc_revenue") if metric else "ad_server_cpm_and_cpc_revenue"
+        dim_col = DIM_MAP.get(dimension, "ad_unit_name") if dimension else None
+
+        if operation == "sum":
+            if dim_col and dim_col in work_df.columns:
+                result = work_df.groupby(dim_col)[col].sum().reset_index()
+                result = result.sort_values(col, ascending=False)
+                return {"result": result.head(limit).to_dict(orient="records")}
+            return {"result": float(work_df[col].sum())}
+
+        elif operation == "mean":
+            if dim_col and dim_col in work_df.columns:
+                result = work_df.groupby(dim_col)[col].mean().reset_index()
+                return {"result": result.head(limit).to_dict(orient="records")}
+            return {"result": float(work_df[col].mean())}
+
+        elif operation == "max":
+            if dim_col and dim_col in work_df.columns:
+                result = work_df.groupby(dim_col)[col].sum().reset_index()
+                idx = result[col].idxmax()
+                return {"result": result.loc[idx].to_dict()}
+            return {"result": float(work_df[col].max())}
+
+        elif operation == "min":
+            if dim_col and dim_col in work_df.columns:
+                result = work_df.groupby(dim_col)[col].sum().reset_index()
+                idx = result[col].idxmin()
+                return {"result": result.loc[idx].to_dict()}
+            return {"result": float(work_df[col].min())}
+
+        elif operation == "top_n":
+            if dim_col and dim_col in work_df.columns:
+                result = work_df.groupby(dim_col)[col].sum().reset_index()
+                result = result.sort_values(col, ascending=False).head(limit)
+                return {"result": result.to_dict(orient="records")}
+            return {"result": f"Need a dimension (app or date) for top_n."}
+
+        elif operation == "bottom_n":
+            if dim_col and dim_col in work_df.columns:
+                result = work_df.groupby(dim_col)[col].sum().reset_index()
+                result = result.sort_values(col, ascending=True).head(limit)
+                return {"result": result.to_dict(orient="records")}
+            return {"result": f"Need a dimension (app or date) for bottom_n."}
+
+        elif operation == "compare":
+            if dim_col and dim_col in work_df.columns:
+                result = work_df.groupby(dim_col).agg({
+                    "ad_server_cpm_and_cpc_revenue": "sum",
+                    "ad_server_impressions": "sum",
+                    "ad_server_clicks": "sum",
+                    "ad_server_ad_requests": "sum",
+                }).reset_index()
+                result["ecpm_usd"] = (result["ad_server_cpm_and_cpc_revenue"] / result["ad_server_impressions"] * 1000).where(result["ad_server_impressions"] > 0, 0)
+                result["fill_rate_pct"] = (result["ad_server_impressions"] / result["ad_server_ad_requests"] * 100).where(result["ad_server_ad_requests"] > 0, 0)
+                result = result.sort_values("ad_server_cpm_and_cpc_revenue", ascending=False).head(limit)
+                return {"result": result.to_dict(orient="records")}
+            return {"result": "Need a dimension for compare."}
+
+        elif operation == "count":
+            if dim_col and dim_col in work_df.columns:
+                return {"result": int(work_df[dim_col].nunique())}
+            return {"result": len(work_df)}
+
+        else:
+            return {"result": f"Unknown operation: {operation}. Use sum, mean, max, min, top_n, bottom_n, compare, or count."}
+
+    except Exception as e:
+        log.exception(f"query_data failed: {e}")
+        return {"error": str(e)}
+
+
+# ─── Chat System Prompt ──────────────────────────────────────────────────────
+
+CHAT_SYSTEM_PROMPT = """You are **Ask GAM 360**, an AI assistant embedded in the GAM 360 Live Analytics dashboard. You answer questions about Google Ad Manager data that is currently displayed on the user's dashboard.
+
+## Your Data Source
+You have access to a data summary of the dashboard's current view. This summary contains:
+- **Top-card metrics**: Total Revenue, Impressions, Clicks, Avg eCPM, CTR, Fill Rate, Ad Requests, Active Apps, Daily Active Users (DAU)
+- **Revenue Trend**: Day-by-day revenue, impressions, eCPM for the selected date range
+- **Top Performing Apps**: All apps ranked by revenue with their impressions, eCPM, fill rate, CTR
+
+## Rules — CRITICAL
+1. **ONLY state numbers that exist in the data summary or a query_data tool result.** Never invent, estimate, or hallucinate numbers.
+2. If the user asks about data you don't have, say: "I don't have that in the current dashboard view."
+3. Keep answers **short and dashboard-native**: 1-3 sentences, bold key numbers, optionally a brief explanation.
+4. When a metric is **0 or 0.00%** (e.g., Fill Rate 0.00%, Daily Active Users 0, Ad Requests 0), explain it honestly — likely no data was returned by GAM for that metric/date, not necessarily that the actual value is zero.
+5. Format currency as `$X.XXXXXX` for small values or `$X.XX` for larger values. Format large numbers with commas.
+6. When comparing apps, use the query_data tool to get precise figures rather than approximating from the summary.
+7. You can reference the data summary directly for simple lookups. Use the query_data tool for aggregations, filtering, sorting, or comparisons not already in the summary.
+
+## Metric Definitions
+- **Total Revenue**: Sum of all ad revenue (CPM + CPC) across all ad units, in USD
+- **Impressions**: Total number of ad impressions served
+- **Clicks**: Total ad clicks
+- **Avg eCPM**: Effective cost per mille = (Revenue / Impressions) × 1000
+- **CTR**: Click-through rate = (Clicks / Impressions) × 100
+- **Fill Rate**: Percentage of ad requests that resulted in an impression = (Impressions / Ad Requests) × 100
+- **Ad Requests**: Total number of ad requests made to GAM
+- **Active Apps**: Number of distinct ad units with data in the selected period
+- **Daily Active Users (DAU)**: Estimated as Ad Requests / 5 (proxy metric)
+
+## Current Dashboard Data Summary
+{data_summary}
+"""
+
+
+# ─── Chat Endpoint ───────────────────────────────────────────────────────────
+
+QUERY_DATA_TOOL = {
+    "name": "query_data",
+    "description": "Query the current dashboard's GAM data with whitelisted aggregations. Use this for comparisons, filtering, sorting, or detailed breakdowns not already in the data summary.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "operation": {
+                "type": "string",
+                "enum": ["sum", "mean", "max", "min", "top_n", "bottom_n", "compare", "count"],
+                "description": "The aggregation operation to perform."
+            },
+            "dimension": {
+                "type": "string",
+                "enum": ["app", "date"],
+                "description": "The dimension to group by (app = ad unit, date = calendar day)."
+            },
+            "metric": {
+                "type": "string",
+                "enum": ["revenue", "impressions", "clicks", "ad_requests", "ecpm", "ctr", "fill_rate"],
+                "description": "The metric to aggregate."
+            },
+            "filters": {
+                "type": "object",
+                "description": "Optional filters: app_name (substring match), date (exact YYYY-MM-DD), min_revenue (number).",
+                "properties": {
+                    "app_name": {"type": "string"},
+                    "date": {"type": "string"},
+                    "min_revenue": {"type": "number"}
+                }
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max number of results for top_n/bottom_n (default 10).",
+                "default": 10
+            }
+        },
+        "required": ["operation"]
+    }
+}
+
+
+async def handle_chat(request):
+    """
+    POST /api/chat — SSE streaming chat endpoint.
+    Accepts { session_id, message, history[], date_range: { startDate, endDate } }
+    Streams Claude responses token-by-token as SSE events.
+    """
+    if request.method == "OPTIONS":
+        return JSONResponse({}, headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        })
+
+    if not HAS_ANTHROPIC:
+        return JSONResponse(
+            {"error": "Anthropic SDK not installed. Run: pip install anthropic"},
+            status_code=500,
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
+
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return JSONResponse(
+            {"error": "ANTHROPIC_API_KEY not set"},
+            status_code=500,
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
+
+    try:
+        body = await request.json()
+        message = body.get("message", "").strip()
+        history = body.get("history", [])
+        date_range = body.get("date_range", {})
+        session_id = body.get("session_id", "")
+
+        if not message:
+            return JSONResponse(
+                {"error": "No message provided"},
+                status_code=400,
+                headers={"Access-Control-Allow-Origin": "*"},
+            )
+
+        # Find cached data for this session
+        start_str = date_range.get("startDate", "")
+        end_str = date_range.get("endDate", "")
+        demand = date_range.get("demandChannel", "all")
+        cache_key = _cache_key(start_str, end_str, demand)
+
+        cached = _session_cache.get(cache_key)
+        if not cached:
+            # Try any available cache entry as fallback
+            if _session_cache:
+                cache_key = list(_session_cache.keys())[-1]
+                cached = _session_cache[cache_key]
+
+        data_summary = cached["summary"] if cached else {"metrics": {}, "revenue_trend": [], "top_apps": [], "all_apps": []}
+        cached_df = cached["df"] if cached else pd.DataFrame()
+
+        # Build messages array
+        system_prompt = CHAT_SYSTEM_PROMPT.format(
+            data_summary=json.dumps(data_summary, indent=2, default=str)
+        )
+
+        messages = []
+        # Add history (up to last 20 messages for context window management)
+        for h in history[-20:]:
+            messages.append({"role": h.get("role", "user"), "content": h.get("content", "")})
+        # Add current message
+        messages.append({"role": "user", "content": message})
+
+        log.info(f"[Chat] session={cache_key} message={message[:80]}...")
+
+        async def stream_response():
+            try:
+                client = anthropic.Anthropic(api_key=api_key)
+
+                # Tool-use loop: Claude may call query_data, then we feed results back
+                current_messages = list(messages)
+                max_tool_rounds = 5
+
+                for tool_round in range(max_tool_rounds):
+                    with client.messages.stream(
+                        model="claude-sonnet-4-6",
+                        max_tokens=1024,
+                        system=system_prompt,
+                        messages=current_messages,
+                        tools=[QUERY_DATA_TOOL],
+                    ) as stream:
+                        full_text = ""
+                        tool_use_blocks = []
+                        current_tool_input = ""
+                        current_tool_id = None
+                        current_tool_name = None
+                        is_tool_use = False
+
+                        for event in stream:
+                            if event.type == "content_block_start":
+                                if hasattr(event.content_block, 'type'):
+                                    if event.content_block.type == "tool_use":
+                                        is_tool_use = True
+                                        current_tool_id = event.content_block.id
+                                        current_tool_name = event.content_block.name
+                                        current_tool_input = ""
+                                    else:
+                                        is_tool_use = False
+
+                            elif event.type == "content_block_delta":
+                                if is_tool_use:
+                                    if hasattr(event.delta, 'partial_json'):
+                                        current_tool_input += event.delta.partial_json
+                                else:
+                                    if hasattr(event.delta, 'text'):
+                                        text = event.delta.text
+                                        full_text += text
+                                        yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
+
+                            elif event.type == "content_block_stop":
+                                if is_tool_use and current_tool_id:
+                                    try:
+                                        tool_input = json.loads(current_tool_input) if current_tool_input else {}
+                                    except json.JSONDecodeError:
+                                        tool_input = {}
+                                    tool_use_blocks.append({
+                                        "id": current_tool_id,
+                                        "name": current_tool_name,
+                                        "input": tool_input,
+                                    })
+                                    is_tool_use = False
+
+                        # Get the final message for stop_reason
+                        final_message = stream.get_final_message()
+                        stop_reason = final_message.stop_reason if final_message else "end_turn"
+
+                    # If Claude used tools, execute them and continue
+                    if stop_reason == "tool_use" and tool_use_blocks:
+                        # Build assistant message with all content blocks
+                        assistant_content = []
+                        if full_text:
+                            assistant_content.append({"type": "text", "text": full_text})
+                        for tb in tool_use_blocks:
+                            assistant_content.append({
+                                "type": "tool_use",
+                                "id": tb["id"],
+                                "name": tb["name"],
+                                "input": tb["input"],
+                            })
+
+                        current_messages.append({"role": "assistant", "content": assistant_content})
+
+                        # Execute each tool and build tool results
+                        tool_results = []
+                        for tb in tool_use_blocks:
+                            log.info(f"[Chat] Tool call: {tb['name']}({json.dumps(tb['input'])})")
+                            if tb["name"] == "query_data":
+                                result = execute_query_data(
+                                    cached_df,
+                                    operation=tb["input"].get("operation", "sum"),
+                                    dimension=tb["input"].get("dimension"),
+                                    metric=tb["input"].get("metric"),
+                                    filters=tb["input"].get("filters"),
+                                    limit=tb["input"].get("limit", 10),
+                                )
+                            else:
+                                result = {"error": f"Unknown tool: {tb['name']}"}
+
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": tb["id"],
+                                "content": json.dumps(result, default=str),
+                            })
+
+                        current_messages.append({"role": "user", "content": tool_results})
+                        tool_use_blocks = []
+                        # Loop continues — Claude will process tool results
+                    else:
+                        # No tool use, we're done
+                        break
+
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+            except Exception as e:
+                log.exception(f"[Chat] Stream error: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+        return StreamingResponse(
+            stream_response(),
+            media_type="text/event-stream",
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    except Exception as e:
+        log.exception(f"[Chat] Request error: {e}")
+        return JSONResponse(
+            {"error": str(e)},
+            status_code=500,
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
 
 
 # ─── Domain Extraction ───────────────────────────────────────────────────────
@@ -486,6 +989,23 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             if start_hour > 0 or end_hour < 23:
                 df = df[(df["hour"] >= start_hour) & (df["hour"] <= end_hour)]
 
+        # ── Cache DataFrame + data summary for Ask GAM 360 chat ──
+        if not df.empty:
+            cache_key = _cache_key(str(start_date), str(end_date), demand_channel)
+            summary = build_data_summary(df, start_date, end_date)
+            _session_cache[cache_key] = {
+                "df": df.copy(),
+                "summary": summary,
+                "stored_at": datetime.now(),
+                "start": str(start_date),
+                "end": str(end_date),
+            }
+            # Keep cache bounded — remove oldest if > 10 entries
+            while len(_session_cache) > 10:
+                oldest_key = next(iter(_session_cache))
+                del _session_cache[oldest_key]
+            log.info(f"[Chat Cache] Stored data for {cache_key} ({len(df)} rows, {len(summary.get('all_apps', []))} apps)")
+
         # ── Debug logging: raw totals before any formatting ──
         if not df.empty:
             raw_rev = float(df["ad_server_cpm_and_cpc_revenue"].sum())
@@ -775,6 +1295,7 @@ starlette_app = Starlette(
         Route("/sse", endpoint=handle_sse),
         Route("/messages/", endpoint=handle_messages, methods=["POST"]),
         Route("/api/tool", endpoint=handle_api_tool, methods=["POST", "OPTIONS"]),
+        Route("/api/chat", endpoint=handle_chat, methods=["POST", "OPTIONS"]),
     ],
     middleware=[
         Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]),

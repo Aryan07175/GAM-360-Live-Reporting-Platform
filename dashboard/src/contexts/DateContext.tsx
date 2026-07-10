@@ -105,8 +105,10 @@ interface LiveReportContextValue {
   customEndDate: string;
   customStartTime: string;
   customEndTime: string;
+  demandChannel: string;
   setDatePreset: (preset: DatePreset) => void;
   setCustomRange: (start: string, end: string, startTime?: string, endTime?: string) => void;
+  setDemandChannel: (channel: string) => void;
 
   // Report data
   reportData: LiveReportData | null;
@@ -159,8 +161,10 @@ const LiveReportContext = createContext<LiveReportContextValue>({
   customEndDate: "",
   customStartTime: "00:00",
   customEndTime: "23:59",
+  demandChannel: "all",
   setDatePreset: () => {},
   setCustomRange: () => {},
+  setDemandChannel: () => {},
   reportData: null,
   summaryData: null,
   appsData: null,
@@ -190,6 +194,7 @@ export function LiveReportProvider({
   const [customEndDate, setCustomEndDate] = useState<string>("");
   const [customStartTime, setCustomStartTime] = useState<string>("00:00");
   const [customEndTime, setCustomEndTime] = useState<string>("23:59");
+  const [demandChannel, setDemandChannelState] = useState<string>("all");
 
   // Compute effective dates
   const { startDate, endDate, startTime, endTime } = useMemo(() => {
@@ -321,6 +326,7 @@ export function LiveReportProvider({
               endDate,
               startTime,
               endTime,
+              demandChannel,
               forceRefresh
             );
             setSummaryData(result);
@@ -336,6 +342,7 @@ export function LiveReportProvider({
               endDate,
               startTime,
               endTime,
+              demandChannel,
               forceRefresh
             );
             setAppsData(result);
@@ -351,6 +358,7 @@ export function LiveReportProvider({
               endDate,
               startTime,
               endTime,
+              demandChannel,
               forceRefresh
             );
             setTrendData(result);
@@ -366,6 +374,7 @@ export function LiveReportProvider({
               endDate,
               startTime,
               endTime,
+              demandChannel,
               forceRefresh
             );
             setAnomalyData(result);
@@ -381,6 +390,7 @@ export function LiveReportProvider({
               endDate,
               startTime,
               endTime,
+              demandChannel,
               forceRefresh
             );
             setRecommendationData(result);
@@ -396,6 +406,7 @@ export function LiveReportProvider({
               endDate,
               startTime,
               endTime,
+              demandChannel,
               forceRefresh
             );
             setRankingData(result);
@@ -420,7 +431,7 @@ export function LiveReportProvider({
       setLastFetchedAt(new Date().toISOString());
       setIsLoading(false);
     },
-    [startDate, endDate, startTime, endTime, updateSection]
+    [startDate, endDate, startTime, endTime, demandChannel, updateSection]
   );
 
   // ─── Refresh (force new GAM request) ──────────────────────────────────────
@@ -457,8 +468,10 @@ export function LiveReportProvider({
     customEndDate,
     customStartTime,
     customEndTime,
+    demandChannel,
     setDatePreset,
     setCustomRange,
+    setDemandChannel: setDemandChannelState,
     reportData,
     summaryData,
     appsData,

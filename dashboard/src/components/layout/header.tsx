@@ -40,9 +40,12 @@ export function Header() {
     error,
     refresh,
     reportData,
+    demandChannel,
+    setDemandChannel,
   } = useLiveReport();
 
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showDemandPicker, setShowDemandPicker] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [customStart, setCustomStart] = useState(startDate);
   const [customEnd, setCustomEnd] = useState(endDate);
@@ -184,6 +187,53 @@ export function Header() {
                     Apply Custom Range
                   </Button>
                 </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Demand Channel Filter */}
+        <div className="relative">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 gap-2"
+            onClick={() => setShowDemandPicker((v) => !v)}
+          >
+            <span className="font-medium text-muted-foreground">Channel:</span>
+            <span>{demandChannel === "all" ? "Total Network" : "Programmatic Only"}</span>
+            <ChevronDown className="h-3 w-3 text-muted-foreground" />
+          </Button>
+
+          {showDemandPicker && (
+            <>
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setShowDemandPicker(false)}
+              />
+              <div className="absolute right-0 top-11 z-50 bg-background border rounded-lg shadow-xl py-1 w-48 animate-in fade-in slide-in-from-top-2 duration-200">
+                <button
+                  className={`w-full text-left text-sm px-3 py-2 transition-colors ${
+                    demandChannel === "all" ? "bg-muted font-medium" : "hover:bg-muted"
+                  }`}
+                  onClick={() => {
+                    setDemandChannel("all");
+                    setShowDemandPicker(false);
+                  }}
+                >
+                  Total Network (All)
+                </button>
+                <button
+                  className={`w-full text-left text-sm px-3 py-2 transition-colors ${
+                    demandChannel === "programmatic" ? "bg-muted font-medium" : "hover:bg-muted"
+                  }`}
+                  onClick={() => {
+                    setDemandChannel("programmatic");
+                    setShowDemandPicker(false);
+                  }}
+                >
+                  Programmatic Only
+                </button>
               </div>
             </>
           )}
