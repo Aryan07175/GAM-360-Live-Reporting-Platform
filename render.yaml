@@ -1,0 +1,28 @@
+# render.yaml — Render Blueprint for GAM 360 Backend
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: gam360-backend
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: python mcp_server/render_start.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: GAM_NETWORK_CODE
+        sync: false
+      - key: GAM_APPLICATION_NAME
+        value: GAM360-Revenue-Pipeline
+      - key: GAM_API_VERSION
+        value: v202602
+      - key: GAM_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: GAM_REQUEST_TIMEOUT
+        value: "120"
+      - key: GAM_MAX_PARALLEL_REQUESTS
+        value: "5"
+      - key: REVENUE_IN_MICROS
+        value: "false"
