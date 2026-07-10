@@ -44,6 +44,12 @@ COLUMNS = [
     "AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS",
     "AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS",
     "AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE",
+
+    # --- Total Network (All Channels) ---
+    "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
+    "TOTAL_LINE_ITEM_LEVEL_CLICKS",
+    "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
+    "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
 ]
 
 
@@ -200,6 +206,9 @@ class GAMClient:
             "adsense_line_item_level_revenue",
             "ad_exchange_line_item_level_impressions", "ad_exchange_line_item_level_clicks",
             "ad_exchange_line_item_level_revenue",
+            "total_line_item_level_impressions", "total_line_item_level_clicks",
+            "total_line_item_level_cpm_and_cpc_revenue",
+            "total_line_item_level_without_cpd_average_ecpm",
             "ad_server_ctr", "ad_server_ad_requests", "ad_server_fill_rate",
             "ad_server_without_cpd_average_ecpm",
         ]
@@ -230,11 +239,12 @@ class GAMClient:
             )
         else:
             # Total Network (All)
-            # AD_SERVER_IMPRESSIONS, AD_SERVER_CLICKS, and AD_SERVER_CPM_AND_CPC_REVENUE
-            # already represent the TOTAL across all channels (direct + programmatic + backfill).
-            # Do NOT add ADSENSE or AD_EXCHANGE sub-channel columns on top — they are
-            # breakdowns of the total, not additional data. Adding them double-counts.
-            pass
+            # Map the native GAM Total metrics to our canonical dataframe columns.
+            # AD_SERVER_AD_REQUESTS is untouched, as GAM does not have a "Total ad requests".
+            df["ad_server_impressions"] = df["total_line_item_level_impressions"]
+            df["ad_server_clicks"] = df["total_line_item_level_clicks"]
+            df["ad_server_cpm_and_cpc_revenue"] = df["total_line_item_level_cpm_and_cpc_revenue"]
+            df["ad_server_without_cpd_average_ecpm"] = df["total_line_item_level_without_cpd_average_ecpm"]
 
         log.info(
             "Metrics mapped (%s) — impressions: %.0f, clicks: %.0f, revenue: %.2f",
