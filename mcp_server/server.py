@@ -421,7 +421,7 @@ async def handle_chat(request):
                 
                 # Create the model with system instruction and tools
                 model = genai.GenerativeModel(
-                    model_name="gemini-1.5-flash",
+                    model_name="gemini-1.5-flash-latest",
                     system_instruction=system_prompt,
                     tools=get_query_data_tool()
                 )
