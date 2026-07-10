@@ -435,52 +435,55 @@ async def handle_chat(request):
                 tool_called = False
                 
                 # We need to process the stream
+                tool_calls_to_execute = []
                 for chunk in response:
                     # Check for function calls
                     for part in chunk.parts:
                         if part.function_call:
                             tool_called = True
-                            fc = part.function_call
-                            tool_name = fc.name
-                            
-                            # Convert protobuf Struct to dict
-                            kwargs = {}
-                            for k, v in fc.args.items():
-                                kwargs[k] = v
-                                
-                            log.info(f"[Chat] Tool call: {tool_name}({kwargs})")
-                            
-                            if tool_name == "query_data":
-                                result = execute_query_data(
-                                    cached_df,
-                                    operation=kwargs.get("operation", "sum"),
-                                    dimension=kwargs.get("dimension"),
-                                    metric=kwargs.get("metric"),
-                                    filters=kwargs.get("filters"),
-                                    limit=int(kwargs.get("limit", 10)),
-                                )
-                            else:
-                                result = {"error": f"Unknown tool: {tool_name}"}
-                            
-                            # Send tool result back to Gemini (this doesn't stream natively in the same way, 
-                            # we have to send a new message with the result and stream that)
-                            tool_response_parts = [
-                                genai.protos.Part(
-                                    function_response=genai.protos.FunctionResponse(
-                                        name=tool_name,
-                                        response=result
-                                    )
-                                )
-                            ]
-                            
-                            # Stream the model's response to the tool result
-                            second_response = chat.send_message(tool_response_parts, stream=True)
-                            for second_chunk in second_response:
-                                if second_chunk.text:
-                                    yield f"data: {json.dumps({'type': 'token', 'content': second_chunk.text})}\n\n"
-                                    
+                            tool_calls_to_execute.append(part.function_call)
                         elif part.text:
                             yield f"data: {json.dumps({'type': 'token', 'content': part.text})}\n\n"
+                            
+                # The first stream is fully consumed. Now we can send tool results if any.
+                if tool_calls_to_execute:
+                    tool_response_parts = []
+                    for fc in tool_calls_to_execute:
+                        tool_name = fc.name
+                        
+                        # Convert protobuf Struct to dict
+                        kwargs = {}
+                        for k, v in fc.args.items():
+                            kwargs[k] = v
+                            
+                        log.info(f"[Chat] Tool call: {tool_name}({kwargs})")
+                        
+                        if tool_name == "query_data":
+                            result = execute_query_data(
+                                cached_df,
+                                operation=kwargs.get("operation", "sum"),
+                                dimension=kwargs.get("dimension"),
+                                metric=kwargs.get("metric"),
+                                filters=kwargs.get("filters"),
+                                limit=int(kwargs.get("limit", 10)),
+                            )
+                        else:
+                            result = {"error": f"Unknown tool: {tool_name}"}
+                        
+                        tool_response_parts.append(
+                            genai.protos.Part(
+                                function_response=genai.protos.FunctionResponse(
+                                    name=tool_name,
+                                    response=result
+                                )
+                            )
+                        )
+                        
+                    # Stream the model's response to the tool result
+                    second_response = chat.send_message(tool_response_parts, stream=True)
+                    for second_chunk in second_response:
+                        if second_chunk.text:
+                            yield f"data: {json.dumps({'type': 'token', 'content': second_chunk.text})}\n\n"
                             
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
