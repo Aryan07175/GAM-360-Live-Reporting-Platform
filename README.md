@@ -124,5 +124,3 @@ gam360-pipeline/
 └── README.md
 ```
 
-## License
-MIT
