@@ -101,26 +101,5 @@ cd dashboard
 npm install
 npm run dev
 # Dashboard opens at http://localhost:3000
-```
 
----
-
-## 📂 Project Structure
-
-```text
-gam360-pipeline/
-├── config/                  # GAM API credentials & env vars
-├── mcp_server/              # Python backend connecting to GAM SOAP API
-│   ├── server.py            # API server exposing live analytics endpoints & chat SSE stream
-│   └── gam_client.py        # Live data extraction, unified metrics merging, and request deduplication
-├── dashboard/               # Next.js analytics dashboard
-│   ├── src/
-│   │   ├── app/             # App Router pages (Dashboard, Reports, Revenue, etc.)
-│   │   ├── components/      # Live UI components (header, charts, KPI cards, chat panel)
-│   │   ├── contexts/        # React Context for global state management
-│   │   └── actions/         # Next.js Server Actions calling the backend API
-│   └── package.json
-├── requirements.txt         # Python dependencies
-└── README.md
-```
 
