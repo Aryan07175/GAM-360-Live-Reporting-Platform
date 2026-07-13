@@ -557,20 +557,21 @@ async def handle_chat(request):
                     error_str = str(e).lower()
                     is_quota_error = "429" in str(e) or "quota" in error_str or "resource has been exhausted" in error_str or "rate limit" in error_str
                     
-                    if is_quota_error and attempt < MAX_RETRIES - 1:
-                        wait_time = (attempt + 1) * 15  # 15s, 30s
-                        log.warning(f"[Chat] Quota exceeded (attempt {attempt+1}), retrying in {wait_time}s...")
-                        await asyncio.sleep(wait_time)
-                        continue
-                    
                     log.exception(f"[Chat] Stream error (attempt {attempt+1}): {e}")
                     
-                    # User-friendly error messages
+                    # If it's a quota error, do NOT sleep/retry because if limit is 0, it never recovers and just hangs the UI
                     if is_quota_error:
-                        user_msg = "The AI service is temporarily rate-limited. Please wait a minute and try again."
-                    else:
-                        user_msg = str(e)
-                    
+                        user_msg = "The AI service is temporarily rate-limited (Quota Exceeded). Please wait and try again."
+                        yield f"data: {json.dumps({'type': 'error', 'content': user_msg})}\n\n"
+                        return
+                        
+                    # For non-quota errors, we can retry without long sleeps
+                    if attempt < MAX_RETRIES - 1:
+                        await asyncio.sleep(2)
+                        continue
+                        
+                    # User-friendly error messages
+                    user_msg = str(e)
                     yield f"data: {json.dumps({'type': 'error', 'content': user_msg})}\n\n"
                     return
 
