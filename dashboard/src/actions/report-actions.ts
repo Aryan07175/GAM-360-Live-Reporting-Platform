@@ -322,12 +322,15 @@ export async function fetchPerformanceRanking(
 export async function fetchFullReport(
   startDate: string,
   endDate: string,
+  startTime: string = "00:00",
+  endTime: string = "23:59",
+  demandChannel: string = "all",
   forceRefresh: boolean = false
 ): Promise<LiveReportData | null> {
   try {
     const res = await callMcpTool(
       "generateFullReport",
-      baseArgs(startDate, endDate, "00:00", "23:59", "all", forceRefresh)
+      baseArgs(startDate, endDate, startTime, endTime, demandChannel, forceRefresh)
     );
     if (!res || res.status === "error") return null;
 

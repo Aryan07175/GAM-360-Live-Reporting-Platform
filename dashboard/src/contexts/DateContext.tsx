@@ -27,14 +27,7 @@ import type {
   ReportProgress,
   SectionStatus,
 } from "@/types";
-import {
-  fetchExecutiveSummary,
-  fetchRevenueByApplication,
-  fetchRevenueTrend,
-  fetchAnomalies,
-  fetchRecommendations,
-  fetchPerformanceRanking,
-} from "@/actions/report-actions";
+import { fetchFullReport } from "@/actions/report-actions";
 
 // ─── Date Range Computation ─────────────────────────────────────────────────
 
@@ -309,124 +302,60 @@ export function LiveReportProvider({
       setProgress({
         total: 6,
         completed: 0,
-        currentSection: "Executive Summary",
+        currentSection: "Generating Full Report",
         sections: defaultProgress.sections.map((s) => ({
           ...s,
           status: "loading" as const,
         })),
       });
 
-      const sections = [
-        {
-          index: 0,
-          name: "Executive Summary",
-          fn: async () => {
-            const result = await fetchExecutiveSummary(
-              startDate,
-              endDate,
-              startTime,
-              endTime,
-              demandChannel,
-              forceRefresh
-            );
-            setSummaryData(result);
-            return result;
-          },
-        },
-        {
-          index: 1,
-          name: "Applications",
-          fn: async () => {
-            const result = await fetchRevenueByApplication(
-              startDate,
-              endDate,
-              startTime,
-              endTime,
-              demandChannel,
-              forceRefresh
-            );
-            setAppsData(result);
-            return result;
-          },
-        },
-        {
-          index: 2,
-          name: "Revenue Trend",
-          fn: async () => {
-            const result = await fetchRevenueTrend(
-              startDate,
-              endDate,
-              startTime,
-              endTime,
-              demandChannel,
-              forceRefresh
-            );
-            setTrendData(result);
-            return result;
-          },
-        },
-        {
-          index: 3,
-          name: "Anomaly Detection",
-          fn: async () => {
-            const result = await fetchAnomalies(
-              startDate,
-              endDate,
-              startTime,
-              endTime,
-              demandChannel,
-              forceRefresh
-            );
-            setAnomalyData(result);
-            return result;
-          },
-        },
-        {
-          index: 4,
-          name: "Recommendations",
-          fn: async () => {
-            const result = await fetchRecommendations(
-              startDate,
-              endDate,
-              startTime,
-              endTime,
-              demandChannel,
-              forceRefresh
-            );
-            setRecommendationData(result);
-            return result;
-          },
-        },
-        {
-          index: 5,
-          name: "Performance Ranking",
-          fn: async () => {
-            const result = await fetchPerformanceRanking(
-              startDate,
-              endDate,
-              startTime,
-              endTime,
-              demandChannel,
-              forceRefresh
-            );
-            setRankingData(result);
-            return result;
-          },
-        },
-      ];
+      try {
+        const result = await fetchFullReport(
+          startDate,
+          endDate,
+          startTime,
+          endTime,
+          demandChannel,
+          forceRefresh
+        );
 
-      // Fire all sections in parallel
-      const promises = sections.map(async (section) => {
-        try {
-          updateSection(section.index, "loading");
-          const result = await section.fn();
-          updateSection(section.index, result ? "done" : "error", result ? undefined : "No data returned");
-        } catch (err: any) {
-          updateSection(section.index, "error", err.message);
+        if (result) {
+          setSummaryData({ summary: result.summary, fetchedAt: result.fetchedAt });
+          setAppsData({ apps: result.apps, fetchedAt: result.fetchedAt });
+          setTrendData({ trend: result.dailyTrend, fetchedAt: result.fetchedAt });
+          setAnomalyData({ anomalies: result.anomalies, fetchedAt: result.fetchedAt });
+          setRecommendationData({ recommendations: result.recommendations, fetchedAt: result.fetchedAt });
+          setRankingData({ rankings: result.rankings, fetchedAt: result.fetchedAt });
+
+          setProgress({
+            total: 6,
+            completed: 6,
+            currentSection: "",
+            sections: defaultProgress.sections.map((s) => ({
+              ...s,
+              status: "done" as const,
+            })),
+          });
+        } else {
+          setProgress((prev) => ({
+            ...prev,
+            sections: prev.sections.map((s) => ({
+              ...s,
+              status: "error" as const,
+              error: "No data returned",
+            })),
+          }));
         }
-      });
-
-      await Promise.allSettled(promises);
+      } catch (err: any) {
+        setProgress((prev) => ({
+          ...prev,
+          sections: prev.sections.map((s) => ({
+            ...s,
+            status: "error" as const,
+            error: err.message || "Failed to fetch report",
+          })),
+        }));
+      }
 
       setLastFetchedAt(new Date().toISOString());
       setIsLoading(false);
