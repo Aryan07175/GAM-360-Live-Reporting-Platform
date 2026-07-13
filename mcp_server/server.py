@@ -422,13 +422,22 @@ async def handle_chat(request):
         data_summary = cached["summary"] if cached else {"metrics": {}, "revenue_trend": [], "top_apps": [], "all_apps": []}
         cached_df = cached["df"] if cached else pd.DataFrame()
 
+        # Build a COMPACT data summary for the system prompt to minimize token usage.
+        # The full data is still available via the query_data tool.
+        compact_summary = {
+            "period": data_summary.get("period", ""),
+            "metrics": data_summary.get("metrics", {}),
+            "top_apps": data_summary.get("top_apps", [])[:10],
+            "revenue_trend": data_summary.get("revenue_trend", [])[-7:],  # Last 7 days only
+        }
+
         # Build messages array for Gemini
         system_prompt = CHAT_SYSTEM_PROMPT.format(
-            data_summary=json.dumps(data_summary, indent=2, default=str)
+            data_summary=json.dumps(compact_summary, indent=2, default=str)
         )
 
         gemini_history = []
-        for h in history[-20:]:
+        for h in history[-10:]:
             # Gemini roles: 'user' and 'model'
             role = "model" if h.get("role") == "assistant" else "user"
             content = h.get("content", "").strip()
@@ -443,14 +452,15 @@ async def handle_chat(request):
         log.info(f"[Chat] session={cache_key} message={message[:80]}...")
 
         async def stream_response():
-            # Model priority: try primary first, fall back to lite on quota errors
-            MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+            # gemini-2.0-flash-lite has 2x higher free-tier quota (30 RPM vs 15 RPM)
+            # Use it as primary; fall back to flash only on the last attempt
+            MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
             MAX_RETRIES = 3
             last_error = None
 
             for attempt in range(MAX_RETRIES):
                 try:
-                    # Use fallback model on later retries
+                    # Use primary lite model first, try full flash on last attempt
                     model_name = MODELS[0] if attempt < 2 else MODELS[-1]
                     
                     genai.configure(api_key=api_key)
@@ -548,8 +558,8 @@ async def handle_chat(request):
                     is_quota_error = "429" in str(e) or "quota" in error_str or "resource has been exhausted" in error_str or "rate limit" in error_str
                     
                     if is_quota_error and attempt < MAX_RETRIES - 1:
-                        wait_time = (attempt + 1) * 5  # 5s, 10s
-                        log.warning(f"[Chat] Quota exceeded (attempt {attempt+1}), retrying in {wait_time}s with next model...")
+                        wait_time = (attempt + 1) * 15  # 15s, 30s
+                        log.warning(f"[Chat] Quota exceeded (attempt {attempt+1}), retrying in {wait_time}s...")
                         await asyncio.sleep(wait_time)
                         continue
                     
