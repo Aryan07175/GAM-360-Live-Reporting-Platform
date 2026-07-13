@@ -392,9 +392,32 @@ async def handle_chat(request):
 
         cached = _session_cache.get(cache_key)
         if not cached:
+            # Fallback: try the most recent cached session
             if _session_cache:
                 cache_key = list(_session_cache.keys())[-1]
                 cached = _session_cache[cache_key]
+
+        # If still no cached data, fetch LIVE from GAM on-demand
+        if not cached and start_str and end_str:
+            try:
+                log.info(f"[Chat] No cached data found. Fetching live data for {start_str} to {end_str}...")
+                chat_start = datetime.strptime(start_str, "%Y-%m-%d").date()
+                chat_end = datetime.strptime(end_str, "%Y-%m-%d").date()
+                live_df = await gam.get_live_data_multi_day(chat_start, chat_end, False, demand)
+                if not live_df.empty:
+                    summary = build_data_summary(live_df, chat_start, chat_end)
+                    cache_key = _cache_key(start_str, end_str, demand)
+                    _session_cache[cache_key] = {
+                        "df": live_df.copy(),
+                        "summary": summary,
+                        "stored_at": datetime.now(),
+                        "start": start_str,
+                        "end": end_str,
+                    }
+                    cached = _session_cache[cache_key]
+                    log.info(f"[Chat] On-demand fetch successful: {len(live_df)} rows, {len(summary.get('all_apps', []))} apps")
+            except Exception as fetch_err:
+                log.warning(f"[Chat] On-demand data fetch failed: {fetch_err}")
 
         data_summary = cached["summary"] if cached else {"metrics": {}, "revenue_trend": [], "top_apps": [], "all_apps": []}
         cached_df = cached["df"] if cached else pd.DataFrame()
@@ -408,9 +431,13 @@ async def handle_chat(request):
         for h in history[-20:]:
             # Gemini roles: 'user' and 'model'
             role = "model" if h.get("role") == "assistant" else "user"
+            content = h.get("content", "").strip()
+            # Skip empty messages — Gemini rejects history entries with empty text
+            if not content:
+                continue
             gemini_history.append({
                 "role": role,
-                "parts": [{"text": h.get("content", "")}]
+                "parts": [{"text": content}]
             })
 
         log.info(f"[Chat] session={cache_key} message={message[:80]}...")
@@ -421,7 +448,7 @@ async def handle_chat(request):
                 
                 # Create the model with system instruction and tools
                 model = genai.GenerativeModel(
-                    model_name="gemini-flash-latest",
+                    model_name="gemini-2.0-flash",
                     system_instruction=system_prompt,
                     tools=get_query_data_tool()
                 )
@@ -439,11 +466,17 @@ async def handle_chat(request):
                 for chunk in response:
                     # Check for function calls
                     for part in chunk.parts:
-                        if part.function_call:
+                        if hasattr(part, 'function_call') and part.function_call and part.function_call.name:
                             tool_called = True
                             tool_calls_to_execute.append(part.function_call)
-                        elif part.text:
-                            yield f"data: {json.dumps({'type': 'token', 'content': part.text})}\n\n"
+                        else:
+                            # Safely extract text — avoid accessing .text on non-text parts
+                            try:
+                                text = part.text
+                                if text:
+                                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
+                            except (ValueError, AttributeError):
+                                pass  # Part is not a text part (e.g. function_call), skip it
                             
                 # The first stream is fully consumed. Now we can send tool results if any.
                 if tool_calls_to_execute:
@@ -470,11 +503,15 @@ async def handle_chat(request):
                         else:
                             result = {"error": f"Unknown tool: {tool_name}"}
                         
+                        # Serialize through JSON to ensure all values are
+                        # pure Python types (protobuf Struct rejects numpy int64/float64)
+                        safe_result = json.loads(json.dumps(result, default=str))
+                        
                         tool_response_parts.append(
                             genai.protos.Part(
                                 function_response=genai.protos.FunctionResponse(
                                     name=tool_name,
-                                    response=result
+                                    response=safe_result
                                 )
                             )
                         )
@@ -482,8 +519,14 @@ async def handle_chat(request):
                     # Stream the model's response to the tool result
                     second_response = chat.send_message(tool_response_parts, stream=True)
                     for second_chunk in second_response:
-                        if second_chunk.text:
-                            yield f"data: {json.dumps({'type': 'token', 'content': second_chunk.text})}\n\n"
+                        # Safely iterate parts to avoid "Could not convert part.function_call to text"
+                        for part in second_chunk.parts:
+                            try:
+                                text = part.text
+                                if text:
+                                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
+                            except (ValueError, AttributeError):
+                                pass  # Skip non-text parts (e.g. unexpected function_call)
                             
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
