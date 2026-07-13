@@ -443,96 +443,126 @@ async def handle_chat(request):
         log.info(f"[Chat] session={cache_key} message={message[:80]}...")
 
         async def stream_response():
-            try:
-                genai.configure(api_key=api_key)
-                
-                # Create the model with system instruction and tools
-                model = genai.GenerativeModel(
-                    model_name="gemini-2.0-flash",
-                    system_instruction=system_prompt,
-                    tools=get_query_data_tool()
-                )
+            # Model priority: try primary first, fall back to lite on quota errors
+            MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+            MAX_RETRIES = 3
+            last_error = None
 
-                # Initialize chat session
-                chat = model.start_chat(history=gemini_history)
-                
-                # Send the message
-                response = chat.send_message(message, stream=True)
-                
-                tool_called = False
-                
-                # We need to process the stream
-                tool_calls_to_execute = []
-                for chunk in response:
-                    # Check for function calls
-                    for part in chunk.parts:
-                        if hasattr(part, 'function_call') and part.function_call and part.function_call.name:
-                            tool_called = True
-                            tool_calls_to_execute.append(part.function_call)
-                        else:
-                            # Safely extract text — avoid accessing .text on non-text parts
-                            try:
-                                text = part.text
-                                if text:
-                                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
-                            except (ValueError, AttributeError):
-                                pass  # Part is not a text part (e.g. function_call), skip it
+            for attempt in range(MAX_RETRIES):
+                try:
+                    # Use fallback model on later retries
+                    model_name = MODELS[0] if attempt < 2 else MODELS[-1]
+                    
+                    genai.configure(api_key=api_key)
+                    
+                    # Create the model with system instruction and tools
+                    model = genai.GenerativeModel(
+                        model_name=model_name,
+                        system_instruction=system_prompt,
+                        tools=get_query_data_tool()
+                    )
+
+                    # Initialize chat session
+                    chat = model.start_chat(history=gemini_history)
+                    
+                    log.info(f"[Chat] Attempt {attempt+1}/{MAX_RETRIES} using model={model_name}")
+                    
+                    # Send the message
+                    response = chat.send_message(message, stream=True)
+                    
+                    tool_called = False
+                    
+                    # We need to process the stream
+                    tool_calls_to_execute = []
+                    for chunk in response:
+                        # Check for function calls
+                        for part in chunk.parts:
+                            if hasattr(part, 'function_call') and part.function_call and part.function_call.name:
+                                tool_called = True
+                                tool_calls_to_execute.append(part.function_call)
+                            else:
+                                # Safely extract text — avoid accessing .text on non-text parts
+                                try:
+                                    text = part.text
+                                    if text:
+                                        yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
+                                except (ValueError, AttributeError):
+                                    pass  # Part is not a text part (e.g. function_call), skip it
+                                
+                    # The first stream is fully consumed. Now we can send tool results if any.
+                    if tool_calls_to_execute:
+                        tool_response_parts = []
+                        for fc in tool_calls_to_execute:
+                            tool_name = fc.name
                             
-                # The first stream is fully consumed. Now we can send tool results if any.
-                if tool_calls_to_execute:
-                    tool_response_parts = []
-                    for fc in tool_calls_to_execute:
-                        tool_name = fc.name
-                        
-                        # Convert protobuf Struct to dict
-                        kwargs = {}
-                        for k, v in fc.args.items():
-                            kwargs[k] = v
+                            # Convert protobuf Struct to dict
+                            kwargs = {}
+                            for k, v in fc.args.items():
+                                kwargs[k] = v
+                                
+                            log.info(f"[Chat] Tool call: {tool_name}({kwargs})")
                             
-                        log.info(f"[Chat] Tool call: {tool_name}({kwargs})")
-                        
-                        if tool_name == "query_data":
-                            result = execute_query_data(
-                                cached_df,
-                                operation=kwargs.get("operation", "sum"),
-                                dimension=kwargs.get("dimension"),
-                                metric=kwargs.get("metric"),
-                                filters=kwargs.get("filters"),
-                                limit=int(kwargs.get("limit", 10)),
-                            )
-                        else:
-                            result = {"error": f"Unknown tool: {tool_name}"}
-                        
-                        # Serialize through JSON to ensure all values are
-                        # pure Python types (protobuf Struct rejects numpy int64/float64)
-                        safe_result = json.loads(json.dumps(result, default=str))
-                        
-                        tool_response_parts.append(
-                            genai.protos.Part(
-                                function_response=genai.protos.FunctionResponse(
-                                    name=tool_name,
-                                    response=safe_result
+                            if tool_name == "query_data":
+                                result = execute_query_data(
+                                    cached_df,
+                                    operation=kwargs.get("operation", "sum"),
+                                    dimension=kwargs.get("dimension"),
+                                    metric=kwargs.get("metric"),
+                                    filters=kwargs.get("filters"),
+                                    limit=int(kwargs.get("limit", 10)),
+                                )
+                            else:
+                                result = {"error": f"Unknown tool: {tool_name}"}
+                            
+                            # Serialize through JSON to ensure all values are
+                            # pure Python types (protobuf Struct rejects numpy int64/float64)
+                            safe_result = json.loads(json.dumps(result, default=str))
+                            
+                            tool_response_parts.append(
+                                genai.protos.Part(
+                                    function_response=genai.protos.FunctionResponse(
+                                        name=tool_name,
+                                        response=safe_result
+                                    )
                                 )
                             )
-                        )
-                        
-                    # Stream the model's response to the tool result
-                    second_response = chat.send_message(tool_response_parts, stream=True)
-                    for second_chunk in second_response:
-                        # Safely iterate parts to avoid "Could not convert part.function_call to text"
-                        for part in second_chunk.parts:
-                            try:
-                                text = part.text
-                                if text:
-                                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
-                            except (ValueError, AttributeError):
-                                pass  # Skip non-text parts (e.g. unexpected function_call)
                             
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        # Stream the model's response to the tool result
+                        second_response = chat.send_message(tool_response_parts, stream=True)
+                        for second_chunk in second_response:
+                            # Safely iterate parts to avoid "Could not convert part.function_call to text"
+                            for part in second_chunk.parts:
+                                try:
+                                    text = part.text
+                                    if text:
+                                        yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
+                                except (ValueError, AttributeError):
+                                    pass  # Skip non-text parts (e.g. unexpected function_call)
+                                
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    return  # Success — exit retry loop
 
-            except Exception as e:
-                log.exception(f"[Chat] Stream error: {e}")
-                yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
+                    is_quota_error = "429" in str(e) or "quota" in error_str or "resource has been exhausted" in error_str or "rate limit" in error_str
+                    
+                    if is_quota_error and attempt < MAX_RETRIES - 1:
+                        wait_time = (attempt + 1) * 5  # 5s, 10s
+                        log.warning(f"[Chat] Quota exceeded (attempt {attempt+1}), retrying in {wait_time}s with next model...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    
+                    log.exception(f"[Chat] Stream error (attempt {attempt+1}): {e}")
+                    
+                    # User-friendly error messages
+                    if is_quota_error:
+                        user_msg = "The AI service is temporarily rate-limited. Please wait a minute and try again."
+                    else:
+                        user_msg = str(e)
+                    
+                    yield f"data: {json.dumps({'type': 'error', 'content': user_msg})}\n\n"
+                    return
 
         return StreamingResponse(
             stream_response(),
