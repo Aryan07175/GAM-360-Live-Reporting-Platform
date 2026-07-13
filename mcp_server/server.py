@@ -477,39 +477,31 @@ async def handle_chat(request):
                     
                     log.info(f"[Chat] Attempt {attempt+1}/{MAX_RETRIES} using model={model_name}")
                     
-                    # Send the message
-                    response = chat.send_message(message, stream=True)
+                    # Run the blocking Gemini API call in a thread with a strict timeout to prevent hangs
+                    def _send_msg():
+                        return chat.send_message(message, stream=False)
+                        
+                    response = await asyncio.wait_for(asyncio.to_thread(_send_msg), timeout=25.0)
                     
-                    tool_called = False
-                    
-                    # We need to process the stream
                     tool_calls_to_execute = []
-                    for chunk in response:
-                        # Check for function calls
-                        for part in chunk.parts:
-                            if hasattr(part, 'function_call') and part.function_call and part.function_call.name:
-                                tool_called = True
-                                tool_calls_to_execute.append(part.function_call)
-                            else:
-                                # Safely extract text — avoid accessing .text on non-text parts
-                                try:
-                                    text = part.text
-                                    if text:
-                                        yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
-                                except (ValueError, AttributeError):
-                                    pass  # Part is not a text part (e.g. function_call), skip it
+                    for part in response.parts:
+                        if hasattr(part, 'function_call') and part.function_call and part.function_call.name:
+                            tool_calls_to_execute.append(part.function_call)
+                        else:
+                            try:
+                                text = part.text
+                                if text:
+                                    # Yield the entire text response at once
+                                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
+                            except (ValueError, AttributeError):
+                                pass
                                 
-                    # The first stream is fully consumed. Now we can send tool results if any.
+                    # If tools were called, execute them and send results back
                     if tool_calls_to_execute:
                         tool_response_parts = []
                         for fc in tool_calls_to_execute:
                             tool_name = fc.name
-                            
-                            # Convert protobuf Struct to dict
-                            kwargs = {}
-                            for k, v in fc.args.items():
-                                kwargs[k] = v
-                                
+                            kwargs = {k: v for k, v in fc.args.items()}
                             log.info(f"[Chat] Tool call: {tool_name}({kwargs})")
                             
                             if tool_name == "query_data":
@@ -524,10 +516,7 @@ async def handle_chat(request):
                             else:
                                 result = {"error": f"Unknown tool: {tool_name}"}
                             
-                            # Serialize through JSON to ensure all values are
-                            # pure Python types (protobuf Struct rejects numpy int64/float64)
                             safe_result = json.loads(json.dumps(result, default=str))
-                            
                             tool_response_parts.append(
                                 genai.protos.Part(
                                     function_response=genai.protos.FunctionResponse(
@@ -537,17 +526,19 @@ async def handle_chat(request):
                                 )
                             )
                             
-                        # Stream the model's response to the tool result
-                        second_response = chat.send_message(tool_response_parts, stream=True)
-                        for second_chunk in second_response:
-                            # Safely iterate parts to avoid "Could not convert part.function_call to text"
-                            for part in second_chunk.parts:
-                                try:
-                                    text = part.text
-                                    if text:
-                                        yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
-                                except (ValueError, AttributeError):
-                                    pass  # Skip non-text parts (e.g. unexpected function_call)
+                        # Send tool response back to Gemini
+                        def _send_tool_msg():
+                            return chat.send_message(tool_response_parts, stream=False)
+                            
+                        second_response = await asyncio.wait_for(asyncio.to_thread(_send_tool_msg), timeout=25.0)
+                        
+                        for part in second_response.parts:
+                            try:
+                                text = part.text
+                                if text:
+                                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
+                            except (ValueError, AttributeError):
+                                pass
                                 
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     return  # Success — exit retry loop
