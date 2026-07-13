@@ -36,8 +36,8 @@ from mcp_server.gam_client import GAMClient
 
 # Google Gemini (lazy — only imported when chat is used)
 try:
-    import google.generativeai as genai
-    from google.generativeai.types import content_types
+    from google import genai
+    from google.genai import types
     HAS_GEMINI = True
 except ImportError:
     HAS_GEMINI = False
@@ -301,45 +301,45 @@ You have access to a data summary of the dashboard's current view. This summary 
 
 def get_query_data_tool():
     """Returns the tool definition for Gemini."""
-    return {
-        "function_declarations": [
-            {
-                "name": "query_data",
-                "description": "Query the current dashboard's GAM data with whitelisted aggregations. Use this for comparisons, filtering, sorting, or detailed breakdowns not already in the data summary.",
-                "parameters": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "operation": {
-                            "type": "STRING",
-                            "description": "The aggregation operation to perform (sum, mean, max, min, top_n, bottom_n, compare, count)."
-                        },
-                        "dimension": {
-                            "type": "STRING",
-                            "description": "The dimension to group by (app = ad unit, date = calendar day)."
-                        },
-                        "metric": {
-                            "type": "STRING",
-                            "description": "The metric to aggregate (revenue, impressions, clicks, ad_requests, ecpm, ctr, fill_rate)."
-                        },
-                        "filters": {
-                            "type": "OBJECT",
-                            "description": "Optional filters: app_name (substring match), date (exact YYYY-MM-DD), min_revenue (number).",
-                            "properties": {
-                                "app_name": {"type": "STRING"},
-                                "date": {"type": "STRING"},
-                                "min_revenue": {"type": "NUMBER"}
+    return types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="query_data",
+                description="Query the current dashboard's GAM data with whitelisted aggregations. Use this for comparisons, filtering, sorting, or detailed breakdowns not already in the data summary.",
+                parameters=types.Schema(
+                    type="OBJECT",
+                    properties={
+                        "operation": types.Schema(
+                            type="STRING",
+                            description="The aggregation operation to perform (sum, mean, max, min, top_n, bottom_n, compare, count)."
+                        ),
+                        "dimension": types.Schema(
+                            type="STRING",
+                            description="The dimension to group by (app = ad unit, date = calendar day)."
+                        ),
+                        "metric": types.Schema(
+                            type="STRING",
+                            description="The metric to aggregate (revenue, impressions, clicks, ad_requests, ecpm, ctr, fill_rate)."
+                        ),
+                        "filters": types.Schema(
+                            type="OBJECT",
+                            description="Optional filters: app_name (substring match), date (exact YYYY-MM-DD), min_revenue (number).",
+                            properties={
+                                "app_name": types.Schema(type="STRING"),
+                                "date": types.Schema(type="STRING"),
+                                "min_revenue": types.Schema(type="NUMBER")
                             }
-                        },
-                        "limit": {
-                            "type": "INTEGER",
-                            "description": "Max number of results for top_n/bottom_n (default 10)."
-                        }
+                        ),
+                        "limit": types.Schema(
+                            type="INTEGER",
+                            description="Max number of results for top_n/bottom_n (default 10)."
+                        )
                     },
-                    "required": ["operation"]
-                }
-            }
+                    required=["operation"]
+                )
+            )
         ]
-    }
+    )
 
 
 async def handle_chat(request):
@@ -438,70 +438,55 @@ async def handle_chat(request):
 
         gemini_history = []
         for h in history[-10:]:
-            # Gemini roles: 'user' and 'model'
             role = "model" if h.get("role") == "assistant" else "user"
             content = h.get("content", "").strip()
-            # Skip empty messages — Gemini rejects history entries with empty text
             if not content:
                 continue
-            gemini_history.append({
-                "role": role,
-                "parts": [{"text": content}]
-            })
+            gemini_history.append(
+                types.Content(role=role, parts=[types.Part.from_text(text=content)])
+            )
 
         log.info(f"[Chat] session={cache_key} message={message[:80]}...")
 
         async def stream_response():
-            # gemini-2.0-flash-lite has 2x higher free-tier quota (30 RPM vs 15 RPM)
-            # Use it as primary; fall back to flash only on the last attempt
             MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
             MAX_RETRIES = 3
             last_error = None
 
             for attempt in range(MAX_RETRIES):
                 try:
-                    # Use primary lite model first, try full flash on last attempt
                     model_name = MODELS[0] if attempt < 2 else MODELS[-1]
                     
-                    genai.configure(api_key=api_key)
+                    client = genai.Client(api_key=api_key)
                     
-                    # Create the model with system instruction and tools
-                    model = genai.GenerativeModel(
-                        model_name=model_name,
-                        system_instruction=system_prompt,
-                        tools=get_query_data_tool()
+                    chat = client.chats.create(
+                        model=model_name,
+                        history=gemini_history,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            tools=[get_query_data_tool()]
+                        )
                     )
-
-                    # Initialize chat session
-                    chat = model.start_chat(history=gemini_history)
                     
                     log.info(f"[Chat] Attempt {attempt+1}/{MAX_RETRIES} using model={model_name}")
                     
-                    # Run the blocking Gemini API call in a thread with a strict timeout to prevent hangs
                     def _send_msg():
                         return chat.send_message(message, stream=False)
                         
                     response = await asyncio.wait_for(asyncio.to_thread(_send_msg), timeout=25.0)
                     
                     tool_calls_to_execute = []
-                    for part in response.parts:
-                        if hasattr(part, 'function_call') and part.function_call and part.function_call.name:
-                            tool_calls_to_execute.append(part.function_call)
-                        else:
-                            try:
-                                text = part.text
-                                if text:
-                                    # Yield the entire text response at once
-                                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
-                            except (ValueError, AttributeError):
-                                pass
+                    # In google-genai, parts is a list of Part objects which can have function_call
+                    if response.function_calls:
+                        tool_calls_to_execute.extend(response.function_calls)
+                    elif response.text:
+                        yield f"data: {json.dumps({'type': 'token', 'content': response.text})}\n\n"
                                 
-                    # If tools were called, execute them and send results back
                     if tool_calls_to_execute:
                         tool_response_parts = []
                         for fc in tool_calls_to_execute:
                             tool_name = fc.name
-                            kwargs = {k: v for k, v in fc.args.items()}
+                            kwargs = fc.args if isinstance(fc.args, dict) else dict(fc.args)
                             log.info(f"[Chat] Tool call: {tool_name}({kwargs})")
                             
                             if tool_name == "query_data":
@@ -518,27 +503,19 @@ async def handle_chat(request):
                             
                             safe_result = json.loads(json.dumps(result, default=str))
                             tool_response_parts.append(
-                                genai.protos.Part(
-                                    function_response=genai.protos.FunctionResponse(
-                                        name=tool_name,
-                                        response=safe_result
-                                    )
+                                types.Part.from_function_response(
+                                    name=tool_name,
+                                    response=safe_result
                                 )
                             )
                             
-                        # Send tool response back to Gemini
                         def _send_tool_msg():
                             return chat.send_message(tool_response_parts, stream=False)
                             
                         second_response = await asyncio.wait_for(asyncio.to_thread(_send_tool_msg), timeout=25.0)
                         
-                        for part in second_response.parts:
-                            try:
-                                text = part.text
-                                if text:
-                                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
-                            except (ValueError, AttributeError):
-                                pass
+                        if second_response.text:
+                            yield f"data: {json.dumps({'type': 'token', 'content': second_response.text})}\n\n"
                                 
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     return  # Success — exit retry loop
