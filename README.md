@@ -16,8 +16,8 @@ graph TD
     Python -->|Fetches Live Analytics| GAM[Google Ad Manager API]
     GAM -->|Returns Raw Data| Python
     
-    Python -->|Data Summary & Tools| Gemini[Google Gemini AI]
-    Gemini -.->|Streams Chat Response| Python
+    Python -->|Data Summary & Tools| Bedrock[AWS Bedrock - Claude]
+    Bedrock -.->|Streams Chat Response| Python
     
     Python -->|Formats & Caches Data| NextJS
     
@@ -53,7 +53,7 @@ This project is a complete end-to-end analytics pipeline that pulls raw data fro
 
 The dashboard provides a premium, real-time BI experience:
 
-* **Ask GAM 360 (AI Chat):** A built-in AI assistant powered by Google Gemini. Open the chat drawer from the sidebar or the floating action button to ask questions about your live data in natural language (e.g., "Which app has the highest revenue?"). It uses an in-memory cache and strict tool calling to guarantee zero hallucinated numbers, and streams the response token-by-token.
+* **Ask GAM 360 (AI Chat):** A built-in AI assistant powered by **AWS Bedrock (Anthropic Claude)**. Open the chat drawer from the sidebar or the floating action button to ask questions about your live data in natural language (e.g., "Which app has the highest revenue?"). It uses an in-memory cache and strict tool calling to guarantee zero hallucinated numbers, and streams the response token-by-token.
 * **Real-Time BI Dashboard:** Generates comprehensive business intelligence reports dynamically using live data.
 * **Unified Revenue:** Combines Ad Server, AdSense, and Ad Exchange into a single consolidated view.
 * **18+ Live Analytics Tools:** Exposes comprehensive tools covering: executive summaries, revenue by app, trends, top/bottom apps, impressions, clicks, CTR, eCPM, fill rate, and ad requests.
@@ -76,7 +76,7 @@ The dashboard provides a premium, real-time BI experience:
 ### Backend — MCP Server (`/mcp_server`)
 * **Python 3.12**
 * **Google Ads API (SOAP)**
-* **Google Generative AI SDK (Gemini)**
+* **AWS Bedrock (Anthropic Claude)** via `boto3`
 * **Starlette & Uvicorn** (REST & SSE streaming)
 * **Pandas** for data merging and processing
 
@@ -94,23 +94,35 @@ pip install -r requirements.txt
 cp config/googleads.yaml.example config/googleads.yaml
 cp config/.env.example config/.env
 # 1. Fill in: network_code, path_to_private_key_file, application_name in googleads.yaml
-# 2. Fill in: GEMINI_API_KEY in .env
+# 2. Fill in: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in config/.env
 # 3. Fill in: GMAIL_SENDER_EMAIL and GMAIL_APP_PASSWORD in .env for email notifications
 ```
 
-### 3. Start the backend server
+### 3. Configure AWS Bedrock
+Before running, you must:
+1. Create an **IAM User** in the AWS Console with the `AmazonBedrockFullAccess` policy.
+2. Generate an **Access Key** for that user (IAM → Users → Security credentials → Create access key).
+3. Go to **AWS Bedrock → Model access** and enable **Anthropic Claude 3.5 Sonnet** in your chosen region (`us-east-1` recommended).
+4. Paste the keys into your `config/.env`:
+```env
+AWS_ACCESS_KEY_ID=AKIAxxxxxxxxxxxxxxxxxx
+AWS_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+AWS_REGION=us-east-1
+BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+```
+
+### 4. Start the backend server
 ```bash
 cd mcp_server
 python -m uvicorn server:starlette_app --reload
 # Server runs on http://localhost:8000
 ```
 
-### 4. Run the dashboard locally
+### 5. Run the dashboard locally
 ```bash
 # Open a new terminal
 cd dashboard
 npm install
 npm run dev
 # Dashboard opens at http://localhost:3000
-
-
+```
