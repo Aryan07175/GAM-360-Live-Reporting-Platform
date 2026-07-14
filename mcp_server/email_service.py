@@ -328,7 +328,7 @@ def send_daily_report_email(report_data: Dict[str, Any], to_emails: List[str]) -
         pdf_html = f"<html><head><meta charset='utf-8'></head><body style='background-color: #ffffff;'>{html.replace('color: #f3f4f6;', 'color: #333333;').replace('color: #ffffff;', 'color: #111111;').replace('background-color: #111827;', 'background-color: #ffffff;').replace('background-color: #1f2937;', 'background-color: #f9fafb;')}</body></html>"
         
         pdf_buf = io.BytesIO()
-        pisa_status = pisa.CreatePDF(io.StringIO(pdf_html), dest=pdf_buf)
+        pisa_status = pisa.CreatePDF(pdf_html, dest=pdf_buf)
         if not pisa_status.err:
             pdf_bytes = pdf_buf.getvalue()
     except Exception as e:
