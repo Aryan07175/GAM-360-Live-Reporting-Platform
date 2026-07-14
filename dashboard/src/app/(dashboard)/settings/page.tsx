@@ -131,7 +131,7 @@ export default function SettingsPage() {
             </div>
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground">MCP Server</p>
-              <p className="text-sm font-medium">http://localhost:8000</p>
+              <p className="text-sm font-medium">{process.env.NEXT_PUBLIC_MCP_SERVER_URL || "http://localhost:8000"}</p>
             </div>
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground">Connection Status</p>
