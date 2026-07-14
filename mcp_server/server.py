@@ -659,56 +659,127 @@ def compute_performance_ranking(df: pd.DataFrame) -> list[dict]:
 
 
 def compute_anomalies(df_current: pd.DataFrame, df_previous: pd.DataFrame, threshold: float = 20.0) -> list[dict]:
-    """Detect anomalies by comparing current vs previous period."""
+    """
+    Detect meaningful revenue and impression anomalies by comparing current vs previous period.
+
+    Improvements over the naive % change approach:
+    - Minimum absolute revenue floor ($0.50) — eliminates near-zero / new-app false positives
+    - Minimum absolute impression floor (500 impressions) — eliminates tiny traffic noise
+    - Minimum previous period value check — a new app going from $0 to $0.01 is NOT an anomaly
+    - Smart severity tiers: Low / Medium / High / Critical
+    - Results capped at 50 to keep the UI manageable
+    - Drops are prioritised over spikes (drops are more actionable)
+    """
     if df_current.empty or df_previous.empty:
         return []
 
-    current_by_app = df_current.groupby("ad_unit_name")["ad_server_cpm_and_cpc_revenue"].sum()
-    previous_by_app = df_previous.groupby("ad_unit_name")["ad_server_cpm_and_cpc_revenue"].sum()
-
     anomalies = []
-    for app_name in current_by_app.index:
-        current_rev = float(current_by_app.get(app_name, 0))
-        prev_rev = float(previous_by_app.get(app_name, 0))
 
-        if prev_rev > 0:
-            change_pct = ((current_rev - prev_rev) / prev_rev) * 100
-            if abs(change_pct) >= threshold:
-                severity = "High" if abs(change_pct) >= 50 else "Medium" if abs(change_pct) >= 30 else "Low"
-                direction = "drop" if change_pct < 0 else "spike"
-                anomalies.append({
-                    "id": f"anomaly-{len(anomalies)+1}",
-                    "ad_unit_name": app_name,
-                    "metric": "revenue",
-                    "currentValue": current_rev,
-                    "previousValue": prev_rev,
-                    "changePct": round(change_pct, 2),
-                    "severity": severity,
-                    "description": f"Revenue {direction} of {abs(change_pct):.1f}% for {app_name} (${prev_rev:.4f} → ${current_rev:.4f})",
-                })
+    # ── Revenue anomalies ──────────────────────────────────────────────────────
+    MIN_REVENUE_FLOOR = 0.50          # minimum $ in either period to care about
+    MIN_REVENUE_CHANGE = threshold    # % threshold (default 20%)
 
-    # Also check impressions
+    current_rev = df_current.groupby("ad_unit_name")["ad_server_cpm_and_cpc_revenue"].sum()
+    previous_rev = df_previous.groupby("ad_unit_name")["ad_server_cpm_and_cpc_revenue"].sum()
+
+    for app_name in current_rev.index:
+        curr = float(current_rev.get(app_name, 0))
+        prev = float(previous_rev.get(app_name, 0))
+
+        # Skip if both periods have negligible revenue (new/inactive apps)
+        if prev < MIN_REVENUE_FLOOR and curr < MIN_REVENUE_FLOOR:
+            continue
+
+        # Skip if previous period had no revenue (brand new app — not an anomaly)
+        if prev < MIN_REVENUE_FLOOR:
+            continue
+
+        change_pct = ((curr - prev) / prev) * 100
+
+        # Only flag if change is significant enough
+        if abs(change_pct) < MIN_REVENUE_CHANGE:
+            continue
+
+        # Severity tiers
+        abs_pct = abs(change_pct)
+        if abs_pct >= 200:
+            severity = "Critical"
+        elif abs_pct >= 80:
+            severity = "High"
+        elif abs_pct >= 40:
+            severity = "Medium"
+        else:
+            severity = "Low"
+
+        direction = "drop" if change_pct < 0 else "spike"
+        anomalies.append({
+            "id": f"anomaly-{len(anomalies)+1}",
+            "ad_unit_name": app_name,
+            "metric": "revenue",
+            "currentValue": round(curr, 4),
+            "previousValue": round(prev, 4),
+            "changePct": round(change_pct, 2),
+            "severity": severity,
+            "description": (
+                f"Revenue {direction} of {abs_pct:.1f}% for {app_name} "
+                f"(${prev:.4f} → ${curr:.4f})"
+            ),
+        })
+
+    # ── Impression anomalies ───────────────────────────────────────────────────
+    MIN_IMP_FLOOR = 500               # minimum impressions in previous period to care about
+    MIN_IMP_CHANGE = threshold * 2    # impressions need 2x the revenue threshold to flag (default 40%)
+
     current_imp = df_current.groupby("ad_unit_name")["ad_server_impressions"].sum()
     previous_imp = df_previous.groupby("ad_unit_name")["ad_server_impressions"].sum()
+
     for app_name in current_imp.index:
         curr = float(current_imp.get(app_name, 0))
         prev = float(previous_imp.get(app_name, 0))
-        if prev > 0:
-            change = ((curr - prev) / prev) * 100
-            if abs(change) >= threshold * 1.5:  # Higher threshold for impressions
-                anomalies.append({
-                    "id": f"anomaly-{len(anomalies)+1}",
-                    "ad_unit_name": app_name,
-                    "metric": "impressions",
-                    "currentValue": curr,
-                    "previousValue": prev,
-                    "changePct": round(change, 2),
-                    "severity": "High" if abs(change) >= 50 else "Medium",
-                    "description": f"Impressions {'drop' if change < 0 else 'spike'} of {abs(change):.1f}% for {app_name}",
-                })
 
-    anomalies.sort(key=lambda x: abs(x["changePct"]), reverse=True)
-    return anomalies
+        # Skip tiny traffic — noise, not signal
+        if prev < MIN_IMP_FLOOR:
+            continue
+
+        change_pct = ((curr - prev) / prev) * 100
+
+        if abs(change_pct) < MIN_IMP_CHANGE:
+            continue
+
+        abs_pct = abs(change_pct)
+        if abs_pct >= 200:
+            severity = "Critical"
+        elif abs_pct >= 100:
+            severity = "High"
+        elif abs_pct >= 60:
+            severity = "Medium"
+        else:
+            severity = "Low"
+
+        direction = "drop" if change_pct < 0 else "spike"
+        anomalies.append({
+            "id": f"anomaly-{len(anomalies)+1}",
+            "ad_unit_name": app_name,
+            "metric": "impressions",
+            "currentValue": int(curr),
+            "previousValue": int(prev),
+            "changePct": round(change_pct, 2),
+            "severity": severity,
+            "description": (
+                f"Impressions {direction} of {abs_pct:.1f}% for {app_name} "
+                f"({int(prev):,} → {int(curr):,})"
+            ),
+        })
+
+    # Sort: drops first (more critical), then by absolute % change descending
+    anomalies.sort(key=lambda x: (x["changePct"] > 0, -abs(x["changePct"])))
+
+    # Re-assign sequential IDs after sort
+    for i, a in enumerate(anomalies):
+        a["id"] = f"anomaly-{i+1}"
+
+    # Cap at 50 to keep UI usable
+    return anomalies[:50]
 
 
 def generate_recommendations(summary: dict, apps: list[dict], anomalies: list[dict]) -> list[dict]:
