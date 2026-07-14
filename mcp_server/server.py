@@ -308,84 +308,120 @@ def build_chat_system_prompt(compact_summary: dict) -> str:
     """
     today = date.today()
     yesterday = today - timedelta(days=1)
-    last7_start = today - timedelta(days=6)
-    last30_start = today - timedelta(days=29)
-    last90_start = today - timedelta(days=89)
+    past7   = today - timedelta(days=7)
+    past30  = today - timedelta(days=30)
+    past45  = today - timedelta(days=45)
+    past60  = today - timedelta(days=60)
+    past90  = today - timedelta(days=90)
+    past180 = today - timedelta(days=180)
+    past365 = today - timedelta(days=365)
     mtd_start = today.replace(day=1)
     ytd_start = today.replace(month=1, day=1)
-    last_month_end = today.replace(day=1) - timedelta(days=1)
+    last_month_end   = today.replace(day=1) - timedelta(days=1)
     last_month_start = last_month_end.replace(day=1)
-    last_year_start = today.replace(year=today.year - 1, month=1, day=1)
-    last_year_end = today.replace(year=today.year - 1, month=12, day=31)
+    last_year_cal_start = today.replace(year=today.year - 1, month=1, day=1)
+    last_year_cal_end   = today.replace(year=today.year - 1, month=12, day=31)
 
     import json as _json
     summary_str = _json.dumps(compact_summary, indent=2, default=str)
 
     return f"""You are **Ask GAM 360**, an AI analyst with LIVE access to Google Ad Manager data.
-You can answer ANY question about revenue, impressions, clicks, eCPM, CTR, fill rate, or ad requests
-for ANY time period — not just what the dashboard currently shows.
+You can answer ANY question about revenue, impressions, clicks, eCPM, CTR, fill rate, ad requests,
+or Ad Exchange match rate for ANY time period — not just what the dashboard currently shows.
 
 ## Tools Available
 - **`query_gam_data`** (PRIMARY): Fetches LIVE data directly from the Google Ad Manager API
   for any date range, dimension, and metric. Use this for EVERY question involving a time period
-  or a breakdown by app / website / ad unit.
+  or a breakdown by app / website / ad unit / child network.
 - **`query_data`** (SECONDARY): Aggregates/filters the current dashboard session data.
   Use only for follow-up comparisons within the same already-loaded session.
 
 ## CRITICAL RULES
-1. **For ANY question involving a date or time period, ALWAYS call `query_gam_data` first.**
-   Do NOT answer from memory or from the dashboard context below.
+1. **For ANY question, ALWAYS call `query_gam_data` first.** Do NOT answer from memory.
 2. **NEVER state a number that was not returned by a tool in this conversation.**
-3. When the user says a relative time phrase, compute the real YYYY-MM-DD dates from the
-   reference table below, then pass them to `query_gam_data`.
-4. Keep answers concise: bold the key numbers, 1–4 sentences max.
-5. Format revenue as `$X.XX` (or `$X.XXXXXX` for very small values). Use commas for large numbers.
-6. If GAM returns zero / empty data, say so honestly — don't fabricate numbers.
+3. Compute the exact YYYY-MM-DD dates from the Date Reference table below BEFORE calling the tool.
+4. **DEFAULT (no time period mentioned):** Use start_date={ytd_start} (Jan 1 this year), end_date={today} (YTD).
+   Always label the answer: “From January 1, {today.year} to today ({today.strftime('%B %-d, %Y')})…”
+5. Keep answers concise: bold key numbers, 1–4 sentences max.
+6. Format revenue as `$X.XX` (or `$X.XXXXXX` for very small values). Use commas for large numbers.
+7. If GAM returns zero / empty data, say so honestly — don’t fabricate numbers.
+8. For **Ad Exchange** questions (match rate, AdX revenue, AdX impressions), set channel="ad_exchange".
+9. For **website** questions (e.g., “cardekho.com revenue”), set dimension="website" and pass filter_name=<domain>.
+10. For **child network breakdown** (MCM), set dimension="child_network".
 
-## Date Reference (server date: {today.isoformat()})
+## Date Reference (today = {today.isoformat()})
 | Phrase | start_date | end_date |
 |---|---|---|
 | today | {today} | {today} |
 | yesterday | {yesterday} | {yesterday} |
-| last 7 days | {last7_start} | {today} |
-| last 30 days | {last30_start} | {today} |
-| last 90 days | {last90_start} | {today} |
+| past 7 days / last 7 days | {past7} | {today} |
+| past 30 days / last 30 days | {past30} | {today} |
+| past 45 days | {past45} | {today} |
+| past 60 days | {past60} | {today} |
+| past 3 months / past 90 days | {past90} | {today} |
+| past 6 months / last 6 months | {past180} | {today} |
+| past 1 year / past 12 months / last year (rolling) | {past365} | {today} |
 | this month / MTD | {mtd_start} | {today} |
 | last month | {last_month_start} | {last_month_end} |
 | this year / YTD | {ytd_start} | {today} |
-| last year | {last_year_start} | {last_year_end} |
+| last year (calendar) | {last_year_cal_start} | {last_year_cal_end} |
+| no period mentioned (default) | {ytd_start} | {today} |
 
 ## Metric Definitions
-- **revenue**: Total ad revenue (CPM + CPC) in USD
-- **impressions**: Total ad impressions served
-- **clicks**: Total ad clicks
-- **ecpm**: Effective CPM = (Revenue / Impressions) × 1000
-- **ctr**: Click-through rate = (Clicks / Impressions) × 100 (%)
-- **fill_rate**: Fill rate = (Impressions / Ad Requests) × 100 (%)
-- **ad_requests**: Total ad requests sent to GAM
+- **revenue**: Total ad revenue (CPM+CPC) in USD across all channels
+- **impressions**: Total impressions served (all channels)
+- **clicks**: Total ad clicks (all channels)
+- **ecpm**: Effective CPM = Revenue/Impressions × 1000
+- **ctr**: Click-through rate = Clicks/Impressions × 100 (%)
+- **fill_rate**: Ad Server fill rate = Impressions/Ad Requests × 100 (%)
+- **ad_requests**: Total ad requests sent to GAM Ad Server
+- **match_rate**: Ad Exchange match rate = AdX Impressions/Ad Requests × 100 (%)
+  (use with channel="ad_exchange")
+- **adx_impressions**: Impressions served via Ad Exchange only
+- **adx_revenue**: Revenue from Ad Exchange only
+- **adx_clicks**: Clicks from Ad Exchange only
 
-## Dimension Options for query_gam_data
+## Dimension Options
 - `none` — network-wide totals only
-- `app` — breakdown by mobile app / ad unit
-- `website` — breakdown by website domain
-- `ad_unit` — breakdown by ad unit name (same as app)
+- `app` / `ad_unit` — breakdown by mobile app / ad unit
+- `website` — breakdown by website domain; use filter_name for a specific site
+- `child_network` — breakdown by MCM child publisher network code
 
 ## Few-Shot Examples
-**Example 1 — revenue last year:**
-User: "What was total revenue last year?"
-→ Call: query_gam_data(start_date="{last_year_start}", end_date="{last_year_end}", metric="revenue", dimension="none", channel="all")
-→ Answer using ONLY the number returned by the tool.
+**Example 1 — no time period (YTD default):**
+User: “What is total revenue?”
+→ Call: query_gam_data(start_date="{ytd_start}", end_date="{today}", metric="revenue", dimension="none", channel="all")
+→ Answer: “From January 1, {today.year} to today ({today.strftime('%B %-d, %Y')}), total revenue was **$X.XX**.”
 
-**Example 2 — revenue by app for last 30 days:**
-User: "Show me revenue by app for the last 30 days"
-→ Call: query_gam_data(start_date="{last30_start}", end_date="{today}", metric="revenue", dimension="app", channel="all")
-→ Present the breakdown table from the tool result.
+**Example 2 — yesterday:**
+User: “Revenue yesterday”
+→ Call: query_gam_data(start_date="{yesterday}", end_date="{yesterday}", metric="revenue", dimension="none", channel="all")
 
-**Example 3 — custom range:**
-User: "What was eCPM from March 1 to March 15?"
-→ Call: query_gam_data(start_date="{today.year}-03-01", end_date="{today.year}-03-15", metric="ecpm", dimension="none", channel="all")
+**Example 3 — past 30 days:**
+User: “Impressions past 30 days”
+→ Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="impressions", dimension="none", channel="all")
 
-## Current Dashboard Context (reference only — do NOT use these numbers to answer time-period questions)
+**Example 4 — past 6 months:**
+User: “Total revenue past 6 months”
+→ Call: query_gam_data(start_date="{past180}", end_date="{today}", metric="revenue", dimension="none", channel="all")
+
+**Example 5 — past 1 year (rolling):**
+User: “Revenue past 1 year”
+→ Call: query_gam_data(start_date="{past365}", end_date="{today}", metric="revenue", dimension="none", channel="all")
+
+**Example 6 — Ad Exchange match rate:**
+User: “Ad Exchange match rate yesterday”
+→ Call: query_gam_data(start_date="{yesterday}", end_date="{yesterday}", metric="match_rate", dimension="none", channel="ad_exchange")
+
+**Example 7 — website revenue:**
+User: “cardekho.com revenue past 30 days”
+→ Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="revenue", dimension="website", channel="all", filter_name="cardekho.com")
+
+**Example 8 — child network breakdown:**
+User: “Revenue by child network code past 30 days”
+→ Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="revenue", dimension="child_network", channel="all")
+
+## Current Dashboard Context (reference only — do NOT use these numbers to answer questions)
 {summary_str}
 """
 
@@ -397,39 +433,80 @@ def _resolve_chat_dates(start_raw: str, end_raw: str) -> tuple[date, date]:
     """
     Resolve start/end date strings for the chat query_gam_data tool.
     Accepts YYYY-MM-DD strings or common English presets.
-    The model should already have computed real dates from the system prompt,
-    but this provides a safety net for any phrase that slips through.
+
+    The model should already have computed real dates from the system prompt
+    date reference table, but this provides a safety net for any phrase
+    that slips through as a key word (e.g. "ytd", "past30days").
+
+    Note on counting:
+      'past N days' uses INCLUSIVE counting matching GAM UI: past 7 days = today - 7.
+      'last N days' historically used exclusive (today - 6 = 7 rows incl. today).
+      We standardise both to today - N for simplicity.
     """
     today = date.today()
     yesterday = today - timedelta(days=1)
 
+    # Relativedelta-style month arithmetic without dateutil
+    def months_ago(n: int) -> date:
+        m = today.month - n
+        y = today.year + m // 12 if m < 1 else today.year
+        m = m % 12 or 12
+        import calendar
+        last_day = calendar.monthrange(y, m)[1]
+        return today.replace(year=y, month=m, day=min(today.day, last_day))
+
     presets = {
-        "today":       (today, today),
-        "yesterday":   (yesterday, yesterday),
-        "last7days":   (today - timedelta(days=6), today),
-        "last30days":  (today - timedelta(days=29), today),
-        "last90days":  (today - timedelta(days=89), today),
-        "thismonth":   (today.replace(day=1), today),
-        "mtd":         (today.replace(day=1), today),
-        "lastmonth":   (
+        "today":           (today, today),
+        "yesterday":       (yesterday, yesterday),
+        # past N days (inclusive, matches GAM UI)
+        "past7days":       (today - timedelta(days=7),   today),
+        "past14days":      (today - timedelta(days=14),  today),
+        "past30days":      (today - timedelta(days=30),  today),
+        "past45days":      (today - timedelta(days=45),  today),
+        "past60days":      (today - timedelta(days=60),  today),
+        "past90days":      (today - timedelta(days=90),  today),
+        "past180days":     (today - timedelta(days=180), today),
+        "past365days":     (today - timedelta(days=365), today),
+        # 'last N days' aliases
+        "last7days":       (today - timedelta(days=7),   today),
+        "last14days":      (today - timedelta(days=14),  today),
+        "last30days":      (today - timedelta(days=30),  today),
+        "last60days":      (today - timedelta(days=60),  today),
+        "last90days":      (today - timedelta(days=90),  today),
+        # month-based ranges
+        "past3months":     (today - timedelta(days=90),  today),
+        "past6months":     (today - timedelta(days=180), today),
+        "last6months":     (today - timedelta(days=180), today),
+        "past12months":    (today - timedelta(days=365), today),
+        "past1year":       (today - timedelta(days=365), today),
+        "lastyear":        (today - timedelta(days=365), today),
+        "last1year":       (today - timedelta(days=365), today),
+        # calendar-aligned periods
+        "thismonth":       (today.replace(day=1), today),
+        "mtd":             (today.replace(day=1), today),
+        "lastmonth":       (
             (today.replace(day=1) - timedelta(days=1)).replace(day=1),
             today.replace(day=1) - timedelta(days=1),
         ),
-        "thisyear":    (today.replace(month=1, day=1), today),
-        "ytd":         (today.replace(month=1, day=1), today),
-        "lastyear":    (
+        "thisyear":        (today.replace(month=1, day=1), today),
+        "ytd":             (today.replace(month=1, day=1), today),
+        "lastyearcal":     (
             today.replace(year=today.year - 1, month=1, day=1),
             today.replace(year=today.year - 1, month=12, day=31),
         ),
     }
 
+    def _normalise(raw: str) -> str:
+        """Strip whitespace, hyphens, underscores, spaces for key lookup."""
+        return raw.lower().replace(" ", "").replace("-", "").replace("_", "")
+
     def _parse(raw: str) -> date:
-        key = raw.lower().replace(" ", "").replace("-", "").replace("_", "")
+        key = _normalise(raw)
         if key in presets:
             return presets[key][0]  # fallback: return start
         return datetime.strptime(raw, "%Y-%m-%d").date()
 
-    start_key = start_raw.lower().replace(" ", "").replace("-", "").replace("_", "")
+    start_key = _normalise(start_raw)
     if start_key in presets:
         return presets[start_key]
 
@@ -443,40 +520,54 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
     Goes DIRECTLY to the live GAM SOAP API for the requested date range and
     dimension — completely independent of any dashboard-scoped cache.
 
-    The cache key includes start+end+dimension+metric+channel so that
-    different questions never collide, and the 30s dedup in GAMClient
-    prevents hammering the API with identical repeated calls.
+    Handles all four new capabilities:
+      - AdX match_rate / adx_* metrics (Part 2)
+      - filter_name for domain/app substring filtering (Part 3)
+      - child_network dimension via CHILD_NETWORK_CODE GAM dim (Part 4)
+      - YTD default when start_date not provided (Part 1)
     """
-    start_raw = input_dict.get("start_date", "")
-    end_raw   = input_dict.get("end_date", start_raw)
-    dimension = input_dict.get("dimension", "none")   # none|app|website|ad_unit
-    metric    = input_dict.get("metric", "revenue")   # revenue|impressions|clicks|ctr|ecpm|fill_rate|ad_requests
-    channel   = input_dict.get("channel", "all")      # all|ad_server|adsense|ad_exchange
+    today = date.today()
+    ytd_start = today.replace(month=1, day=1)
 
+    # ── Apply YTD default when no dates provided (Part 1) ──────────────────
+    start_raw = input_dict.get("start_date", "").strip()
+    end_raw   = input_dict.get("end_date",   "").strip()
     if not start_raw:
-        return {"error": "start_date is required"}
+        start_raw = ytd_start.isoformat()
+        end_raw   = today.isoformat()
+        log.info("[Chat:query_gam_data] No date provided — defaulting to YTD: %s to %s", start_raw, end_raw)
+
+    dimension   = input_dict.get("dimension", "none")     # none|app|website|ad_unit|child_network
+    metric      = input_dict.get("metric", "revenue")     # revenue|impressions|...|match_rate|adx_*
+    channel     = input_dict.get("channel", "all")        # all|ad_server|adsense|ad_exchange
+    filter_name = (input_dict.get("filter_name") or "").strip()  # optional name filter
 
     try:
         start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
     except Exception as e:
         return {"error": f"Invalid date format: {e}. Use YYYY-MM-DD."}
 
-    # Map channel param to demand_channel expected by gam_client
+    # ── Map channel param to demand_channel expected by gam_client ─────────
     demand_map = {
-        "all":          "all",
-        "ad_server":    "all",       # ad_server only → still use "all" report, filter below
-        "adsense":      "programmatic",
-        "ad_exchange":  "programmatic",
+        "all":         "all",
+        "ad_server":   "all",       # use full report; filter below or by column
+        "adsense":     "programmatic",
+        "ad_exchange": "programmatic",  # AdX → programmatic report
     }
     demand_channel = demand_map.get(channel, "all")
 
+    # ── Extra GAM dimensions for MCM child network breakdown (Part 4) ──────
+    extra_dims: list[str] = []
+    if dimension == "child_network":
+        extra_dims = ["CHILD_NETWORK_CODE"]
+
     log.info(
-        "[Chat:query_gam_data] Fetching LIVE — %s to %s | dim=%s metric=%s channel=%s",
-        start_date, end_date, dimension, metric, channel,
+        "[Chat:query_gam_data] Fetching LIVE — %s to %s | dim=%s metric=%s channel=%s filter=%r extra_dims=%s",
+        start_date, end_date, dimension, metric, channel, filter_name, extra_dims,
     )
 
     try:
-        df = await gam.get_live_data_multi_day(start_date, end_date, False, demand_channel)
+        df = await gam.get_live_data_multi_day(start_date, end_date, False, demand_channel, extra_dims or None)
     except Exception as e:
         log.error("[Chat:query_gam_data] GAM fetch failed: %s", e)
         return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
@@ -493,68 +584,115 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
             "note":       "No data returned by GAM for this date range / channel combination.",
         }
 
-    # ── Column mappings ──────────────────────────────────────────────────────
+    # ── Column mappings (for sort selection) ─────────────────────────────
     METRIC_COL = {
-        "revenue":     "ad_server_cpm_and_cpc_revenue",
-        "impressions": "ad_server_impressions",
-        "clicks":      "ad_server_clicks",
-        "ad_requests": "ad_server_ad_requests",
-        "ctr":         None,   # derived
-        "ecpm":        None,   # derived
-        "fill_rate":   None,   # derived
+        "revenue":        "ad_server_cpm_and_cpc_revenue",
+        "impressions":    "ad_server_impressions",
+        "clicks":         "ad_server_clicks",
+        "ad_requests":    "ad_server_ad_requests",
+        "match_rate":     "adx_match_rate",
+        "adx_impressions":"adx_impressions",
+        "adx_revenue":    "adx_revenue",
+        "adx_clicks":     "adx_clicks",
+        "ctr":            None,   # derived
+        "ecpm":           None,   # derived
+        "fill_rate":      None,   # derived
     }
 
-    # ── Compute totals ───────────────────────────────────────────────────────
-    total_rev  = float(df["ad_server_cpm_and_cpc_revenue"].sum())
-    total_imp  = int(df["ad_server_impressions"].sum())
-    total_clk  = int(df["ad_server_clicks"].sum())
-    total_req  = int(df["ad_server_ad_requests"].sum())
-    total_ecpm = round((total_rev / total_imp * 1000), 6) if total_imp > 0 else 0.0
-    total_ctr  = round((total_clk / total_imp * 100), 4)  if total_imp > 0 else 0.0
-    total_fill = round((total_imp / total_req * 100), 2)  if total_req > 0 else 0.0
+    # ── Compute network-wide totals ────────────────────────────────────
+    total_rev   = float(df["ad_server_cpm_and_cpc_revenue"].sum())
+    total_imp   = int(df["ad_server_impressions"].sum())
+    total_clk   = int(df["ad_server_clicks"].sum())
+    total_req   = int(df["ad_server_ad_requests"].sum())
+    total_adx_imp = int(df["adx_impressions"].sum()) if "adx_impressions" in df.columns else 0
+    total_adx_rev = float(df["adx_revenue"].sum())   if "adx_revenue"    in df.columns else 0.0
+    total_adx_clk = int(df["adx_clicks"].sum())      if "adx_clicks"     in df.columns else 0
 
-    # Select the scalar total for the requested metric
+    total_ecpm      = round((total_rev / total_imp * 1000), 6) if total_imp > 0 else 0.0
+    total_ctr       = round((total_clk / total_imp * 100), 4)  if total_imp > 0 else 0.0
+    total_fill      = round((total_imp / total_req * 100), 2)  if total_req > 0 else 0.0
+    total_match_rate= round((total_adx_imp / total_req * 100), 4) if total_req > 0 else 0.0
+
     metric_total_map = {
-        "revenue":     round(total_rev, 6),
-        "impressions": total_imp,
-        "clicks":      total_clk,
-        "ad_requests": total_req,
-        "ecpm":        total_ecpm,
-        "ctr":         total_ctr,
-        "fill_rate":   total_fill,
+        "revenue":         round(total_rev, 6),
+        "impressions":     total_imp,
+        "clicks":          total_clk,
+        "ad_requests":     total_req,
+        "ecpm":            total_ecpm,
+        "ctr":             total_ctr,
+        "fill_rate":       total_fill,
+        "match_rate":      total_match_rate,
+        "adx_impressions": total_adx_imp,
+        "adx_revenue":     round(total_adx_rev, 6),
+        "adx_clicks":      total_adx_clk,
     }
     scalar_total = metric_total_map.get(metric, round(total_rev, 6))
 
     result = {
-        "start_date":         str(start_date),
-        "end_date":           str(end_date),
-        "dimension":          dimension,
-        "metric":             metric,
-        "channel":            channel,
-        "total_revenue_usd":  round(total_rev, 6),
-        "total_impressions":  total_imp,
-        "total_clicks":       total_clk,
-        "total_ad_requests":  total_req,
-        "avg_ecpm_usd":       total_ecpm,
-        "avg_ctr_pct":        total_ctr,
-        "fill_rate_pct":      total_fill,
-        "primary_metric":     metric,
-        "primary_total":      scalar_total,
-        "rows":               [],
+        "start_date":           str(start_date),
+        "end_date":             str(end_date),
+        "dimension":            dimension,
+        "metric":               metric,
+        "channel":              channel,
+        "total_revenue_usd":    round(total_rev, 6),
+        "total_impressions":    total_imp,
+        "total_clicks":         total_clk,
+        "total_ad_requests":    total_req,
+        "avg_ecpm_usd":         total_ecpm,
+        "avg_ctr_pct":          total_ctr,
+        "fill_rate_pct":        total_fill,
+        "adx_impressions":      total_adx_imp,
+        "adx_revenue_usd":      round(total_adx_rev, 6),
+        "adx_clicks":           total_adx_clk,
+        "adx_match_rate_pct":   total_match_rate,
+        "primary_metric":       metric,
+        "primary_total":        scalar_total,
+        "rows":                 [],
     }
 
-    # ── Dimension breakdown ──────────────────────────────────────────────────
+    # ── Helper: compute per-row stats ──────────────────────────────────
+    def _add_derived_cols(g: pd.DataFrame) -> pd.DataFrame:
+        g = g.copy()
+        g["ecpm_usd"] = (
+            g["ad_server_cpm_and_cpc_revenue"] / g["ad_server_impressions"] * 1000
+        ).where(g["ad_server_impressions"] > 0, 0).round(6)
+        g["ctr_pct"] = (
+            g["ad_server_clicks"] / g["ad_server_impressions"] * 100
+        ).where(g["ad_server_impressions"] > 0, 0).round(4)
+        g["fill_rate_pct"] = (
+            g["ad_server_impressions"] / g["ad_server_ad_requests"] * 100
+        ).where(g["ad_server_ad_requests"] > 0, 0).round(2)
+        if "adx_impressions" in g.columns:
+            g["adx_match_rate_pct"] = (
+                g["adx_impressions"] / g["ad_server_ad_requests"] * 100
+            ).where(g["ad_server_ad_requests"] > 0, 0).round(4)
+        return g
+
+    AGG_COLS = {
+        "ad_server_cpm_and_cpc_revenue": "sum",
+        "ad_server_impressions":         "sum",
+        "ad_server_clicks":              "sum",
+        "ad_server_ad_requests":         "sum",
+    }
+    if "adx_impressions" in df.columns:
+        AGG_COLS["adx_impressions"] = "sum"
+        AGG_COLS["adx_revenue"]     = "sum"
+        AGG_COLS["adx_clicks"]      = "sum"
+
+    # ── Dimension breakdown ───────────────────────────────────────────────
     if dimension in ("app", "ad_unit"):
-        grouped = df.groupby("ad_unit_name").agg({
-            "ad_server_cpm_and_cpc_revenue": "sum",
-            "ad_server_impressions":         "sum",
-            "ad_server_clicks":              "sum",
-            "ad_server_ad_requests":         "sum",
-        }).reset_index()
+        grouped = df.groupby("ad_unit_name").agg(AGG_COLS).reset_index()
         grouped = grouped.rename(columns={"ad_unit_name": "name"})
-        grouped["ecpm_usd"] = (grouped["ad_server_cpm_and_cpc_revenue"] / grouped["ad_server_impressions"] * 1000).where(grouped["ad_server_impressions"] > 0, 0).round(6)
-        grouped["ctr_pct"]  = (grouped["ad_server_clicks"] / grouped["ad_server_impressions"] * 100).where(grouped["ad_server_impressions"] > 0, 0).round(4)
-        grouped["fill_rate_pct"] = (grouped["ad_server_impressions"] / grouped["ad_server_ad_requests"] * 100).where(grouped["ad_server_ad_requests"] > 0, 0).round(2)
+
+        # ─ filter_name: substring match (Part 3 — app/ad_unit filtering) ───
+        if filter_name:
+            mask = grouped["name"].str.lower().str.contains(
+                filter_name.lower().replace("www.", ""), na=False
+            )
+            if mask.any():
+                grouped = grouped[mask]
+
+        grouped = _add_derived_cols(grouped)
         sort_col = METRIC_COL.get(metric) or "ad_server_cpm_and_cpc_revenue"
         if sort_col in grouped.columns:
             grouped = grouped.sort_values(sort_col, ascending=False)
@@ -563,23 +701,59 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
     elif dimension == "website":
         df_copy = df.copy()
         df_copy["name"] = df_copy["ad_unit_name"].apply(_extract_domain)
-        grouped = df_copy.groupby("name").agg({
-            "ad_server_cpm_and_cpc_revenue": "sum",
-            "ad_server_impressions":         "sum",
-            "ad_server_clicks":              "sum",
-            "ad_server_ad_requests":         "sum",
-        }).reset_index()
-        grouped["ecpm_usd"] = (grouped["ad_server_cpm_and_cpc_revenue"] / grouped["ad_server_impressions"] * 1000).where(grouped["ad_server_impressions"] > 0, 0).round(6)
-        grouped["ctr_pct"]  = (grouped["ad_server_clicks"] / grouped["ad_server_impressions"] * 100).where(grouped["ad_server_impressions"] > 0, 0).round(4)
-        grouped["fill_rate_pct"] = (grouped["ad_server_impressions"] / grouped["ad_server_ad_requests"] * 100).where(grouped["ad_server_ad_requests"] > 0, 0).round(2)
+        grouped = df_copy.groupby("name").agg(AGG_COLS).reset_index()
+        grouped = _add_derived_cols(grouped)
+
+        # ─ filter_name: normalised domain match (Part 3) ────────────────
+        if filter_name:
+            # Normalise: strip protocol, www, trailing slashes, lowercase
+            import re as _re
+            def _norm_domain(s: str) -> str:
+                s = s.lower()
+                s = _re.sub(r'^https?://', '', s)
+                s = _re.sub(r'^www\.', '', s)
+                return s.strip('/')
+
+            query_norm = _norm_domain(filter_name)
+            # Exact normalised match first
+            exact_mask = grouped["name"].apply(_norm_domain) == query_norm
+            if exact_mask.any():
+                grouped = grouped[exact_mask]
+            else:
+                # Substring fallback
+                sub_mask = grouped["name"].apply(_norm_domain).str.contains(
+                    query_norm, regex=False, na=False
+                )
+                if sub_mask.any():
+                    grouped = grouped[sub_mask]
+                # else: return all (no match — let model report "not found in breakdown")
+
         sort_col = METRIC_COL.get(metric) or "ad_server_cpm_and_cpc_revenue"
         if sort_col in grouped.columns:
             grouped = grouped.sort_values(sort_col, ascending=False)
         result["rows"] = sanitize_for_json(grouped.head(50).to_dict(orient="records"))
 
-    # For dimension="none", rows stays empty — just totals are returned
+    elif dimension == "child_network":
+        # Part 4: MCM child network breakdown
+        group_col = "child_network_code" if "child_network_code" in df.columns else None
+        if group_col:
+            grouped = df.groupby(group_col).agg(AGG_COLS).reset_index()
+            grouped = grouped.rename(columns={group_col: "name"})
+            grouped = _add_derived_cols(grouped)
+            sort_col = METRIC_COL.get(metric) or "ad_server_cpm_and_cpc_revenue"
+            if sort_col in grouped.columns:
+                grouped = grouped.sort_values(sort_col, ascending=False)
+            result["rows"] = sanitize_for_json(grouped.to_dict(orient="records"))
+        else:
+            result["note"] = (
+                "child_network_code column not present in this report. "
+                "This account may not be an MCM network manager, or the dimension "
+                "was not available for this date range."
+            )
+
+    # dimension="none": rows stays empty — totals only
     log.info(
-        "[Chat:query_gam_data] Done — %s to %s | %s=%s | %d breakdown rows",
+        "[Chat:query_gam_data] Done — %s to %s | %s=%s | %d rows",
         start_date, end_date, metric, scalar_total, len(result["rows"]),
     )
     return result

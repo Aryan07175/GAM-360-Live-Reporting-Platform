@@ -13,7 +13,7 @@ import gzip
 import asyncio
 import logging
 from datetime import date, datetime, timezone, timedelta
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 import pandas as pd
 from googleads import ad_manager
 
@@ -24,7 +24,7 @@ API_VERSION = os.getenv("GAM_API_VERSION", "v202602")
 REQUEST_TIMEOUT = int(os.getenv("GAM_REQUEST_TIMEOUT", "120"))  # seconds
 MAX_PARALLEL = int(os.getenv("GAM_MAX_PARALLEL_REQUESTS", "5"))
 
-DIMENSIONS = ["DATE", "HOUR", "AD_UNIT_NAME", "AD_UNIT_ID"]
+# ─── Base columns always fetched ──────────────────────────────────────────────
 COLUMNS = [
     # --- Ad Server (direct-sold) ---
     "AD_SERVER_IMPRESSIONS",
@@ -41,6 +41,7 @@ COLUMNS = [
     "ADSENSE_LINE_ITEM_LEVEL_REVENUE",
 
     # --- Ad Exchange (programmatic) ---
+    # Line-item-level columns: impressions served via AdX line items
     "AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS",
     "AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS",
     "AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE",
@@ -50,6 +51,26 @@ COLUMNS = [
     "TOTAL_LINE_ITEM_LEVEL_CLICKS",
     "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
     "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
+]
+
+# ─── Extra columns for child-network breakdown (MCM) ─────────────────────────
+# These columns are only valid when CHILD_NETWORK_CODE is in the dimensions list.
+# GAM returns an error if included without the dimension, so they are added
+# dynamically in run_report_with_dims() when child_network mode is requested.
+# (No extra columns needed — child network is just a grouping dimension.)
+
+# Canonical list of all metric columns we may receive in the CSV
+ALL_CHANNEL_COLS = [
+    "ad_server_impressions", "ad_server_clicks", "ad_server_cpm_and_cpc_revenue",
+    "adsense_line_item_level_impressions", "adsense_line_item_level_clicks",
+    "adsense_line_item_level_revenue",
+    "ad_exchange_line_item_level_impressions", "ad_exchange_line_item_level_clicks",
+    "ad_exchange_line_item_level_revenue",
+    "total_line_item_level_impressions", "total_line_item_level_clicks",
+    "total_line_item_level_cpm_and_cpc_revenue",
+    "total_line_item_level_without_cpd_average_ecpm",
+    "ad_server_ctr", "ad_server_ad_requests", "ad_server_fill_rate",
+    "ad_server_without_cpd_average_ecpm",
 ]
 
 
@@ -129,17 +150,29 @@ class GAMClient:
     def _to_gam_date(d: date) -> dict:
         return {"year": d.year, "month": d.month, "day": d.day}
 
-    def run_report(self, start: date, end: date) -> int:
-        """Submit a report job to Google Ad Manager."""
+    def run_report(self, start: date, end: date, extra_dims: List[str] = None) -> int:
+        """
+        Submit a report job to Google Ad Manager.
+
+        extra_dims: optional list of additional GAM dimensions to append
+                    to the base [DATE, AD_UNIT_NAME, AD_UNIT_ID] set.
+                    Example: ["CHILD_NETWORK_CODE"]
+        """
         report_service = self._report_service()
-        
+
         # Omit HOUR dimension for large ranges to prevent millions of rows and OOM crashes.
         # Only keep HOUR for single or 2-day ranges where hourly filtering is useful.
         day_count = (end - start).days + 1
         report_dims = ["DATE", "AD_UNIT_NAME", "AD_UNIT_ID"]
         if day_count <= 2:
             report_dims.insert(1, "HOUR")
-            
+
+        # Append any extra dimensions (e.g. CHILD_NETWORK_CODE for MCM)
+        if extra_dims:
+            for dim in extra_dims:
+                if dim not in report_dims:
+                    report_dims.append(dim)
+
         report_query = {
             "dimensions": report_dims,
             "columns": COLUMNS,
@@ -149,7 +182,10 @@ class GAMClient:
         }
         report_job = {"reportQuery": report_query}
         report_job = report_service.runReportJob(report_job)
-        log.info(f"GAM report job submitted: {report_job['id']} ({start} to {end})")
+        log.info(
+            "GAM report job submitted: %s (%s to %s) dims=%s",
+            report_job["id"], start, end, report_dims,
+        )
         return report_job["id"]
 
     async def wait_for_report(self, job_id: int, poll_interval: int = 3) -> bool:
@@ -194,27 +230,15 @@ class GAMClient:
         ]
 
         # Ensure all channel columns exist (GAM omits them if channel has no data)
-        channel_cols = [
-            "ad_server_impressions", "ad_server_clicks", "ad_server_cpm_and_cpc_revenue",
-            "adsense_line_item_level_impressions", "adsense_line_item_level_clicks",
-            "adsense_line_item_level_revenue",
-            "ad_exchange_line_item_level_impressions", "ad_exchange_line_item_level_clicks",
-            "ad_exchange_line_item_level_revenue",
-            "total_line_item_level_impressions", "total_line_item_level_clicks",
-            "total_line_item_level_cpm_and_cpc_revenue",
-            "total_line_item_level_without_cpd_average_ecpm",
-            "ad_server_ctr", "ad_server_ad_requests", "ad_server_fill_rate",
-            "ad_server_without_cpd_average_ecpm",
-        ]
-        for c in channel_cols:
+        for c in ALL_CHANNEL_COLS:
             if c not in df.columns:
                 df[c] = 0.0
 
         # Convert all metric columns to numeric before summing
-        for c in channel_cols:
+        for c in ALL_CHANNEL_COLS:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
 
-        # ── Combine channels based on Demand Channel Filter ──
+        # ── Combine channels based on Demand Channel Filter ──────────────────
         if demand_channel == "programmatic":
             # Isolate programmatic revenue by excluding Ad Server (Direct-sold) revenue.
             # NOTE: This excludes Programmatic Guaranteed and Preferred Deals because
@@ -240,6 +264,21 @@ class GAMClient:
             df["ad_server_cpm_and_cpc_revenue"] = df["total_line_item_level_cpm_and_cpc_revenue"]
             df["ad_server_without_cpd_average_ecpm"] = df["total_line_item_level_without_cpd_average_ecpm"]
 
+        # ── Ad Exchange match rate (computed column) ─────────────────────────
+        # GAM's UI match rate = AdX impressions / Ad Server ad_requests * 100.
+        # This is how GAM defines "match rate" for the exchange: what fraction
+        # of requests the exchange actually matched with an ad.
+        # (GAM delivery reports do not expose a separate "AdX ad requests" column
+        # when grouped by AD_UNIT_NAME — they share AD_SERVER_AD_REQUESTS.)
+        df["adx_impressions"] = df["ad_exchange_line_item_level_impressions"]
+        df["adx_revenue"] = df["ad_exchange_line_item_level_revenue"]
+        df["adx_clicks"] = df["ad_exchange_line_item_level_clicks"]
+        df["adx_match_rate"] = (
+            (df["adx_impressions"] / df["ad_server_ad_requests"] * 100)
+            .where(df["ad_server_ad_requests"] > 0, 0)
+            .round(4)
+        )
+
         log.info(
             "Metrics mapped (%s) — impressions: %.0f, clicks: %.0f, revenue: %.2f",
             demand_channel,
@@ -247,7 +286,6 @@ class GAMClient:
             df["ad_server_clicks"].sum(),
             df["ad_server_cpm_and_cpc_revenue"].sum(),
         )
-
 
         # Convert revenue from micros to dollars if needed
         revenue_cols = [c for c in df.columns if "revenue" in c or "ecpm" in c or "cpm" in c]
@@ -262,16 +300,19 @@ class GAMClient:
 
         df = df.fillna(0)
 
-        # ── Diagnostic logging ──
+        # ── Diagnostic logging ──────────────────────────────────────────────
         total_rows = len(df)
         rev_sum = df["ad_server_cpm_and_cpc_revenue"].sum()
         imp_sum = df["ad_server_impressions"].sum()
+        adx_imp = df["adx_impressions"].sum()
+        adx_req = df["ad_server_ad_requests"].sum()
+        adx_match = round((adx_imp / adx_req * 100), 2) if adx_req > 0 else 0
         ecpm_calc = (rev_sum / imp_sum * 1000) if imp_sum > 0 else 0
         unique_ad_units = df["ad_unit_name"].nunique() if "ad_unit_name" in df.columns else 0
         date_min = df["date"].min() if "date" in df.columns else "N/A"
         date_max = df["date"].max() if "date" in df.columns else "N/A"
 
-        # Duplicate check: look for rows with identical (date, ad_unit_id) combos
+        # Duplicate check
         dedup_cols = [c for c in ["date", "ad_unit_id"] if c in df.columns]
         dup_count = df.duplicated(subset=dedup_cols).sum() if dedup_cols else 0
 
@@ -281,28 +322,34 @@ class GAMClient:
             "  Duplicate rows (date+ad_unit_id): %d\n"
             "  Revenue sum: %.6f\n"
             "  Impression sum: %.0f\n"
+            "  AdX impressions: %.0f | AdX match rate: %.2f%%\n"
             "  Computed eCPM: %.6f\n"
             "  Unique Ad Units: %d\n"
             "  Date range: %s to %s\n"
             "  Demand channel: %s",
-            total_rows, dup_count, rev_sum, imp_sum, ecpm_calc,
+            total_rows, dup_count, rev_sum, imp_sum,
+            adx_imp, adx_match, ecpm_calc,
             unique_ad_units, date_min, date_max, demand_channel,
         )
 
         return df
 
     async def get_live_data(
-        self, start: date, end: date, force_refresh: bool = False, demand_channel: str = "all"
+        self, start: date, end: date, force_refresh: bool = False,
+        demand_channel: str = "all", extra_dims: List[str] = None,
     ) -> pd.DataFrame:
         """
         Fetch LIVE data from Google Ad Manager. Always generates a new report.
-        
+
         If force_refresh=False, uses request-scoped deduplication (30s window)
         to avoid duplicate requests within a single page load's Promise.all().
-        
+
         If force_refresh=True, always generates a brand-new report.
+
+        extra_dims: additional GAM dimension names to include (e.g. ["CHILD_NETWORK_CODE"])
         """
-        key = _dedup._key(self.network_code, start, end) + f"_{demand_channel}"
+        extra_suffix = "_".join(extra_dims) if extra_dims else ""
+        key = _dedup._key(self.network_code, start, end) + f"_{demand_channel}_{extra_suffix}"
         lock = _dedup._get_lock(key)
 
         async with lock:
@@ -314,10 +361,10 @@ class GAMClient:
                     return existing
 
             # Always fetch fresh from GAM
-            log.info(f"Fetching LIVE data from GAM: {start} to {end}")
+            log.info(f"Fetching LIVE data from GAM: {start} to {end} (extra_dims={extra_dims})")
 
             # Run blocking API calls in executor
-            job_id = await asyncio.to_thread(self.run_report, start, end)
+            job_id = await asyncio.to_thread(self.run_report, start, end, extra_dims)
             await self.wait_for_report(job_id)
             df = await asyncio.to_thread(self.download_report, job_id, demand_channel)
 
@@ -328,20 +375,23 @@ class GAMClient:
             return df
 
     async def get_live_data_multi_day(
-        self, start: date, end: date, force_refresh: bool = False, demand_channel: str = "all"
+        self, start: date, end: date, force_refresh: bool = False,
+        demand_channel: str = "all", extra_dims: List[str] = None,
     ) -> pd.DataFrame:
         """
         Fetch data for a date range from Google Ad Manager.
-        
+
         The GAM API can handle date ranges up to a full year in a single report,
         so we only split into chunks for very large ranges (> 90 days).
         Chunks are 30-day blocks fetched in parallel with concurrency limits.
+
+        extra_dims: additional GAM dimension names (e.g. ["CHILD_NETWORK_CODE"])
         """
         day_count = (end - start).days + 1
 
         # For ranges up to 90 days, fetch as a single GAM report
         if day_count <= 90:
-            df = await self.get_live_data(start, end, force_refresh, demand_channel)
+            df = await self.get_live_data(start, end, force_refresh, demand_channel, extra_dims)
         else:
             # For larger ranges, split into 30-day chunks and fetch in parallel
             log.info(f"Splitting {day_count}-day range into 30-day chunks")
@@ -359,7 +409,7 @@ class GAMClient:
                 for attempt in range(retries):
                     try:
                         async with semaphore:
-                            return await self.get_live_data(s, e, force_refresh, demand_channel)
+                            return await self.get_live_data(s, e, force_refresh, demand_channel, extra_dims)
                     except Exception as e_in:
                         if attempt == retries - 1:
                             log.error(f"Chunk {s} to {e} failed after {retries} attempts: {e_in}")
@@ -380,10 +430,4 @@ class GAMClient:
             df = pd.concat(dfs, ignore_index=True)
             log.info(f"Combined {len(dfs)} chunks: {len(df)} total rows")
 
-        # For "programmatic" filter, we just return the dataset as is here, 
-        # but we handle the metric combination in get_live_data based on what's available
-        # Programmatic Guaranteed will be missed because it's part of ad_server_cpm_and_cpc_revenue
-        # which we cannot separate without breaking ad requests.
-
         return df
-

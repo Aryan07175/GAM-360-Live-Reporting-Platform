@@ -57,7 +57,7 @@ def get_query_gam_data_tool_spec() -> dict:
     whatever the dashboard currently has loaded.
 
     The model MUST call this tool for any question involving a time period
-    or breakdown by app / website / ad unit.
+    or breakdown by app / website / ad unit / child network.
     """
     return {
         "toolSpec": {
@@ -65,10 +65,12 @@ def get_query_gam_data_tool_spec() -> dict:
             "description": (
                 "Fetch LIVE data directly from Google Ad Manager for any date range, "
                 "dimension, and metric. "
-                "ALWAYS call this tool when the user asks about revenue, impressions, clicks, "
-                "eCPM, CTR, fill rate, or ad requests for any time period "
-                "(today, yesterday, last 7/30/90 days, this month, last month, "
-                "this year, last year, MTD, YTD, or any custom date range). "
+                "ALWAYS call this tool when the user asks about revenue, impressions, "
+                "clicks, eCPM, CTR, fill rate, ad requests, or match rate for any "
+                "time period (today, yesterday, past N days, past N months, "
+                "this month/MTD, this year/YTD, last month, last year, past 1 year, "
+                "or any custom date range). "
+                "When NO time period is mentioned, use start_date=YTD start, end_date=today. "
                 "NEVER answer time-based or breakdown questions from memory — always "
                 "call this tool first and use only the numbers it returns."
             ),
@@ -80,38 +82,60 @@ def get_query_gam_data_tool_spec() -> dict:
                             "type": "string",
                             "description": (
                                 "Start date in YYYY-MM-DD format. "
-                                "Compute the actual calendar date from phrases like "
-                                "'today', 'yesterday', 'last 30 days', 'last year', 'MTD', 'YTD'. "
-                                "Use the reference dates provided in the system prompt."
+                                "You MUST compute the actual calendar date before calling this tool. "
+                                "Date phrase → start_date mapping (use the Date Reference table in the system prompt): "
+                                "'today' → today; "
+                                "'yesterday' → yesterday; "
+                                "'past 7 days' → today minus 7 days; "
+                                "'past 30 days' → today minus 30 days; "
+                                "'past 45 days' → today minus 45 days; "
+                                "'past 60 days' → today minus 60 days; "
+                                "'past 3 months' → today minus 90 days; "
+                                "'past 6 months' → today minus 180 days; "
+                                "'past 1 year' / 'last year' / 'past 12 months' → today minus 365 days; "
+                                "'this month' / 'MTD' → 1st day of current month; "
+                                "'this year' / 'YTD' → Jan 1 of current year; "
+                                "'last month' → 1st day of previous month; "
+                                "no time mentioned → Jan 1 of current year (YTD default)."
                             ),
                         },
                         "end_date": {
                             "type": "string",
-                            "description": "End date in YYYY-MM-DD format (inclusive).",
+                            "description": "End date in YYYY-MM-DD format (inclusive). For open-ended ranges like 'past N days', end_date = today.",
                         },
                         "dimension": {
                             "type": "string",
-                            "enum": ["none", "app", "website", "ad_unit"],
+                            "enum": ["none", "app", "website", "ad_unit", "child_network"],
                             "description": (
                                 "How to break down the result. "
-                                "'none' = network totals only. "
+                                "'none' = network-wide totals only (no breakdown). "
                                 "'app' = breakdown by mobile app / ad unit name. "
-                                "'website' = breakdown by website domain. "
-                                "'ad_unit' = breakdown by ad unit name (same as app)."
+                                "'website' = breakdown by website domain (strips protocol/www, groups by domain). "
+                                "'ad_unit' = breakdown by ad unit name (same as 'app'). "
+                                "'child_network' = breakdown by MCM child network code (for publisher network managers)."
                             ),
                         },
                         "metric": {
                             "type": "string",
-                            "enum": ["revenue", "impressions", "clicks", "ctr", "ecpm", "fill_rate", "ad_requests"],
+                            "enum": [
+                                "revenue", "impressions", "clicks", "ctr", "ecpm",
+                                "fill_rate", "ad_requests",
+                                "match_rate", "adx_impressions", "adx_revenue", "adx_clicks"
+                            ],
                             "description": (
                                 "Primary metric to report. "
-                                "revenue = total ad revenue in USD. "
-                                "impressions = total ad impressions served. "
-                                "clicks = total ad clicks. "
+                                "revenue = total ad revenue in USD (all channels). "
+                                "impressions = total impressions (all channels). "
+                                "clicks = total ad clicks (all channels). "
                                 "ctr = click-through rate (%). "
                                 "ecpm = effective CPM in USD. "
-                                "fill_rate = impression fill rate (%). "
-                                "ad_requests = total ad requests."
+                                "fill_rate = Ad Server impression fill rate = impressions/ad_requests × 100 (%). "
+                                "ad_requests = total ad requests sent to GAM Ad Server. "
+                                "match_rate = Ad Exchange match rate = AdX impressions / ad_requests × 100 (%). "
+                                "  Use channel='ad_exchange' with match_rate. "
+                                "adx_impressions = Ad Exchange impressions only. "
+                                "adx_revenue = Ad Exchange revenue only. "
+                                "adx_clicks = Ad Exchange clicks only."
                             ),
                         },
                         "channel": {
@@ -119,11 +143,20 @@ def get_query_gam_data_tool_spec() -> dict:
                             "enum": ["all", "ad_server", "adsense", "ad_exchange"],
                             "description": (
                                 "Demand channel filter. "
-                                "'all' = unified view (Ad Server + AdSense + Ad Exchange totals). "
-                                "'ad_server' = direct-sold only. "
+                                "'all' = unified view (Ad Server + AdSense + Ad Exchange totals — default). "
+                                "'ad_server' = direct-sold Ad Server only. "
                                 "'adsense' = AdSense backfill only. "
-                                "'ad_exchange' = programmatic/Ad Exchange only. "
-                                "Default: 'all'."
+                                "'ad_exchange' = Ad Exchange / programmatic only. "
+                                "Use 'ad_exchange' when user asks about AdX, Ad Exchange, programmatic, match rate."
+                            ),
+                        },
+                        "filter_name": {
+                            "type": "string",
+                            "description": (
+                                "Optional: filter results to a specific app/website/child-network name. "
+                                "E.g. 'cardekho.com', 'cardekho', 'CarDekho'. "
+                                "The backend normalizes case and strips www/protocol for website matching. "
+                                "Pass the name the user mentioned exactly as they said it."
                             ),
                         },
                     },
