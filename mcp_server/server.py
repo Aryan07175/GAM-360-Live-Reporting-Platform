@@ -515,7 +515,8 @@ def compute_alerts(df: pd.DataFrame) -> list[dict]:
     summary = df.groupby(["ad_unit_name"]).agg({
         "ad_server_impressions": "sum",
         "ad_server_cpm_and_cpc_revenue": "sum",
-        "ad_server_ad_requests": "sum"
+        "ad_server_ad_requests": "sum",
+        "ad_server_clicks": "sum"
     }).reset_index()
     
     alerts = []
@@ -524,14 +525,22 @@ def compute_alerts(df: pd.DataFrame) -> list[dict]:
         imp = int(row["ad_server_impressions"])
         rev = float(row["ad_server_cpm_and_cpc_revenue"])
         req = int(row["ad_server_ad_requests"])
-        fill_rate = (imp / req * 100) if req > 0 else 0
+        clicks = int(row["ad_server_clicks"])
         
-        if 0 < imp < 1000:
-            alerts.append({"title": f"Low impression volume in {app_name}", "severity": "warning", "metric": "Impressions", "value": imp})
-        if 0 < rev < 0.5:
-            alerts.append({"title": f"Revenue below $0.50 in {app_name}", "severity": "critical", "metric": "Revenue", "value": f"${rev:.4f}"})
-        if 0 < fill_rate < 30:
+        fill_rate = (imp / req * 100) if req > 0 else 0
+        ctr = (clicks / imp * 100) if imp > 0 else 0
+        ecpm = (rev / imp * 1000) if imp > 0 else 0
+        
+        if req > 500 and imp == 0:
+            alerts.append({"title": f"Zero Fill Rate in {app_name}", "severity": "critical", "metric": "Fill Rate", "value": "0%"})
+        elif req > 1000 and 0 < fill_rate < 30:
             alerts.append({"title": f"Very low fill rate ({fill_rate:.1f}%) in {app_name}", "severity": "warning", "metric": "Fill Rate", "value": f"{fill_rate:.1f}%"})
+            
+        if imp > 1000 and ctr > 15:
+            alerts.append({"title": f"Suspiciously high CTR ({ctr:.1f}%) in {app_name}", "severity": "warning", "metric": "CTR", "value": f"{ctr:.1f}%"})
+            
+        if imp > 5000 and ecpm < 0.10 and ecpm > 0:
+            alerts.append({"title": f"Extremely low eCPM (${ecpm:.2f}) in {app_name}", "severity": "warning", "metric": "eCPM", "value": f"${ecpm:.2f}"})
             
     return alerts
 
@@ -579,7 +588,20 @@ def compute_revenue_by_app(df: pd.DataFrame) -> list[dict]:
     """Revenue breakdown by application, sorted descending."""
     if df.empty:
         return []
-    summary = df.groupby(["ad_unit_name", "ad_unit_id"]).sum(numeric_only=True).reset_index()
+        
+    # Sum only absolute metrics to avoid summing percentages mathematically incorrectly
+    summary = df.groupby(["ad_unit_name", "ad_unit_id"]).agg({
+        "ad_server_cpm_and_cpc_revenue": "sum",
+        "ad_server_impressions": "sum",
+        "ad_server_clicks": "sum",
+        "ad_server_ad_requests": "sum",
+    }).reset_index()
+    
+    # Safely recalculate derived metrics properly
+    summary["ad_server_ctr"] = (summary["ad_server_clicks"] / summary["ad_server_impressions"] * 100).fillna(0)
+    summary["ad_server_fill_rate"] = (summary["ad_server_impressions"] / summary["ad_server_ad_requests"] * 100).fillna(0)
+    summary["ad_server_without_cpd_average_ecpm"] = (summary["ad_server_cpm_and_cpc_revenue"] / summary["ad_server_impressions"] * 1000).fillna(0)
+    
     summary = summary.sort_values(by="ad_server_cpm_and_cpc_revenue", ascending=False)
     return summary.to_dict(orient="records")
 

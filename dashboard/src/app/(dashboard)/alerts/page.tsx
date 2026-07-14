@@ -27,29 +27,17 @@ export default function AlertsPage() {
     let id = 1;
 
     for (const app of appsData.apps) {
-      if (app.impressions > 0 && app.impressions < 1000) {
+      if (app.ad_requests > 500 && app.impressions === 0) {
         result.push({
           id: `alert-${id++}`,
-          title: `Low impression volume in ${app.ad_unit_name}`,
+          title: `Zero Fill Rate in ${app.ad_unit_name}`,
           timeString: "Detected from live data",
-          metric: "Impressions",
-          severity: "warning",
-          value: app.impressions,
-          icon: Eye,
-        });
-      }
-      if (app.revenue_usd > 0 && app.revenue_usd < 0.5) {
-        result.push({
-          id: `alert-${id++}`,
-          title: `Revenue below $0.50 in ${app.ad_unit_name}`,
-          timeString: "Detected from live data",
-          metric: "Revenue",
+          metric: "Fill Rate",
           severity: "critical",
-          value: `$${app.revenue_usd.toFixed(4)}`,
-          icon: DollarSign,
+          value: "0%",
+          icon: AlertTriangle,
         });
-      }
-      if (app.fill_rate_pct > 0 && app.fill_rate_pct < 30) {
+      } else if (app.ad_requests > 1000 && app.fill_rate_pct > 0 && app.fill_rate_pct < 30) {
         result.push({
           id: `alert-${id++}`,
           title: `Very low fill rate (${app.fill_rate_pct.toFixed(1)}%) in ${app.ad_unit_name}`,
@@ -58,6 +46,30 @@ export default function AlertsPage() {
           severity: "warning",
           value: `${app.fill_rate_pct.toFixed(1)}%`,
           icon: TrendingDown,
+        });
+      }
+
+      if (app.impressions > 1000 && app.ctr_pct > 15) {
+        result.push({
+          id: `alert-${id++}`,
+          title: `Suspiciously high CTR (${app.ctr_pct.toFixed(1)}%) in ${app.ad_unit_name}`,
+          timeString: "Detected from live data",
+          metric: "CTR",
+          severity: "warning",
+          value: `${app.ctr_pct.toFixed(1)}%`,
+          icon: Eye,
+        });
+      }
+
+      if (app.impressions > 5000 && app.ecpm_usd > 0 && app.ecpm_usd < 0.10) {
+        result.push({
+          id: `alert-${id++}`,
+          title: `Extremely low eCPM ($${app.ecpm_usd.toFixed(2)}) in ${app.ad_unit_name}`,
+          timeString: "Detected from live data",
+          metric: "eCPM",
+          severity: "warning",
+          value: `$${app.ecpm_usd.toFixed(2)}`,
+          icon: DollarSign,
         });
       }
     }
