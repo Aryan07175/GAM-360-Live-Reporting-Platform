@@ -20,6 +20,10 @@ graph TD
     Gemini -.->|Streams Chat Response| Python
     
     Python -->|Formats & Caches Data| NextJS
+    
+    Python -->|Background Tasks| Cron[Scheduled Daily Reports]
+    Cron -->|SMTP| Gmail[Gmail Notifications]
+    Python -->|Live Alert Triggers| Gmail
 ```
 
 This project is a complete end-to-end analytics pipeline that pulls raw data from Google Ad Manager 360 and surfaces it in a real-time dashboard.
@@ -38,6 +42,11 @@ This project is a complete end-to-end analytics pipeline that pulls raw data fro
 * **Deduplication:** The Python server uses `asyncio.Lock` to coalesce concurrent identical requests within a 30-second window, preventing Google Ad Manager API rate limits.
 * **Bounded Parallelism:** When fetching multi-day trends, requests are batched and executed in parallel.
 
+### 4. Background Tasks & Notifications
+* **Email Notifications:** The server includes a dedicated background task system. 
+* **Live Alerts:** When anomaly detection thresholds are breached, the system instantly triggers alert emails.
+* **Daily Reports:** An asynchronous background loop runs a cron-style schedule to automatically compile and email the full Executive Report once per day.
+
 ---
 
 ## 🌐 Dashboard Features
@@ -49,6 +58,7 @@ The dashboard provides a premium, real-time BI experience:
 * **Unified Revenue:** Combines Ad Server, AdSense, and Ad Exchange into a single consolidated view.
 * **18+ Live Analytics Tools:** Exposes comprehensive tools covering: executive summaries, revenue by app, trends, top/bottom apps, impressions, clicks, CTR, eCPM, fill rate, and ad requests.
 * **AI Anomaly Detection:** Compares current performance against historical averages to detect sudden drops or spikes in real-time.
+* **Email Notifications (New):** Integrated settings panel to manage recipients. Automatically sends instant alerts when anomalies are detected, and dispatches a full Executive Report via Gmail every day.
 * **Interactive UI:** Custom date ranges (down to the hour), dark mode, and progressive loading skeletons.
 
 ---
@@ -83,8 +93,9 @@ pip install -r requirements.txt
 ```bash
 cp config/googleads.yaml.example config/googleads.yaml
 cp config/.env.example config/.env
-# Fill in: network_code, path_to_private_key_file, application_name
-# Fill in: GEMINI_API_KEY in .env
+# 1. Fill in: network_code, path_to_private_key_file, application_name in googleads.yaml
+# 2. Fill in: GEMINI_API_KEY in .env
+# 3. Fill in: GMAIL_SENDER_EMAIL and GMAIL_APP_PASSWORD in .env for email notifications
 ```
 
 ### 3. Start the backend server
