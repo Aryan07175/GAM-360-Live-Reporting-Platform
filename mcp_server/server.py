@@ -33,15 +33,24 @@ import numpy as np
 def sanitize_for_json(obj):
     """
     Recursively replace float('inf'), float('-inf'), and float('nan') with 0
-    so the response is always valid JSON.
+    so the response is always valid JSON. Also converts numpy scalar types
+    to native Python types.
     """
     if isinstance(obj, dict):
         return {k: sanitize_for_json(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [sanitize_for_json(v) for v in obj]
-    if isinstance(obj, float):
+    # Handle numpy integer types (np.int64, np.int32, etc.)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    # Handle numpy float types (np.float64, np.float32, etc.) AND native float
+    if isinstance(obj, (float, np.floating)):
         if math.isnan(obj) or math.isinf(obj):
             return 0
+        return float(obj)  # convert np.float64 → native float
+    # Handle numpy bool
+    if isinstance(obj, np.bool_):
+        return bool(obj)
     return obj
 
 import sys
@@ -1296,7 +1305,7 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             })
         else:
             return [types.TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}", "status": "error"}))]
-        return [types.TextContent(type="text", text=json.dumps(result, default=str))]
+        return [types.TextContent(type="text", text=json.dumps(sanitize_for_json(result), default=str))]
     except Exception as e:
         log.exception(f"Tool {name} failed")
         return [types.TextContent(type="text", text=json.dumps({"error": str(e), "status": "error"}))]
