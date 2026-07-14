@@ -42,7 +42,7 @@ _last_alert_sent = {}  # title -> timestamp
 # Google Gemini (lazy — only imported when chat is used)
 try:
     from google import genai
-    from google.genai import types
+    from google.genai import types as genai_types
     HAS_GEMINI = True
 except ImportError:
     HAS_GEMINI = False
@@ -306,36 +306,36 @@ You have access to a data summary of the dashboard's current view. This summary 
 
 def get_query_data_tool():
     """Returns the tool definition for Gemini."""
-    return types.Tool(
+    return genai_types.Tool(
         function_declarations=[
-            types.FunctionDeclaration(
+            genai_types.FunctionDeclaration(
                 name="query_data",
                 description="Query the current dashboard's GAM data with whitelisted aggregations. Use this for comparisons, filtering, sorting, or detailed breakdowns not already in the data summary.",
-                parameters=types.Schema(
+                parameters=genai_types.Schema(
                     type="OBJECT",
                     properties={
-                        "operation": types.Schema(
+                        "operation": genai_types.Schema(
                             type="STRING",
                             description="The aggregation operation to perform (sum, mean, max, min, top_n, bottom_n, compare, count)."
                         ),
-                        "dimension": types.Schema(
+                        "dimension": genai_types.Schema(
                             type="STRING",
                             description="The dimension to group by (app = ad unit, date = calendar day)."
                         ),
-                        "metric": types.Schema(
+                        "metric": genai_types.Schema(
                             type="STRING",
                             description="The metric to aggregate (revenue, impressions, clicks, ad_requests, ecpm, ctr, fill_rate)."
                         ),
-                        "filters": types.Schema(
+                        "filters": genai_types.Schema(
                             type="OBJECT",
                             description="Optional filters: app_name (substring match), date (exact YYYY-MM-DD), min_revenue (number).",
                             properties={
-                                "app_name": types.Schema(type="STRING"),
-                                "date": types.Schema(type="STRING"),
-                                "min_revenue": types.Schema(type="NUMBER")
+                                "app_name": genai_types.Schema(type="STRING"),
+                                "date": genai_types.Schema(type="STRING"),
+                                "min_revenue": genai_types.Schema(type="NUMBER")
                             }
                         ),
-                        "limit": types.Schema(
+                        "limit": genai_types.Schema(
                             type="INTEGER",
                             description="Max number of results for top_n/bottom_n (default 10)."
                         )
@@ -441,15 +441,14 @@ async def handle_chat(request):
             data_summary=json.dumps(compact_summary, indent=2, default=str)
         )
 
-        gemini_history = []
+        contents = []
         for h in history[-10:]:
             role = "model" if h.get("role") == "assistant" else "user"
             content = h.get("content", "").strip()
-            if not content:
-                continue
-            gemini_history.append(
-                types.Content(role=role, parts=[types.Part.from_text(text=content)])
-            )
+            if content:
+                contents.append(
+                    genai_types.Content(role=role, parts=[genai_types.Part.from_text(text=content)])
+                )
 
         log.info(f"[Chat] session={cache_key} message={message[:80]}...")
 
@@ -466,8 +465,8 @@ async def handle_chat(request):
                     
                     chat = client.chats.create(
                         model=model_name,
-                        history=gemini_history,
-                        config=types.GenerateContentConfig(
+                        history=contents,
+                        config=genai_types.GenerateContentConfig(
                             system_instruction=system_prompt,
                             tools=[get_query_data_tool()]
                         )
@@ -508,7 +507,7 @@ async def handle_chat(request):
                             
                             safe_result = json.loads(json.dumps(result, default=str))
                             tool_response_parts.append(
-                                types.Part.from_function_response(
+                                genai_types.Part.from_function_response(
                                     name=tool_name,
                                     response=safe_result
                                 )
