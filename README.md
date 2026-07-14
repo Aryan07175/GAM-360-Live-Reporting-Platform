@@ -1,6 +1,6 @@
 # GAM 360 Live Reporting Platform
 
-A Next.js executive BI reporting dashboard that fetches ad revenue analytics **in real-time** from Google Ad Manager 360. 
+A Next.js executive BI reporting dashboard that fetches ad revenue analytics **in real-time** from Google Ad Manager 360.
 
 **Zero database. Zero cache. Zero ETL. 100% live.**
 
@@ -12,15 +12,15 @@ A Next.js executive BI reporting dashboard that fetches ad revenue analytics **i
 graph TD
     User([User]) -->|Views Dashboard & Asks Questions| NextJS[Next.js Dashboard UI]
     NextJS -->|REST API & SSE Streams| Python[Python Backend Server]
-    
+
     Python -->|Fetches Live Analytics| GAM[Google Ad Manager API]
     GAM -->|Returns Raw Data| Python
-    
-    Python -->|Data Summary & Tools| Bedrock[AWS Bedrock - Claude]
+
+    Python -->|Data Summary & Tools| Bedrock[AWS Bedrock - Claude Haiku 4.5]
     Bedrock -.->|Streams Chat Response| Python
-    
+
     Python -->|Formats & Caches Data| NextJS
-    
+
     Python -->|Background Tasks| Cron[Scheduled Daily Reports]
     Cron -->|SMTP| Gmail[Gmail Notifications]
     Python -->|Live Alert Triggers| Gmail
@@ -29,8 +29,8 @@ graph TD
 This project is a complete end-to-end analytics pipeline that pulls raw data from Google Ad Manager 360 and surfaces it in a real-time dashboard.
 
 ### 1. Unified Data Extraction (GAM API)
-* **The Backend:** A Python server (`mcp_server/server.py`) connects to the **Google Ad Manager 360 SOAP API**. 
-* **Unified Metrics:** The API client explicitly pulls metrics across all three Google revenue channels: **Ad Server** (Direct Sold), **AdSense** (Backfill), and **Ad Exchange** (Programmatic Open Auction/Bidding). It merges these into a single unified truth for true network-wide reporting.
+* **The Backend:** A Python server (`mcp_server/server.py`) connects to the **Google Ad Manager 360 SOAP API**.
+* **Unified Metrics:** The API client pulls metrics across all three Google revenue channels: **Ad Server** (Direct Sold), **AdSense** (Backfill), and **Ad Exchange** (Programmatic Open Auction/Bidding). It merges these into a single unified truth for true network-wide reporting.
 * **Stateless Operation:** Data is fetched on-demand directly from Google's servers. There is no historical database or ETL pipeline.
 
 ### 2. Dashboard State Management
@@ -43,7 +43,7 @@ This project is a complete end-to-end analytics pipeline that pulls raw data fro
 * **Bounded Parallelism:** When fetching multi-day trends, requests are batched and executed in parallel.
 
 ### 4. Background Tasks & Notifications
-* **Email Notifications:** The server includes a dedicated background task system. 
+* **Email Notifications:** The server includes a dedicated background task system.
 * **Live Alerts:** When anomaly detection thresholds are breached, the system instantly triggers alert emails.
 * **Daily Reports:** An asynchronous background loop runs a cron-style schedule to automatically compile and email the full Executive Report once per day.
 
@@ -51,14 +51,12 @@ This project is a complete end-to-end analytics pipeline that pulls raw data fro
 
 ## 🌐 Dashboard Features
 
-The dashboard provides a premium, real-time BI experience:
-
-* **Ask GAM 360 (AI Chat):** A built-in AI assistant powered by **AWS Bedrock (Anthropic Claude)**. Open the chat drawer from the sidebar or the floating action button to ask questions about your live data in natural language (e.g., "Which app has the highest revenue?"). It uses an in-memory cache and strict tool calling to guarantee zero hallucinated numbers, and streams the response token-by-token.
+* **Ask GAM 360 (AI Chat):** A built-in AI assistant powered by **AWS Bedrock (Anthropic Claude Haiku 4.5)**. Ask questions about your live data in natural language — e.g. *"Which app has the highest revenue?"* or *"What is total revenue today?"*. Uses in-memory cache and strict tool calling to guarantee zero hallucinated numbers, and streams responses token-by-token.
 * **Real-Time BI Dashboard:** Generates comprehensive business intelligence reports dynamically using live data.
 * **Unified Revenue:** Combines Ad Server, AdSense, and Ad Exchange into a single consolidated view.
-* **18+ Live Analytics Tools:** Exposes comprehensive tools covering: executive summaries, revenue by app, trends, top/bottom apps, impressions, clicks, CTR, eCPM, fill rate, and ad requests.
+* **18+ Live Analytics Tools:** Executive summaries, revenue by app, trends, top/bottom apps, impressions, clicks, CTR, eCPM, fill rate, and ad requests.
 * **AI Anomaly Detection:** Compares current performance against historical averages to detect sudden drops or spikes in real-time.
-* **Email Notifications (New):** Integrated settings panel to manage recipients. Automatically sends instant alerts when anomalies are detected, and dispatches a full Executive Report via Gmail every day.
+* **Email Notifications:** Integrated settings panel to manage recipients. Automatically sends instant alerts when anomalies are detected and dispatches a full Executive Report via Gmail every day.
 * **Interactive UI:** Custom date ranges (down to the hour), dark mode, and progressive loading skeletons.
 
 ---
@@ -71,14 +69,14 @@ The dashboard provides a premium, real-time BI experience:
 * **Tailwind CSS**
 * **shadcn/ui**
 * **Recharts**
-* **Framer Motion** (for Chat UI animations)
+* **Framer Motion** (Chat UI animations)
 
 ### Backend — MCP Server (`/mcp_server`)
 * **Python 3.12**
 * **Google Ads API (SOAP)**
-* **AWS Bedrock (Anthropic Claude)** via `boto3`
+* **AWS Bedrock — Anthropic Claude Haiku 4.5** (AI Chat, via `boto3` / direct HTTP)
 * **Starlette & Uvicorn** (REST & SSE streaming)
-* **Pandas** for data merging and processing
+* **Pandas** (data merging and processing)
 
 ---
 
@@ -93,36 +91,119 @@ pip install -r requirements.txt
 ```bash
 cp config/googleads.yaml.example config/googleads.yaml
 cp config/.env.example config/.env
-# 1. Fill in: network_code, path_to_private_key_file, application_name in googleads.yaml
-# 2. Fill in: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in config/.env
-# 3. Fill in: GMAIL_SENDER_EMAIL and GMAIL_APP_PASSWORD in .env for email notifications
 ```
 
-### 3. Configure AWS Bedrock
-Before running, you must:
-1. Create an **IAM User** in the AWS Console with the `AmazonBedrockFullAccess` policy.
-2. Generate an **Access Key** for that user (IAM → Users → Security credentials → Create access key).
-3. Go to **AWS Bedrock → Model access** and enable **Anthropic Claude 3.5 Sonnet** in your chosen region (`us-east-1` recommended).
-4. Paste the keys into your `config/.env`:
-```env
-AWS_ACCESS_KEY_ID=AKIAxxxxxxxxxxxxxxxxxx
-AWS_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-AWS_REGION=us-east-1
-BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+Edit `config/googleads.yaml`:
+```yaml
+network_code: YOUR_NETWORK_CODE
+application_name: GAM360-Revenue-Pipeline
+path_to_private_key_file: config/service_account.json
 ```
+
+Edit `config/.env`:
+```env
+GAM_NETWORK_CODE=your_network_code
+
+# AWS Bedrock (AI Chat)
+AWS_BEARER_TOKEN_BEDROCK=your_bedrock_api_key_here
+AWS_REGION=us-east-1
+BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
+
+# Email Notifications (optional)
+GMAIL_SENDER_EMAIL=your_email@gmail.com
+GMAIL_APP_PASSWORD=your_app_password
+```
+
+### 3. Set up AWS Bedrock
+1. Log in to the **AWS Console** and go to **Bedrock**.
+2. In the left menu click **Model access** → **Manage model access**.
+3. Enable **Anthropic Claude Haiku 4.5** (or whichever model you choose).
+4. Generate a **Bedrock API Key** from the Bedrock console.
+5. Paste it as `AWS_BEARER_TOKEN_BEDROCK` in your `.env`.
 
 ### 4. Start the backend server
 ```bash
-cd mcp_server
-python -m uvicorn server:starlette_app --reload
+python -m uvicorn mcp_server.server:starlette_app --reload
 # Server runs on http://localhost:8000
 ```
 
 ### 5. Run the dashboard locally
 ```bash
-# Open a new terminal
 cd dashboard
 npm install
 npm run dev
 # Dashboard opens at http://localhost:3000
 ```
+
+---
+
+## ☁️ Deployment (Render + Vercel)
+
+### Backend → Render
+The `render.yaml` blueprint is included. Set the following **Environment Variables** in your Render service:
+
+| Variable | Description |
+|----------|-------------|
+| `GAM_CREDENTIALS_PATH` | Path to your GAM credentials file |
+| `GAM_NETWORK_CODE` | Your Google Ad Manager network code |
+| `AWS_BEARER_TOKEN_BEDROCK` | Your AWS Bedrock API key |
+| `AWS_REGION` | AWS region (e.g. `us-east-1`) |
+| `BEDROCK_MODEL_ID` | e.g. `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `GMAIL_SENDER_EMAIL` | Gmail address for email alerts (optional) |
+| `GMAIL_APP_PASSWORD` | Gmail App Password for SMTP (optional) |
+
+### Frontend → Vercel
+Set the following in your Vercel project settings:
+
+| Variable | Value |
+|----------|-------|
+| `NEXT_PUBLIC_MCP_SERVER_URL` | Your Render backend URL (e.g. `https://gam360-backend.onrender.com`) |
+
+---
+
+## 📁 Project Structure
+
+```
+GAM 360 Live Reporting Platform/
+├── mcp_server/
+│   ├── server.py              # Main Python backend (Starlette + all API routes)
+│   ├── gam_client.py          # Google Ad Manager SOAP API client
+│   ├── email_service.py       # Email notifications & daily reports
+│   ├── render_start.py        # Render.com startup script
+│   └── services/
+│       └── bedrock_service.py # AWS Bedrock AI service (reusable, modular)
+├── dashboard/
+│   ├── src/app/               # Next.js App Router pages
+│   └── ...
+├── config/
+│   ├── .env                   # Local environment variables (gitignored)
+│   ├── .env.example           # Template for environment variables
+│   └── googleads.yaml         # GAM API credentials (gitignored)
+├── render.yaml                # Render deployment blueprint
+├── requirements.txt           # Python dependencies
+└── README.md
+```
+
+---
+
+## 🤖 AI Chat Architecture
+
+The **Ask GAM 360** chat feature uses a two-turn tool-use cycle:
+
+```
+User Question
+     ↓
+Build system prompt with live data summary
+     ↓
+POST → AWS Bedrock /converse (Claude Haiku 4.5)
+     ↓
+If AI calls query_data tool:
+  → Execute Pandas query on live GAM DataFrame
+  → Send tool result back to Bedrock (second turn)
+     ↓
+Stream final text response word-by-word via SSE
+     ↓
+Frontend displays typing animation
+```
+
+This guarantees **zero hallucinated numbers** — every metric the AI quotes is queried directly from your live GAM data.
