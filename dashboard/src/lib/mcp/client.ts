@@ -1,12 +1,12 @@
 /**
  * MCP Client — Live Data Gateway
  *
- * Calls the local Python MCP server for all GAM data.
+ * Calls the Python MCP server (Render) for all GAM data.
  * Supports force_refresh, date ranges, abort controllers, and retry.
  * Never caches. Never stores. Always live.
  */
 
-const MCP_BASE_URL = process.env.NEXT_PUBLIC_MCP_URL || "http://127.0.0.1:8000";
+const MCP_BASE_URL = process.env.NEXT_PUBLIC_MCP_SERVER_URL || process.env.MCP_SERVER_URL || "http://127.0.0.1:8000";
 
 export interface McpToolArgs {
   startDate?: string;
@@ -34,7 +34,7 @@ export async function callMcpTool(
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
-    // For local development, we call the Python Starlette API directly
+    // Call the Python Starlette API on the MCP server (Render in production)
     const endpoint = `${MCP_BASE_URL}/api/tool`;
 
     const response = await fetch(endpoint, {
