@@ -32,7 +32,12 @@ import os
 # Allow imports from the project root (fixes IDE warnings and CLI execution)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+import time
 from mcp_server.gam_client import GAMClient
+from mcp_server.recipients_store import get_recipients, add_recipient, remove_recipient, get_preferences, update_preferences
+from mcp_server.email_service import send_alert_email, send_daily_report_email
+
+_last_alert_sent = {}  # title -> timestamp
 
 # Google Gemini (lazy — only imported when chat is used)
 try:
@@ -631,6 +636,34 @@ def _resolve_dates(args: dict) -> tuple[date, date, int, int]:
 
 # ─── Analytics Engine ─────────────────────────────────────────────────────────
 
+def compute_alerts(df: pd.DataFrame) -> list[dict]:
+    if df.empty:
+        return []
+        
+    summary = df.groupby(["ad_unit_name"]).agg({
+        "ad_server_impressions": "sum",
+        "ad_server_cpm_and_cpc_revenue": "sum",
+        "ad_server_ad_requests": "sum"
+    }).reset_index()
+    
+    alerts = []
+    for _, row in summary.iterrows():
+        app_name = row["ad_unit_name"]
+        imp = int(row["ad_server_impressions"])
+        rev = float(row["ad_server_cpm_and_cpc_revenue"])
+        req = int(row["ad_server_ad_requests"])
+        fill_rate = (imp / req * 100) if req > 0 else 0
+        
+        if 0 < imp < 1000:
+            alerts.append({"title": f"Low impression volume in {app_name}", "severity": "warning", "metric": "Impressions", "value": imp})
+        if 0 < rev < 0.5:
+            alerts.append({"title": f"Revenue below $0.50 in {app_name}", "severity": "critical", "metric": "Revenue", "value": f"${rev:.4f}"})
+        if 0 < fill_rate < 30:
+            alerts.append({"title": f"Very low fill rate ({fill_rate:.1f}%) in {app_name}", "severity": "warning", "metric": "Fill Rate", "value": f"{fill_rate:.1f}%"})
+            
+    return alerts
+
+
 def compute_executive_summary(df: pd.DataFrame, start: date, end: date) -> dict:
     """Compute comprehensive executive summary from live data."""
     if df.empty:
@@ -1026,6 +1059,32 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 del _session_cache[oldest_key]
             log.info(f"[Chat Cache] Stored data for {cache_key} ({len(df)} rows, {len(summary.get('all_apps', []))} apps)")
 
+        # ── Email Notifications (Alerts) ──
+        if not df.empty:
+            def _trigger_alerts():
+                alerts = compute_alerts(df)
+                if not alerts: return
+                prefs = get_preferences()
+                recipients = get_recipients()
+                to_emails = [r["email"] for r in recipients]
+                if not to_emails: return
+                
+                now = time.time()
+                for alert in alerts:
+                    sev = alert["severity"]
+                    if sev == "critical" and not prefs.get("critical_alerts"): continue
+                    if sev == "warning" and not prefs.get("warning_alerts"): continue
+                    
+                    title = alert["title"]
+                    # 30s dedup
+                    if title in _last_alert_sent and now - _last_alert_sent[title] < 30:
+                        continue
+                        
+                    _last_alert_sent[title] = now
+                    asyncio.create_task(asyncio.to_thread(send_alert_email, alert, to_emails))
+                    
+            _trigger_alerts()
+
         # ── Debug logging: raw totals before any formatting ──
         if not df.empty:
             raw_rev = float(df["ad_server_cpm_and_cpc_revenue"].sum())
@@ -1309,6 +1368,90 @@ async def handle_api_tool(request):
             headers={"Access-Control-Allow-Origin": "*"},
         )
 
+async def daily_report_loop():
+    """Runs once daily to generate and email the executive report."""
+    log.info("Started daily report background job.")
+    while True:
+        try:
+            await asyncio.sleep(86400)
+            
+            prefs = get_preferences()
+            if not prefs.get("daily_report"):
+                log.info("Daily report skipped (disabled in preferences).")
+                continue
+                
+            recipients = get_recipients()
+            to_emails = [r["email"] for r in recipients]
+            if not to_emails:
+                continue
+                
+            log.info("Generating daily report for email notifications...")
+            today = date.today()
+            yesterday = today - timedelta(days=1)
+            
+            df = await gam.get_live_data_multi_day(yesterday, yesterday, force_refresh=True)
+            if not df.empty:
+                report_data = {
+                    "executive_summary": compute_executive_summary(df, yesterday, yesterday),
+                    "top_apps": compute_revenue_by_app(df)[:10],
+                }
+                
+                day_before = yesterday - timedelta(days=1)
+                df_prev = await gam.get_live_data_multi_day(day_before, day_before, force_refresh=True)
+                report_data["anomalies"] = compute_anomalies(df, df_prev)
+                
+                # Assume basic recommendation logic handles anomalies
+                report_data["recommendations"] = []
+                
+                asyncio.create_task(asyncio.to_thread(send_daily_report_email, report_data, to_emails))
+                
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error(f"Error in daily report loop: {e}")
+            await asyncio.sleep(60)
+
+async def handle_api_recipients(request):
+    if request.method == "OPTIONS":
+        return JSONResponse({}, headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        })
+    if request.method == "GET":
+        data = {
+            "recipients": get_recipients(),
+            "preferences": get_preferences()
+        }
+        return JSONResponse(data, headers={"Access-Control-Allow-Origin": "*"})
+    if request.method == "POST":
+        body = await request.json()
+        try:
+            if "preferences" in body:
+                prefs = update_preferences(body["preferences"])
+                return JSONResponse({"preferences": prefs}, headers={"Access-Control-Allow-Origin": "*"})
+            else:
+                email = body.get("email")
+                label = body.get("label", "")
+                if not email:
+                    raise ValueError("Email is required")
+                new_rec = add_recipient(email, label)
+                return JSONResponse(new_rec, headers={"Access-Control-Allow-Origin": "*"})
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=400, headers={"Access-Control-Allow-Origin": "*"})
+
+async def handle_api_recipients_delete(request):
+    if request.method == "OPTIONS":
+        return JSONResponse({}, headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        })
+    if request.method == "DELETE":
+        recipient_id = request.path_params.get("id")
+        success = remove_recipient(recipient_id)
+        return JSONResponse({"success": success}, headers={"Access-Control-Allow-Origin": "*"})
+
 starlette_app = Starlette(
     debug=True,
     routes=[
@@ -1316,7 +1459,10 @@ starlette_app = Starlette(
         Route("/messages/", endpoint=handle_messages, methods=["POST"]),
         Route("/api/tool", endpoint=handle_api_tool, methods=["POST", "OPTIONS"]),
         Route("/api/chat", endpoint=handle_chat, methods=["POST", "OPTIONS"]),
+        Route("/api/recipients", endpoint=handle_api_recipients, methods=["GET", "POST", "OPTIONS"]),
+        Route("/api/recipients/{id}", endpoint=handle_api_recipients_delete, methods=["DELETE", "OPTIONS"]),
     ],
+    on_startup=[lambda: asyncio.create_task(daily_report_loop())],
     middleware=[
         Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]),
     ],
