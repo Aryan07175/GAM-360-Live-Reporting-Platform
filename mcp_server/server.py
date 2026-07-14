@@ -301,59 +301,318 @@ def execute_query_data(df: pd.DataFrame, operation: str, dimension: str = None,
 
 # ─── Chat System Prompt ──────────────────────────────────────────────────────
 
-CHAT_SYSTEM_PROMPT = """You are **Ask GAM 360**, an AI assistant embedded in the GAM 360 Live Analytics dashboard. You answer questions about Google Ad Manager data that is currently displayed on the user's dashboard.
+def build_chat_system_prompt(compact_summary: dict) -> str:
+    """
+    Build the system prompt with today's date injected so the model can
+    compute exact calendar dates for any relative phrase the user types.
+    """
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    last7_start = today - timedelta(days=6)
+    last30_start = today - timedelta(days=29)
+    last90_start = today - timedelta(days=89)
+    mtd_start = today.replace(day=1)
+    ytd_start = today.replace(month=1, day=1)
+    last_month_end = today.replace(day=1) - timedelta(days=1)
+    last_month_start = last_month_end.replace(day=1)
+    last_year_start = today.replace(year=today.year - 1, month=1, day=1)
+    last_year_end = today.replace(year=today.year - 1, month=12, day=31)
 
-## Your Data Source
-You have access to a data summary of the dashboard's current view. This summary contains:
-- **Top-card metrics**: Total Revenue, Impressions, Clicks, Avg eCPM, CTR, Fill Rate, Ad Requests, Active Apps, Daily Active Users (DAU)
-- **Revenue Trend**: Day-by-day revenue, impressions, eCPM for the selected date range
-- **Top Performing Apps**: All apps ranked by revenue with their impressions, eCPM, fill rate, CTR
+    import json as _json
+    summary_str = _json.dumps(compact_summary, indent=2, default=str)
 
-## Rules — CRITICAL
-1. **ONLY state numbers that exist in the data summary or a query_data tool result.** Never invent, estimate, or hallucinate numbers.
-2. If the user asks about data you don't have, say: "I don't have that in the current dashboard view."
-3. Keep answers **short and dashboard-native**: 1-3 sentences, bold key numbers, optionally a brief explanation.
-4. When a metric is **0 or 0.00%** (e.g., Fill Rate 0.00%, Daily Active Users 0, Ad Requests 0), explain it honestly — likely no data was returned by GAM for that metric/date, not necessarily that the actual value is zero.
-5. Format currency as `$X.XXXXXX` for small values or `$X.XX` for larger values. Format large numbers with commas.
-6. When comparing apps, use the query_data tool to get precise figures rather than approximating from the summary.
-7. You can reference the data summary directly for simple lookups. Use the query_data tool for aggregations, filtering, sorting, or comparisons not already in the summary.
+    return f"""You are **Ask GAM 360**, an AI analyst with LIVE access to Google Ad Manager data.
+You can answer ANY question about revenue, impressions, clicks, eCPM, CTR, fill rate, or ad requests
+for ANY time period — not just what the dashboard currently shows.
+
+## Tools Available
+- **`query_gam_data`** (PRIMARY): Fetches LIVE data directly from the Google Ad Manager API
+  for any date range, dimension, and metric. Use this for EVERY question involving a time period
+  or a breakdown by app / website / ad unit.
+- **`query_data`** (SECONDARY): Aggregates/filters the current dashboard session data.
+  Use only for follow-up comparisons within the same already-loaded session.
+
+## CRITICAL RULES
+1. **For ANY question involving a date or time period, ALWAYS call `query_gam_data` first.**
+   Do NOT answer from memory or from the dashboard context below.
+2. **NEVER state a number that was not returned by a tool in this conversation.**
+3. When the user says a relative time phrase, compute the real YYYY-MM-DD dates from the
+   reference table below, then pass them to `query_gam_data`.
+4. Keep answers concise: bold the key numbers, 1–4 sentences max.
+5. Format revenue as `$X.XX` (or `$X.XXXXXX` for very small values). Use commas for large numbers.
+6. If GAM returns zero / empty data, say so honestly — don't fabricate numbers.
+
+## Date Reference (server date: {today.isoformat()})
+| Phrase | start_date | end_date |
+|---|---|---|
+| today | {today} | {today} |
+| yesterday | {yesterday} | {yesterday} |
+| last 7 days | {last7_start} | {today} |
+| last 30 days | {last30_start} | {today} |
+| last 90 days | {last90_start} | {today} |
+| this month / MTD | {mtd_start} | {today} |
+| last month | {last_month_start} | {last_month_end} |
+| this year / YTD | {ytd_start} | {today} |
+| last year | {last_year_start} | {last_year_end} |
 
 ## Metric Definitions
-- **Total Revenue**: Sum of all ad revenue (CPM + CPC) across all ad units, in USD
-- **Impressions**: Total number of ad impressions served
-- **Clicks**: Total ad clicks
-- **Avg eCPM**: Effective cost per mille = (Revenue / Impressions) × 1000
-- **CTR**: Click-through rate = (Clicks / Impressions) × 100
-- **Fill Rate**: Percentage of ad requests that resulted in an impression = (Impressions / Ad Requests) × 100
-- **Ad Requests**: Total number of ad requests made to GAM
-- **Active Apps**: Number of distinct ad units with data in the selected period
-- **Daily Active Users (DAU)**: Estimated as Ad Requests / 5 (proxy metric)
+- **revenue**: Total ad revenue (CPM + CPC) in USD
+- **impressions**: Total ad impressions served
+- **clicks**: Total ad clicks
+- **ecpm**: Effective CPM = (Revenue / Impressions) × 1000
+- **ctr**: Click-through rate = (Clicks / Impressions) × 100 (%)
+- **fill_rate**: Fill rate = (Impressions / Ad Requests) × 100 (%)
+- **ad_requests**: Total ad requests sent to GAM
 
-## Current Dashboard Data Summary
-{data_summary}
+## Dimension Options for query_gam_data
+- `none` — network-wide totals only
+- `app` — breakdown by mobile app / ad unit
+- `website` — breakdown by website domain
+- `ad_unit` — breakdown by ad unit name (same as app)
+
+## Few-Shot Examples
+**Example 1 — revenue last year:**
+User: "What was total revenue last year?"
+→ Call: query_gam_data(start_date="{last_year_start}", end_date="{last_year_end}", metric="revenue", dimension="none", channel="all")
+→ Answer using ONLY the number returned by the tool.
+
+**Example 2 — revenue by app for last 30 days:**
+User: "Show me revenue by app for the last 30 days"
+→ Call: query_gam_data(start_date="{last30_start}", end_date="{today}", metric="revenue", dimension="app", channel="all")
+→ Present the breakdown table from the tool result.
+
+**Example 3 — custom range:**
+User: "What was eCPM from March 1 to March 15?"
+→ Call: query_gam_data(start_date="{today.year}-03-01", end_date="{today.year}-03-15", metric="ecpm", dimension="none", channel="all")
+
+## Current Dashboard Context (reference only — do NOT use these numbers to answer time-period questions)
+{summary_str}
 """
+
+
+# ─── Live GAM Query for Chat ─────────────────────────────────────────────────
+
+# Date-phrase presets the model may still pass (server resolves them as fallback)
+def _resolve_chat_dates(start_raw: str, end_raw: str) -> tuple[date, date]:
+    """
+    Resolve start/end date strings for the chat query_gam_data tool.
+    Accepts YYYY-MM-DD strings or common English presets.
+    The model should already have computed real dates from the system prompt,
+    but this provides a safety net for any phrase that slips through.
+    """
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+
+    presets = {
+        "today":       (today, today),
+        "yesterday":   (yesterday, yesterday),
+        "last7days":   (today - timedelta(days=6), today),
+        "last30days":  (today - timedelta(days=29), today),
+        "last90days":  (today - timedelta(days=89), today),
+        "thismonth":   (today.replace(day=1), today),
+        "mtd":         (today.replace(day=1), today),
+        "lastmonth":   (
+            (today.replace(day=1) - timedelta(days=1)).replace(day=1),
+            today.replace(day=1) - timedelta(days=1),
+        ),
+        "thisyear":    (today.replace(month=1, day=1), today),
+        "ytd":         (today.replace(month=1, day=1), today),
+        "lastyear":    (
+            today.replace(year=today.year - 1, month=1, day=1),
+            today.replace(year=today.year - 1, month=12, day=31),
+        ),
+    }
+
+    def _parse(raw: str) -> date:
+        key = raw.lower().replace(" ", "").replace("-", "").replace("_", "")
+        if key in presets:
+            return presets[key][0]  # fallback: return start
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+
+    start_key = start_raw.lower().replace(" ", "").replace("-", "").replace("_", "")
+    if start_key in presets:
+        return presets[start_key]
+
+    return _parse(start_raw), _parse(end_raw)
+
+
+async def execute_query_gam_data(input_dict: dict) -> dict:
+    """
+    Execute a live query_gam_data tool call from the Bedrock chat.
+
+    Goes DIRECTLY to the live GAM SOAP API for the requested date range and
+    dimension — completely independent of any dashboard-scoped cache.
+
+    The cache key includes start+end+dimension+metric+channel so that
+    different questions never collide, and the 30s dedup in GAMClient
+    prevents hammering the API with identical repeated calls.
+    """
+    start_raw = input_dict.get("start_date", "")
+    end_raw   = input_dict.get("end_date", start_raw)
+    dimension = input_dict.get("dimension", "none")   # none|app|website|ad_unit
+    metric    = input_dict.get("metric", "revenue")   # revenue|impressions|clicks|ctr|ecpm|fill_rate|ad_requests
+    channel   = input_dict.get("channel", "all")      # all|ad_server|adsense|ad_exchange
+
+    if not start_raw:
+        return {"error": "start_date is required"}
+
+    try:
+        start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
+    except Exception as e:
+        return {"error": f"Invalid date format: {e}. Use YYYY-MM-DD."}
+
+    # Map channel param to demand_channel expected by gam_client
+    demand_map = {
+        "all":          "all",
+        "ad_server":    "all",       # ad_server only → still use "all" report, filter below
+        "adsense":      "programmatic",
+        "ad_exchange":  "programmatic",
+    }
+    demand_channel = demand_map.get(channel, "all")
+
+    log.info(
+        "[Chat:query_gam_data] Fetching LIVE — %s to %s | dim=%s metric=%s channel=%s",
+        start_date, end_date, dimension, metric, channel,
+    )
+
+    try:
+        df = await gam.get_live_data_multi_day(start_date, end_date, False, demand_channel)
+    except Exception as e:
+        log.error("[Chat:query_gam_data] GAM fetch failed: %s", e)
+        return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
+
+    if df.empty:
+        return {
+            "start_date": str(start_date),
+            "end_date":   str(end_date),
+            "dimension":  dimension,
+            "metric":     metric,
+            "channel":    channel,
+            "total":      0,
+            "rows":       [],
+            "note":       "No data returned by GAM for this date range / channel combination.",
+        }
+
+    # ── Column mappings ──────────────────────────────────────────────────────
+    METRIC_COL = {
+        "revenue":     "ad_server_cpm_and_cpc_revenue",
+        "impressions": "ad_server_impressions",
+        "clicks":      "ad_server_clicks",
+        "ad_requests": "ad_server_ad_requests",
+        "ctr":         None,   # derived
+        "ecpm":        None,   # derived
+        "fill_rate":   None,   # derived
+    }
+
+    # ── Compute totals ───────────────────────────────────────────────────────
+    total_rev  = float(df["ad_server_cpm_and_cpc_revenue"].sum())
+    total_imp  = int(df["ad_server_impressions"].sum())
+    total_clk  = int(df["ad_server_clicks"].sum())
+    total_req  = int(df["ad_server_ad_requests"].sum())
+    total_ecpm = round((total_rev / total_imp * 1000), 6) if total_imp > 0 else 0.0
+    total_ctr  = round((total_clk / total_imp * 100), 4)  if total_imp > 0 else 0.0
+    total_fill = round((total_imp / total_req * 100), 2)  if total_req > 0 else 0.0
+
+    # Select the scalar total for the requested metric
+    metric_total_map = {
+        "revenue":     round(total_rev, 6),
+        "impressions": total_imp,
+        "clicks":      total_clk,
+        "ad_requests": total_req,
+        "ecpm":        total_ecpm,
+        "ctr":         total_ctr,
+        "fill_rate":   total_fill,
+    }
+    scalar_total = metric_total_map.get(metric, round(total_rev, 6))
+
+    result = {
+        "start_date":         str(start_date),
+        "end_date":           str(end_date),
+        "dimension":          dimension,
+        "metric":             metric,
+        "channel":            channel,
+        "total_revenue_usd":  round(total_rev, 6),
+        "total_impressions":  total_imp,
+        "total_clicks":       total_clk,
+        "total_ad_requests":  total_req,
+        "avg_ecpm_usd":       total_ecpm,
+        "avg_ctr_pct":        total_ctr,
+        "fill_rate_pct":      total_fill,
+        "primary_metric":     metric,
+        "primary_total":      scalar_total,
+        "rows":               [],
+    }
+
+    # ── Dimension breakdown ──────────────────────────────────────────────────
+    if dimension in ("app", "ad_unit"):
+        grouped = df.groupby("ad_unit_name").agg({
+            "ad_server_cpm_and_cpc_revenue": "sum",
+            "ad_server_impressions":         "sum",
+            "ad_server_clicks":              "sum",
+            "ad_server_ad_requests":         "sum",
+        }).reset_index()
+        grouped = grouped.rename(columns={"ad_unit_name": "name"})
+        grouped["ecpm_usd"] = (grouped["ad_server_cpm_and_cpc_revenue"] / grouped["ad_server_impressions"] * 1000).where(grouped["ad_server_impressions"] > 0, 0).round(6)
+        grouped["ctr_pct"]  = (grouped["ad_server_clicks"] / grouped["ad_server_impressions"] * 100).where(grouped["ad_server_impressions"] > 0, 0).round(4)
+        grouped["fill_rate_pct"] = (grouped["ad_server_impressions"] / grouped["ad_server_ad_requests"] * 100).where(grouped["ad_server_ad_requests"] > 0, 0).round(2)
+        sort_col = METRIC_COL.get(metric) or "ad_server_cpm_and_cpc_revenue"
+        if sort_col in grouped.columns:
+            grouped = grouped.sort_values(sort_col, ascending=False)
+        result["rows"] = sanitize_for_json(grouped.head(50).to_dict(orient="records"))
+
+    elif dimension == "website":
+        df_copy = df.copy()
+        df_copy["name"] = df_copy["ad_unit_name"].apply(_extract_domain)
+        grouped = df_copy.groupby("name").agg({
+            "ad_server_cpm_and_cpc_revenue": "sum",
+            "ad_server_impressions":         "sum",
+            "ad_server_clicks":              "sum",
+            "ad_server_ad_requests":         "sum",
+        }).reset_index()
+        grouped["ecpm_usd"] = (grouped["ad_server_cpm_and_cpc_revenue"] / grouped["ad_server_impressions"] * 1000).where(grouped["ad_server_impressions"] > 0, 0).round(6)
+        grouped["ctr_pct"]  = (grouped["ad_server_clicks"] / grouped["ad_server_impressions"] * 100).where(grouped["ad_server_impressions"] > 0, 0).round(4)
+        grouped["fill_rate_pct"] = (grouped["ad_server_impressions"] / grouped["ad_server_ad_requests"] * 100).where(grouped["ad_server_ad_requests"] > 0, 0).round(2)
+        sort_col = METRIC_COL.get(metric) or "ad_server_cpm_and_cpc_revenue"
+        if sort_col in grouped.columns:
+            grouped = grouped.sort_values(sort_col, ascending=False)
+        result["rows"] = sanitize_for_json(grouped.head(50).to_dict(orient="records"))
+
+    # For dimension="none", rows stays empty — just totals are returned
+    log.info(
+        "[Chat:query_gam_data] Done — %s to %s | %s=%s | %d breakdown rows",
+        start_date, end_date, metric, scalar_total, len(result["rows"]),
+    )
+    return result
 
 
 # ─── Chat Endpoint ───────────────────────────────────────────────────────────
 
 def _make_tool_executor(cached_df):
     """
-    Return a tool executor closure bound to the current session's DataFrame.
+    Return an ASYNC tool executor closure.
 
-    The bedrock_service calls this with (tool_name, input_dict) and expects
-    a plain dict result that is safe to serialise as JSON.
+    Handles two tools:
+    - query_gam_data: goes live to the GAM API (async, any date range)
+    - query_data:     aggregates the in-session cached DataFrame (sync wrapped)
     """
-    def _execute(tool_name: str, input_dict: dict) -> dict:
+    async def _execute(tool_name: str, input_dict: dict) -> dict:
+        if tool_name == "query_gam_data":
+            return await execute_query_gam_data(input_dict)
+
         if tool_name == "query_data":
-            return execute_query_data(
+            # Run sync function in a thread to keep event loop free
+            return await asyncio.to_thread(
+                execute_query_data,
                 cached_df,
-                operation=input_dict.get("operation", "sum"),
-                dimension=input_dict.get("dimension"),
-                metric=input_dict.get("metric"),
-                filters=input_dict.get("filters"),
-                limit=int(input_dict.get("limit", 10)),
+                input_dict.get("operation", "sum"),
+                input_dict.get("dimension"),
+                input_dict.get("metric"),
+                input_dict.get("filters"),
+                int(input_dict.get("limit", 10)),
             )
+
         return {"error": f"Unknown tool: {tool_name}"}
+
     return _execute
 
 
@@ -362,6 +621,9 @@ async def handle_chat(request):
     POST /api/chat — SSE streaming chat endpoint.
     Accepts { session_id, message, history[], date_range: { startDate, endDate } }
     Streams AWS Bedrock (Claude) responses token-by-token as SSE events.
+
+    The chat now calls query_gam_data directly for any date / metric question,
+    so it is no longer limited to whatever date range the dashboard has loaded.
     """
     if request.method == "OPTIONS":
         return JSONResponse({}, headers={
@@ -390,53 +652,29 @@ async def handle_chat(request):
                 headers={"Access-Control-Allow-Origin": "*"},
             )
 
-        # ── Resolve data for this session ─────────────────────────────────────
-        start_str = date_range.get("startDate", "")
-        end_str = date_range.get("endDate", "")
-        demand = date_range.get("demandChannel", "all")
-        cache_key = _cache_key(start_str, end_str, demand)
+        # ── Pull dashboard session cache (used for query_data fallback only) ──
+        start_str  = date_range.get("startDate", "")
+        end_str    = date_range.get("endDate", "")
+        demand     = date_range.get("demandChannel", "all")
+        cache_key  = _cache_key(start_str, end_str, demand)
 
         cached = _session_cache.get(cache_key)
         if not cached and _session_cache:
-            # Fallback: most recent cached session
             cache_key = list(_session_cache.keys())[-1]
             cached = _session_cache[cache_key]
 
-        # On-demand live fetch if still no data
-        if not cached and start_str and end_str:
-            try:
-                log.info("[Chat] No cached data — fetching live data %s to %s", start_str, end_str)
-                chat_start = datetime.strptime(start_str, "%Y-%m-%d").date()
-                chat_end = datetime.strptime(end_str, "%Y-%m-%d").date()
-                live_df = await gam.get_live_data_multi_day(chat_start, chat_end, False, demand)
-                if not live_df.empty:
-                    summary = build_data_summary(live_df, chat_start, chat_end)
-                    cache_key = _cache_key(start_str, end_str, demand)
-                    _session_cache[cache_key] = {
-                        "df": live_df.copy(),
-                        "summary": summary,
-                        "stored_at": datetime.now(),
-                        "start": start_str,
-                        "end": end_str,
-                    }
-                    cached = _session_cache[cache_key]
-                    log.info("[Chat] On-demand fetch OK — %d rows, %d apps", len(live_df), len(summary.get("all_apps", [])))
-            except Exception as fetch_err:
-                log.warning("[Chat] On-demand fetch failed: %s", fetch_err)
+        # Provide a lightweight context summary (reference only — chat uses tool for real numbers)
+        data_summary = cached["summary"] if cached else {}
+        cached_df    = cached["df"]      if cached else pd.DataFrame()
 
-        data_summary = cached["summary"] if cached else {"metrics": {}, "revenue_trend": [], "top_apps": [], "all_apps": []}
-        cached_df = cached["df"] if cached else pd.DataFrame()
-
-        # ── Build compact system prompt ────────────────────────────────────────
         compact_summary = {
-            "period": data_summary.get("period", ""),
-            "metrics": data_summary.get("metrics", {}),
-            "top_apps": data_summary.get("top_apps", [])[:10],
-            "revenue_trend": data_summary.get("revenue_trend", [])[-7:],
+            "dashboard_period":  data_summary.get("period", f"{start_str} to {end_str}" if start_str else "unknown"),
+            "metrics":           data_summary.get("metrics", {}),
+            "top_apps":          data_summary.get("top_apps", [])[:5],
         }
-        system_prompt = CHAT_SYSTEM_PROMPT.format(
-            data_summary=json.dumps(compact_summary, indent=2, default=str)
-        )
+
+        # ── Build system prompt (includes today's date reference table) ────────
+        system_prompt = build_chat_system_prompt(compact_summary)
 
         # ── Build Bedrock message list (history + new message) ─────────────────
         bedrock_messages = build_bedrock_messages(history, message)

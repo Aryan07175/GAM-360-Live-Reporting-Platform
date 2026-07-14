@@ -11,6 +11,7 @@ character-by-character to the frontend as SSE tokens — preserving the
 live typing effect without requiring complex binary stream parsing.
 
 Tool use (two-turn cycle) is fully supported.
+tool_executor is now an ASYNC callable: async def executor(name, input) -> dict
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import os
 import time
 import urllib.request
 import urllib.error
-from typing import AsyncGenerator, Callable
+from typing import AsyncGenerator, Callable, Awaitable
 
 log = logging.getLogger("bedrock_service")
 
@@ -45,17 +46,105 @@ def _get_endpoint(model_id: str, region: str) -> str:
     return f"https://bedrock-runtime.{region}.amazonaws.com/model/{model_id}/converse"
 
 
-# ─── Tool Schema ─────────────────────────────────────────────────────────────
+# ─── Tool Schemas ─────────────────────────────────────────────────────────────
+
+def get_query_gam_data_tool_spec() -> dict:
+    """
+    Bedrock tool spec for query_gam_data.
+
+    This tool goes DIRECTLY to the live Google Ad Manager SOAP API for exactly
+    the requested date range and dimension — it is completely independent of
+    whatever the dashboard currently has loaded.
+
+    The model MUST call this tool for any question involving a time period
+    or breakdown by app / website / ad unit.
+    """
+    return {
+        "toolSpec": {
+            "name": "query_gam_data",
+            "description": (
+                "Fetch LIVE data directly from Google Ad Manager for any date range, "
+                "dimension, and metric. "
+                "ALWAYS call this tool when the user asks about revenue, impressions, clicks, "
+                "eCPM, CTR, fill rate, or ad requests for any time period "
+                "(today, yesterday, last 7/30/90 days, this month, last month, "
+                "this year, last year, MTD, YTD, or any custom date range). "
+                "NEVER answer time-based or breakdown questions from memory — always "
+                "call this tool first and use only the numbers it returns."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {
+                            "type": "string",
+                            "description": (
+                                "Start date in YYYY-MM-DD format. "
+                                "Compute the actual calendar date from phrases like "
+                                "'today', 'yesterday', 'last 30 days', 'last year', 'MTD', 'YTD'. "
+                                "Use the reference dates provided in the system prompt."
+                            ),
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "End date in YYYY-MM-DD format (inclusive).",
+                        },
+                        "dimension": {
+                            "type": "string",
+                            "enum": ["none", "app", "website", "ad_unit"],
+                            "description": (
+                                "How to break down the result. "
+                                "'none' = network totals only. "
+                                "'app' = breakdown by mobile app / ad unit name. "
+                                "'website' = breakdown by website domain. "
+                                "'ad_unit' = breakdown by ad unit name (same as app)."
+                            ),
+                        },
+                        "metric": {
+                            "type": "string",
+                            "enum": ["revenue", "impressions", "clicks", "ctr", "ecpm", "fill_rate", "ad_requests"],
+                            "description": (
+                                "Primary metric to report. "
+                                "revenue = total ad revenue in USD. "
+                                "impressions = total ad impressions served. "
+                                "clicks = total ad clicks. "
+                                "ctr = click-through rate (%). "
+                                "ecpm = effective CPM in USD. "
+                                "fill_rate = impression fill rate (%). "
+                                "ad_requests = total ad requests."
+                            ),
+                        },
+                        "channel": {
+                            "type": "string",
+                            "enum": ["all", "ad_server", "adsense", "ad_exchange"],
+                            "description": (
+                                "Demand channel filter. "
+                                "'all' = unified view (Ad Server + AdSense + Ad Exchange totals). "
+                                "'ad_server' = direct-sold only. "
+                                "'adsense' = AdSense backfill only. "
+                                "'ad_exchange' = programmatic/Ad Exchange only. "
+                                "Default: 'all'."
+                            ),
+                        },
+                    },
+                    "required": ["start_date", "end_date"],
+                }
+            },
+        }
+    }
+
 
 def get_query_data_tool_spec() -> dict:
-    """Bedrock-compatible tool specification for the query_data tool."""
+    """Bedrock-compatible tool specification for the query_data tool (in-session aggregations)."""
     return {
         "toolSpec": {
             "name": "query_data",
             "description": (
-                "Query the current dashboard's GAM data with whitelisted aggregations. "
-                "Use this for comparisons, filtering, sorting, or detailed breakdowns "
-                "not already in the data summary."
+                "Aggregate or filter the CURRENT dashboard session's already-loaded data. "
+                "Use this only for follow-up questions about the same date range that is "
+                "already displayed on the dashboard (comparisons, sorting, filtering). "
+                "For ANY question involving a specific time period that might differ from "
+                "the current dashboard view, use query_gam_data instead."
             ),
             "inputSchema": {
                 "json": {
@@ -188,7 +277,7 @@ def _extract_text_and_tools(response: dict) -> tuple[str, list[dict]]:
 async def stream_bedrock_response(
     messages: list[dict],
     system_prompt: str,
-    tool_executor: Callable[[str, dict], dict],
+    tool_executor: Callable[[str, dict], Awaitable[dict]],
     *,
     max_retries: int = 3,
     base_backoff: float = 1.0,
@@ -202,8 +291,10 @@ async def stream_bedrock_response(
 
     Handles the full two-turn tool-use cycle:
       1. Send messages → Bedrock returns text and/or tool calls.
-      2. Execute any tool calls via `tool_executor`.
+      2. Execute any tool calls via `tool_executor` (async).
       3. Send tool results → Bedrock returns the final text answer.
+
+    tool_executor MUST be an async callable: async def(name, input) -> dict
 
     Yields SSE strings: "data: {...}\\n\\n"
     """
@@ -216,12 +307,16 @@ async def stream_bedrock_response(
         return {
             "system": [{"text": system_prompt}],
             "messages": msgs,
-            "toolConfig": {"tools": [get_query_data_tool_spec()]},
+            "toolConfig": {
+                "tools": [
+                    get_query_gam_data_tool_spec(),   # PRIMARY: live GAM queries
+                    get_query_data_tool_spec(),        # SECONDARY: in-session aggregations
+                ]
+            },
         }
 
     async def _stream_text(text: str):
         """Yield the text split into small chunks to simulate streaming."""
-        # Split by words, preserving whitespace
         words = text.split(" ")
         for i, word in enumerate(words):
             chunk = word if i == 0 else " " + word
@@ -250,7 +345,7 @@ async def stream_bedrock_response(
                 else:
                     yield _sse({"type": "error", "content": "No response from AI model."})
 
-            # ── Tool calls: execute, then second turn ─────────────────────────
+            # ── Tool calls: execute (async), then second turn ─────────────────
             else:
                 assistant_content: list[dict] = []
                 user_tool_results: list[dict] = []
@@ -261,7 +356,10 @@ async def stream_bedrock_response(
                     input_dict = t["input"]
 
                     log.info("[Bedrock] Tool call — name=%s input=%s", tool_name, input_dict)
-                    result = await asyncio.to_thread(tool_executor, tool_name, input_dict)
+
+                    # tool_executor is async — await it directly
+                    result = await tool_executor(tool_name, input_dict)
+
                     safe_result = json.loads(json.dumps(result, default=str))
                     log.info("[Bedrock] Tool result — name=%s keys=%s", tool_name, list(safe_result.keys()))
 

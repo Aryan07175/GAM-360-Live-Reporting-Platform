@@ -292,7 +292,7 @@ export function ChatDrawer() {
                 </form>
                 <div className="text-center mt-2">
                   <span className="text-[10px] text-muted-foreground">
-                    Answers are generated based on the current dashboard view.
+                    Powered by live Google Ad Manager data — ask about any date range.
                   </span>
                 </div>
               </div>
