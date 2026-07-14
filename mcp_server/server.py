@@ -12,6 +12,7 @@ Plus: Ask GAM 360 — AI chat grounded in live dashboard data.
 """
 
 import json
+import math
 import logging
 import asyncio
 from datetime import date, timedelta, datetime
@@ -26,6 +27,22 @@ from mcp.server.sse import SseServerTransport
 from mcp import types
 import uvicorn
 import pandas as pd
+import numpy as np
+
+
+def sanitize_for_json(obj):
+    """
+    Recursively replace float('inf'), float('-inf'), and float('nan') with 0
+    so the response is always valid JSON.
+    """
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [sanitize_for_json(v) for v in obj]
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return 0
+    return obj
 
 import sys
 import os
@@ -597,10 +614,10 @@ def compute_revenue_by_app(df: pd.DataFrame) -> list[dict]:
         "ad_server_ad_requests": "sum",
     }).reset_index()
     
-    # Safely recalculate derived metrics properly
-    summary["ad_server_ctr"] = (summary["ad_server_clicks"] / summary["ad_server_impressions"] * 100).fillna(0)
-    summary["ad_server_fill_rate"] = (summary["ad_server_impressions"] / summary["ad_server_ad_requests"] * 100).fillna(0)
-    summary["ad_server_without_cpd_average_ecpm"] = (summary["ad_server_cpm_and_cpc_revenue"] / summary["ad_server_impressions"] * 1000).fillna(0)
+    # Safely recalculate derived metrics — replace inf AND nan (both produced by division by 0)
+    summary["ad_server_ctr"] = (summary["ad_server_clicks"] / summary["ad_server_impressions"] * 100).replace([np.inf, -np.inf], 0).fillna(0)
+    summary["ad_server_fill_rate"] = (summary["ad_server_impressions"] / summary["ad_server_ad_requests"] * 100).replace([np.inf, -np.inf], 0).fillna(0)
+    summary["ad_server_without_cpd_average_ecpm"] = (summary["ad_server_cpm_and_cpc_revenue"] / summary["ad_server_impressions"] * 1000).replace([np.inf, -np.inf], 0).fillna(0)
     
     summary = summary.sort_values(by="ad_server_cpm_and_cpc_revenue", ascending=False)
     return summary.to_dict(orient="records")
@@ -1322,7 +1339,7 @@ async def handle_api_tool(request):
         else:
             response_data = {"error": "No result", "status": "error"}
 
-        return JSONResponse(response_data, headers={
+        return JSONResponse(sanitize_for_json(response_data), headers={
             "Access-Control-Allow-Origin": "*",
         })
     except Exception as e:
