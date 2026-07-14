@@ -1451,6 +1451,14 @@ async def handle_api_recipients_delete(request):
         success = remove_recipient(recipient_id)
         return JSONResponse({"success": success}, headers={"Access-Control-Allow-Origin": "*"})
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app):
+    task = asyncio.create_task(daily_report_loop())
+    yield
+    task.cancel()
+
 starlette_app = Starlette(
     debug=True,
     routes=[
@@ -1461,7 +1469,7 @@ starlette_app = Starlette(
         Route("/api/recipients", endpoint=handle_api_recipients, methods=["GET", "POST", "OPTIONS"]),
         Route("/api/recipients/{id}", endpoint=handle_api_recipients_delete, methods=["DELETE", "OPTIONS"]),
     ],
-    on_startup=[lambda: asyncio.create_task(daily_report_loop())],
+    lifespan=lifespan,
     middleware=[
         Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]),
     ],
