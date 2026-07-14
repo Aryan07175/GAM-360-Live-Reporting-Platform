@@ -61,7 +61,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import time
 from mcp_server.gam_client import GAMClient
 from mcp_server.recipients_store import get_recipients, add_recipient, remove_recipient, get_preferences, update_preferences
-from mcp_server.email_service import send_alert_email, send_daily_report_email
+from mcp_server.email_service import send_alert_email, send_daily_report_email, send_test_email, log_credential_status
 
 _last_alert_sent = {}  # title -> timestamp
 
@@ -78,6 +78,9 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("mcp_server")
+
+# Log Gmail credential presence at startup (values never printed)
+log_credential_status()
 
 app = Server("gam360-live-reporting")
 sse = SseServerTransport("/messages/")
@@ -1054,26 +1057,43 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
         if not df.empty:
             def _trigger_alerts():
                 alerts = compute_alerts(df)
-                if not alerts: return
+                if not alerts:
+                    return
                 prefs = get_preferences()
                 recipients = get_recipients()
                 to_emails = [r["email"] for r in recipients]
-                if not to_emails: return
-                
+                if not to_emails:
+                    log.info("[EMAIL_SKIPPED] No recipients configured — skipping alert emails.")
+                    return
+
                 now = time.time()
                 for alert in alerts:
                     sev = alert["severity"]
-                    if sev == "critical" and not prefs.get("critical_alerts"): continue
-                    if sev == "warning" and not prefs.get("warning_alerts"): continue
-                    
                     title = alert["title"]
-                    # 30s dedup
+
+                    if sev == "critical" and not prefs.get("critical_alerts"):
+                        log.info("[EMAIL_SKIPPED] critical_alerts toggle is OFF — skipping: %s", title)
+                        continue
+                    if sev == "warning" and not prefs.get("warning_alerts"):
+                        log.info("[EMAIL_SKIPPED] warning_alerts toggle is OFF — skipping: %s", title)
+                        continue
+
+                    # 30-second dedup per alert title
                     if title in _last_alert_sent and now - _last_alert_sent[title] < 30:
                         continue
-                        
+
                     _last_alert_sent[title] = now
-                    asyncio.create_task(asyncio.to_thread(send_alert_email, alert, to_emails))
-                    
+
+                    async def _send_and_log(a=alert, emails=to_emails, p=prefs):
+                        try:
+                            result = await asyncio.to_thread(send_alert_email, a, emails, p)
+                            if result.get("status") != "success":
+                                log.error("[EMAIL_SEND_FAILED] Alert email failed: %s", result)
+                        except Exception as exc:
+                            log.error("[EMAIL_SEND_FAILED] Exception sending alert email: %s", exc, exc_info=True)
+
+                    asyncio.create_task(_send_and_log())
+
             _trigger_alerts()
 
         # ── Debug logging: raw totals before any formatting ──
@@ -1365,41 +1385,53 @@ async def daily_report_loop():
     while True:
         try:
             await asyncio.sleep(86400)
-            
+
             prefs = get_preferences()
             if not prefs.get("daily_report"):
-                log.info("Daily report skipped (disabled in preferences).")
+                log.info("[EMAIL_SKIPPED] Daily report emails toggle is OFF — skipping.")
                 continue
-                
+
             recipients = get_recipients()
             to_emails = [r["email"] for r in recipients]
             if not to_emails:
+                log.info("[EMAIL_SKIPPED] No recipients configured — skipping daily report.")
                 continue
-                
-            log.info("Generating daily report for email notifications...")
+
+            log.info("[EMAIL_DAILY] Generating daily report for %d recipient(s)...", len(to_emails))
             today = date.today()
             yesterday = today - timedelta(days=1)
-            
+
             df = await gam.get_live_data_multi_day(yesterday, yesterday, force_refresh=True)
-            if not df.empty:
-                report_data = {
-                    "executive_summary": compute_executive_summary(df, yesterday, yesterday),
-                    "top_apps": compute_revenue_by_app(df)[:10],
-                }
-                
-                day_before = yesterday - timedelta(days=1)
-                df_prev = await gam.get_live_data_multi_day(day_before, day_before, force_refresh=True)
-                report_data["anomalies"] = compute_anomalies(df, df_prev)
-                
-                # Assume basic recommendation logic handles anomalies
-                report_data["recommendations"] = []
-                
-                asyncio.create_task(asyncio.to_thread(send_daily_report_email, report_data, to_emails))
-                
+            if df.empty:
+                log.warning("[EMAIL_DAILY] DataFrame empty — skipping daily report email.")
+                continue
+
+            report_data = {
+                "executive_summary": compute_executive_summary(df, yesterday, yesterday),
+                "top_apps": compute_revenue_by_app(df)[:10],
+            }
+
+            day_before = yesterday - timedelta(days=1)
+            df_prev = await gam.get_live_data_multi_day(day_before, day_before, force_refresh=True)
+            report_data["anomalies"] = compute_anomalies(df, df_prev)
+            report_data["recommendations"] = []
+
+            async def _send_daily(rd=report_data, emails=to_emails):
+                try:
+                    result = await asyncio.to_thread(send_daily_report_email, rd, emails)
+                    if result.get("status") == "success":
+                        log.info("[EMAIL_DAILY] Daily report sent successfully to %s", emails)
+                    else:
+                        log.error("[EMAIL_SEND_FAILED] Daily report email failed: %s", result)
+                except Exception as exc:
+                    log.error("[EMAIL_SEND_FAILED] Exception in daily report email: %s", exc, exc_info=True)
+
+            asyncio.create_task(_send_daily())
+
         except asyncio.CancelledError:
             break
         except Exception as e:
-            log.error(f"Error in daily report loop: {e}")
+            log.error("[EMAIL_DAILY] Unexpected error in daily report loop: %s", e, exc_info=True)
             await asyncio.sleep(60)
 
 async def handle_api_recipients(request):
@@ -1443,6 +1475,49 @@ async def handle_api_recipients_delete(request):
         success = remove_recipient(recipient_id)
         return JSONResponse({"success": success}, headers={"Access-Control-Allow-Origin": "*"})
 
+async def handle_api_test_email(request):
+    """POST /api/test-email — send a diagnostic test email and return the full result."""
+    if request.method == "OPTIONS":
+        return JSONResponse({}, headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        })
+
+    try:
+        body = await request.json()
+        to_email = body.get("email")
+
+        recipients = get_recipients()
+        log.info("[TEST_EMAIL] Current recipients in store: %s", [r['email'] for r in recipients])
+
+        if not to_email:
+            # Fall back to first saved recipient
+            if recipients:
+                to_email = recipients[0]["email"]
+            else:
+                return JSONResponse(
+                    {"status": "error", "error": "No email provided and no recipients saved."},
+                    status_code=400,
+                    headers={"Access-Control-Allow-Origin": "*"},
+                )
+
+        log.info("[TEST_EMAIL] Sending test email to: %s", to_email)
+        result = await asyncio.to_thread(send_test_email, to_email)
+        log.info("[TEST_EMAIL] Result: %s", result)
+
+        status_code = 200 if result.get("status") == "success" else 500
+        return JSONResponse(result, status_code=status_code, headers={"Access-Control-Allow-Origin": "*"})
+
+    except Exception as e:
+        log.error("[TEST_EMAIL] Exception: %s", e, exc_info=True)
+        return JSONResponse(
+            {"status": "error", "error": str(e)},
+            status_code=500,
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
+
+
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
@@ -1460,6 +1535,7 @@ starlette_app = Starlette(
         Route("/api/chat", endpoint=handle_chat, methods=["POST", "OPTIONS"]),
         Route("/api/recipients", endpoint=handle_api_recipients, methods=["GET", "POST", "OPTIONS"]),
         Route("/api/recipients/{id}", endpoint=handle_api_recipients_delete, methods=["DELETE", "OPTIONS"]),
+        Route("/api/test-email", endpoint=handle_api_test_email, methods=["POST", "OPTIONS"]),
     ],
     lifespan=lifespan,
     middleware=[

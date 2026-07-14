@@ -8,57 +8,142 @@ from typing import List, Dict, Any
 
 log = logging.getLogger("email_service")
 
+
 def _get_credentials():
-    sender_email = os.getenv("GMAIL_SENDER_EMAIL")
-    app_password = os.getenv("GMAIL_APP_PASSWORD")
-    return sender_email, app_password
+    """
+    Load and sanitise Gmail credentials from environment.
+    Gmail App Passwords are displayed as 'xxxx xxxx xxxx xxxx' — if copy-pasted
+    with spaces they will silently fail SMTP login. Strip all whitespace.
+    """
+    sender_email = (os.getenv("GMAIL_SENDER_EMAIL") or "").strip()
+    app_password = (os.getenv("GMAIL_APP_PASSWORD") or "").replace(" ", "").strip()
+    return sender_email or None, app_password or None
+
+
+def log_credential_status():
+    """
+    Called once at server startup. Logs whether credentials are present
+    WITHOUT printing their actual values.
+    """
+    sender_email, app_password = _get_credentials()
+    log.info(
+        "[EMAIL_CREDENTIALS] GMAIL_SENDER_EMAIL present=%s | "
+        "GMAIL_APP_PASSWORD present=%s | "
+        "password_len=%s",
+        bool(sender_email),
+        bool(app_password),
+        len(app_password) if app_password else 0,
+    )
+    if app_password and len(app_password) not in (16,):
+        log.warning(
+            "[EMAIL_CREDENTIALS] GMAIL_APP_PASSWORD length is %d — expected 16 "
+            "(without spaces). Verify you copied the correct App Password.",
+            len(app_password),
+        )
+
 
 def _send_email(subject: str, html_content: str, to_emails: List[str]) -> Dict[str, Any]:
     if not to_emails:
-        log.info("No recipients provided. Skipping email send.")
+        log.info("[EMAIL_SKIPPED] No recipients provided. Skipping email send.")
         return {"error": "No recipients", "status": "skipped"}
 
     sender_email, app_password = _get_credentials()
     if not sender_email or not app_password:
-        log.error("Gmail credentials not configured in environment variables.")
-        return {"error": "Credentials missing", "status": "error"}
+        msg = (
+            "GMAIL_SENDER_EMAIL missing." if not sender_email else ""
+            + " GMAIL_APP_PASSWORD missing." if not app_password else ""
+        ).strip()
+        log.error("[EMAIL_SEND_FAILED] Gmail credentials not configured: %s", msg)
+        return {"error": f"Credentials missing: {msg}", "status": "error"}
 
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = f"GAM 360 Live <{sender_email}>"
-    msg['To'] = ", ".join(to_emails)
-    msg['Date'] = formatdate(localtime=True)
-    
-    msg.set_content("Please enable HTML to view this email.")
-    msg.add_alternative(html_content, subtype='html')
+    msg_obj = EmailMessage()
+    msg_obj['Subject'] = subject
+    msg_obj['From'] = f"GAM 360 Live <{sender_email}>"
+    msg_obj['To'] = ", ".join(to_emails)
+    msg_obj['Date'] = formatdate(localtime=True)
+
+    msg_obj.set_content("Please enable HTML to view this email.")
+    msg_obj.add_alternative(html_content, subtype='html')
 
     try:
         context = ssl.create_default_context()
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+        log.info(
+            "[EMAIL_SEND] Attempting SMTP_SSL to smtp.gmail.com:465 → %d recipient(s) | subject=%r",
+            len(to_emails), subject,
+        )
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=30) as server:
             server.login(sender_email, app_password)
-            server.send_message(msg)
-            
-        log.info(f"Email sent successfully to {len(to_emails)} recipients: {subject}")
-        return {"status": "success"}
+            server.send_message(msg_obj)
+
+        log.info("[EMAIL_SENT] Successfully sent %r to %s", subject, to_emails)
+        return {"status": "success", "recipients": to_emails}
+
+    except smtplib.SMTPAuthenticationError as e:
+        log.error(
+            "[EMAIL_SEND_FAILED] SMTP authentication failed. "
+            "Verify GMAIL_SENDER_EMAIL and GMAIL_APP_PASSWORD are correct, "
+            "and that 2-Step Verification is enabled on the Gmail account. "
+            "Error: %s", e,
+        )
+        return {"error": f"Authentication failed: {e}", "status": "error"}
+    except smtplib.SMTPConnectError as e:
+        log.error("[EMAIL_SEND_FAILED] SMTP connection error (port/network issue): %s", e)
+        return {"error": f"Connection error: {e}", "status": "error"}
+    except smtplib.SMTPRecipientsRefused as e:
+        log.error("[EMAIL_SEND_FAILED] SMTP recipients refused: %s", e)
+        return {"error": f"Recipients refused: {e}", "status": "error"}
+    except TimeoutError as e:
+        log.error("[EMAIL_SEND_FAILED] SMTP connection timed out: %s", e)
+        return {"error": f"Timeout: {e}", "status": "error"}
     except Exception as e:
-        log.error(f"Failed to send email: {e}")
+        log.error("[EMAIL_SEND_FAILED] Unexpected error sending email: %s", e, exc_info=True)
         return {"error": str(e), "status": "error"}
 
-def send_alert_email(alert: Dict[str, Any], to_emails: List[str]) -> Dict[str, Any]:
+
+def send_test_email(to_email: str) -> Dict[str, Any]:
+    """Send a minimal diagnostic test email to verify SMTP config end-to-end."""
+    html = """
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                max-width: 500px; margin: 0 auto; padding: 30px;
+                background: #0f172a; color: #f1f5f9; border-radius: 12px;">
+        <h2 style="color: #6366f1; margin-top: 0;">✅ GAM 360 Test Email</h2>
+        <p>This is a diagnostic test email sent from your GAM 360 Live Reporting Platform.</p>
+        <p>If you're reading this, Gmail SMTP is working correctly! 🎉</p>
+        <hr style="border-color: #334155; margin: 20px 0;">
+        <p style="color: #94a3b8; font-size: 13px;">
+            Sent via Render backend → smtp.gmail.com:465 (SMTP_SSL)
+        </p>
+    </div>
+    """
+    return _send_email("🔔 GAM 360 — Test Email", html, [to_email])
+
+
+def send_alert_email(alert: Dict[str, Any], to_emails: List[str], prefs: Dict[str, bool] = None) -> Dict[str, Any]:
     if not to_emails:
         return {"error": "No recipients", "status": "skipped"}
-        
+
     severity = alert.get("severity", "warning").lower()
     title = alert.get("title", "Unknown Alert")
     metric = alert.get("metric", "Unknown Metric")
     value = alert.get("value", "")
-    
+
+    # Log which toggle was checked
+    if prefs is not None:
+        if severity == "critical" and not prefs.get("critical_alerts", True):
+            log.info("[EMAIL_SKIPPED] Critical alert emails toggle is OFF — skipping: %s", title)
+            return {"status": "skipped", "reason": "critical_alerts toggle is OFF"}
+        if severity == "warning" and not prefs.get("warning_alerts", False):
+            log.info("[EMAIL_SKIPPED] Warning alert emails toggle is OFF — skipping: %s", title)
+            return {"status": "skipped", "reason": "warning_alerts toggle is OFF"}
+
+    log.info("[EMAIL_ALERT] Sending %s alert email: %s", severity.upper(), title)
+
     prefix = "🔴 CRITICAL:" if severity == "critical" else "🟠 WARNING:"
     subject = f"{prefix} {title}"
-    
+
     color = "#ef4444" if severity == "critical" else "#f59e0b"
     bg_color = "#fef2f2" if severity == "critical" else "#fffbeb"
-    
+
     html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background-color: #ffffff;">
         <h2 style="color: {color}; margin-top: 0; display: flex; align-items: center;">
@@ -91,25 +176,26 @@ def send_alert_email(alert: Dict[str, Any], to_emails: List[str]) -> Dict[str, A
         </p>
     </div>
     """
-    
+
     return _send_email(subject, html, to_emails)
+
 
 def send_daily_report_email(report_data: Dict[str, Any], to_emails: List[str]) -> Dict[str, Any]:
     if not to_emails:
         return {"error": "No recipients", "status": "skipped"}
-        
+
     summary = report_data.get("executive_summary", {})
     period = summary.get("period", "Unknown Period")
-    
+
     subject = f"📊 GAM 360 Live Executive Report: {period}"
-    
+
     # Extract metrics safely
     rev = summary.get('total_revenue_usd', 0)
     imp = summary.get('total_impressions', 0)
     ecpm = summary.get('average_ecpm', 0)
     ctr = summary.get('average_ctr', 0)
     fill = summary.get('average_fill_rate', 0)
-    
+
     # Top apps table
     apps = report_data.get("top_apps", [])
     apps_rows = ""
@@ -124,7 +210,7 @@ def send_daily_report_email(report_data: Dict[str, Any], to_emails: List[str]) -
             <td style="padding: 10px; border-bottom: 1px solid #374151; text-align: right; color: #9ca3af;">{a_imp:,}</td>
         </tr>
         """
-        
+
     # Anomalies
     anomalies = report_data.get("anomalies", [])
     anomalies_html = ""
@@ -199,8 +285,7 @@ def send_daily_report_email(report_data: Dict[str, Any], to_emails: List[str]) -
                     <div style="color: #9ca3af; font-size: 12px; text-transform: uppercase;">CTR</div>
                     <div style="color: #f3f4f6; font-size: 18px;">{ctr:,.2f}%</div>
                 </div>
-                <div style="flex: 1; min-width: 120px;">
-                </div>
+                <div style="flex: 1; min-width: 120px;"></div>
             </div>
         </div>
 
@@ -230,5 +315,5 @@ def send_daily_report_email(report_data: Dict[str, Any], to_emails: List[str]) -
         </div>
     </div>
     """
-    
+
     return _send_email(subject, html, to_emails)

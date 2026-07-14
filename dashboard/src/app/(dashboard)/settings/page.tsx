@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Settings, Server, Zap, Mail, Trash2, Plus, CheckCircle2, AlertCircle } from "lucide-react";
+import { Settings, Server, Zap, Mail, Trash2, Plus, CheckCircle2, AlertCircle, Send, Loader2 } from "lucide-react";
 import { useLiveReport } from "@/contexts/DateContext";
 import { getRecipientsData, addRecipient, removeRecipient, updatePreferences } from "@/actions/recipients";
 
@@ -17,6 +17,10 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   
   const [message, setMessage] = useState<{type: "success" | "error", text: string} | null>(null);
+  const [testEmailResult, setTestEmailResult] = useState<{type: "success" | "error", text: string} | null>(null);
+  const [sendingTest, setSendingTest] = useState(false);
+
+  const MCP_URL = process.env.NEXT_PUBLIC_MCP_SERVER_URL || "https://gam-360-live-reporting-platform.onrender.com";
 
   useEffect(() => {
     loadData();
@@ -73,6 +77,29 @@ export default function SettingsPage() {
     } else {
       showMessage("error", res.error || "Failed to save preferences.");
       setPrefs(prefs); // revert
+    }
+  }
+
+  async function handleTestEmail() {
+    setSendingTest(true);
+    setTestEmailResult(null);
+    try {
+      const firstEmail = recipients[0]?.email;
+      const res = await fetch(`${MCP_URL}/api/test-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: firstEmail }),
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        setTestEmailResult({ type: "success", text: `✅ Test email sent successfully to ${data.recipients?.[0] || firstEmail}` });
+      } else {
+        setTestEmailResult({ type: "error", text: `❌ Failed: ${data.error || "Unknown error"}` });
+      }
+    } catch (err: any) {
+      setTestEmailResult({ type: "error", text: `❌ Network error: ${err.message}` });
+    } finally {
+      setSendingTest(false);
     }
   }
 
@@ -297,6 +324,42 @@ export default function SettingsPage() {
               checked={prefs.warning_alerts}
               onChange={(val: boolean) => handleToggle('warning_alerts', val)}
             />
+          </div>
+
+          {/* Send Test Email */}
+          <div className="pt-4 border-t space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium">Send Test Email</p>
+                <p className="text-xs text-muted-foreground">
+                  {recipients.length > 0
+                    ? `Sends a test email to ${recipients[0].email}`
+                    : "Add a recipient first to send a test email"}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={sendingTest || recipients.length === 0}
+                onClick={handleTestEmail}
+                className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 border border-indigo-500/50 text-indigo-400 hover:bg-indigo-500/10 h-9 px-4 py-2"
+              >
+                {sendingTest ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+                {sendingTest ? "Sending..." : "Send Test Email"}
+              </button>
+            </div>
+            {testEmailResult && (
+              <div className={`p-3 rounded-md text-sm font-medium ${
+                testEmailResult.type === "success"
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                  : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+              }`}>
+                {testEmailResult.text}
+              </div>
+            )}
           </div>
 
         </CardContent>
