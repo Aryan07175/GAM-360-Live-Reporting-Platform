@@ -39,13 +39,13 @@ from mcp_server.email_service import send_alert_email, send_daily_report_email
 
 _last_alert_sent = {}  # title -> timestamp
 
-# Google Gemini (lazy — only imported when chat is used)
+# AWS Bedrock
 try:
-    from google import genai
-    from google.genai import types as genai_types
-    HAS_GEMINI = True
+    import boto3
+    from botocore.exceptions import ClientError
+    HAS_BEDROCK = True
 except ImportError:
-    HAS_GEMINI = False
+    HAS_BEDROCK = False
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("mcp_server")
@@ -305,46 +305,46 @@ You have access to a data summary of the dashboard's current view. This summary 
 # ─── Chat Endpoint ───────────────────────────────────────────────────────────
 
 def get_query_data_tool():
-    """Returns the tool definition for Gemini."""
-    return genai_types.Tool(
-        function_declarations=[
-            genai_types.FunctionDeclaration(
-                name="query_data",
-                description="Query the current dashboard's GAM data with whitelisted aggregations. Use this for comparisons, filtering, sorting, or detailed breakdowns not already in the data summary.",
-                parameters=genai_types.Schema(
-                    type="OBJECT",
-                    properties={
-                        "operation": genai_types.Schema(
-                            type="STRING",
-                            description="The aggregation operation to perform (sum, mean, max, min, top_n, bottom_n, compare, count)."
-                        ),
-                        "dimension": genai_types.Schema(
-                            type="STRING",
-                            description="The dimension to group by (app = ad unit, date = calendar day)."
-                        ),
-                        "metric": genai_types.Schema(
-                            type="STRING",
-                            description="The metric to aggregate (revenue, impressions, clicks, ad_requests, ecpm, ctr, fill_rate)."
-                        ),
-                        "filters": genai_types.Schema(
-                            type="OBJECT",
-                            description="Optional filters: app_name (substring match), date (exact YYYY-MM-DD), min_revenue (number).",
-                            properties={
-                                "app_name": genai_types.Schema(type="STRING"),
-                                "date": genai_types.Schema(type="STRING"),
-                                "min_revenue": genai_types.Schema(type="NUMBER")
+    """Returns the tool definition for AWS Bedrock."""
+    return {
+        "toolSpec": {
+            "name": "query_data",
+            "description": "Query the current dashboard's GAM data with whitelisted aggregations. Use this for comparisons, filtering, sorting, or detailed breakdowns not already in the data summary.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "operation": {
+                            "type": "string",
+                            "description": "The aggregation operation to perform (sum, mean, max, min, top_n, bottom_n, compare, count)."
+                        },
+                        "dimension": {
+                            "type": "string",
+                            "description": "The dimension to group by (app = ad unit, date = calendar day)."
+                        },
+                        "metric": {
+                            "type": "string",
+                            "description": "The metric to aggregate (revenue, impressions, clicks, ad_requests, ecpm, ctr, fill_rate)."
+                        },
+                        "filters": {
+                            "type": "object",
+                            "description": "Optional filters: app_name (substring match), date (exact YYYY-MM-DD), min_revenue (number).",
+                            "properties": {
+                                "app_name": {"type": "string"},
+                                "date": {"type": "string"},
+                                "min_revenue": {"type": "number"}
                             }
-                        ),
-                        "limit": genai_types.Schema(
-                            type="INTEGER",
-                            description="Max number of results for top_n/bottom_n (default 10)."
-                        )
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max number of results for top_n/bottom_n (default 10)."
+                        }
                     },
-                    required=["operation"]
-                )
-            )
-        ]
-    )
+                    "required": ["operation"]
+                }
+            }
+        }
+    }
 
 
 async def handle_chat(request):
@@ -360,17 +360,9 @@ async def handle_chat(request):
             "Access-Control-Allow-Headers": "Content-Type",
         })
 
-    if not HAS_GEMINI:
+    if not HAS_BEDROCK:
         return JSONResponse(
-            {"error": "Google Generative AI SDK not installed. Run: pip install google-generativeai"},
-            status_code=500,
-            headers={"Access-Control-Allow-Origin": "*"},
-        )
-
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        return JSONResponse(
-            {"error": "GEMINI_API_KEY not set"},
+            {"error": "AWS Boto3 SDK not installed. Run: pip install boto3"},
             status_code=500,
             headers={"Access-Control-Allow-Origin": "*"},
         )
@@ -436,116 +428,140 @@ async def handle_chat(request):
             "revenue_trend": data_summary.get("revenue_trend", [])[-7:],  # Last 7 days only
         }
 
-        # Build messages array for Gemini
+        # Build messages array for Bedrock
         system_prompt = CHAT_SYSTEM_PROMPT.format(
             data_summary=json.dumps(compact_summary, indent=2, default=str)
         )
 
         contents = []
         for h in history[-10:]:
-            role = "model" if h.get("role") == "assistant" else "user"
+            role = "assistant" if h.get("role") == "assistant" else "user"
             content = h.get("content", "").strip()
             if content:
-                contents.append(
-                    genai_types.Content(role=role, parts=[genai_types.Part.from_text(text=content)])
-                )
+                contents.append({
+                    "role": role,
+                    "content": [{"text": content}]
+                })
+                
+        # Append the new user message
+        contents.append({
+            "role": "user",
+            "content": [{"text": message}]
+        })
 
         log.info(f"[Chat] session={cache_key} message={message[:80]}...")
 
         async def stream_response():
-            MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
-            MAX_RETRIES = 3
-            last_error = None
-
-            for attempt in range(MAX_RETRIES):
-                try:
-                    model_name = MODELS[0] if attempt < 2 else MODELS[-1]
-                    
-                    client = genai.Client(api_key=api_key)
-                    
-                    chat = client.chats.create(
-                        model=model_name,
-                        history=contents,
-                        config=genai_types.GenerateContentConfig(
-                            system_instruction=system_prompt,
-                            tools=[get_query_data_tool()]
-                        )
+            model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+            region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+            
+            try:
+                client = boto3.client("bedrock-runtime", region_name=region)
+                
+                tool_config = {
+                    "tools": [get_query_data_tool()]
+                }
+                
+                def _call_bedrock(msgs):
+                    return client.converse_stream(
+                        modelId=model_id,
+                        messages=msgs,
+                        system=[{"text": system_prompt}],
+                        toolConfig=tool_config
                     )
-                    
-                    log.info(f"[Chat] Attempt {attempt+1}/{MAX_RETRIES} using model={model_name}")
-                    
-                    def _send_msg():
-                        return chat.send_message(message)
-                        
-                    response = await asyncio.wait_for(asyncio.to_thread(_send_msg), timeout=25.0)
-                    
-                    tool_calls_to_execute = []
-                    # In google-genai, parts is a list of Part objects which can have function_call
-                    if response.function_calls:
-                        tool_calls_to_execute.extend(response.function_calls)
-                    elif response.text:
-                        yield f"data: {json.dumps({'type': 'token', 'content': response.text})}\n\n"
+                
+                response = await asyncio.to_thread(_call_bedrock, contents)
+                
+                # Process the stream
+                tool_uses = {}
+                
+                for event in response.get("stream"):
+                    if "contentBlockDelta" in event:
+                        delta = event["contentBlockDelta"]["delta"]
+                        if "text" in delta:
+                            yield f"data: {json.dumps({'type': 'token', 'content': delta['text']})}\n\n"
+                        elif "toolUse" in delta:
+                            tool_use = delta["toolUse"]
+                            if "input" in tool_use:
+                                tool_id = event["contentBlockDelta"]["contentBlockIndex"]
+                                if tool_id not in tool_uses:
+                                    tool_uses[tool_id] = {"input": ""}
+                                tool_uses[tool_id]["input"] += tool_use["input"]
                                 
-                    if tool_calls_to_execute:
-                        tool_response_parts = []
-                        for fc in tool_calls_to_execute:
-                            tool_name = fc.name
-                            kwargs = fc.args if isinstance(fc.args, dict) else dict(fc.args)
-                            log.info(f"[Chat] Tool call: {tool_name}({kwargs})")
+                    elif "contentBlockStart" in event:
+                        start = event["contentBlockStart"]["start"]
+                        if "toolUse" in start:
+                            tool_id = event["contentBlockStart"]["contentBlockIndex"]
+                            tool_uses[tool_id] = {
+                                "toolUseId": start["toolUse"]["toolUseId"],
+                                "name": start["toolUse"]["name"],
+                                "input": ""
+                            }
                             
-                            if tool_name == "query_data":
-                                result = execute_query_data(
-                                    cached_df,
-                                    operation=kwargs.get("operation", "sum"),
-                                    dimension=kwargs.get("dimension"),
-                                    metric=kwargs.get("metric"),
-                                    filters=kwargs.get("filters"),
-                                    limit=int(kwargs.get("limit", 10)),
-                                )
-                            else:
-                                result = {"error": f"Unknown tool: {tool_name}"}
-                            
-                            safe_result = json.loads(json.dumps(result, default=str))
-                            tool_response_parts.append(
-                                genai_types.Part.from_function_response(
-                                    name=tool_name,
-                                    response=safe_result
-                                )
+                # If tools were used, execute them and make a second call
+                if tool_uses:
+                    assistant_content = []
+                    tool_results = []
+                    
+                    for t_idx, t_data in tool_uses.items():
+                        tool_name = t_data["name"]
+                        tool_id = t_data["toolUseId"]
+                        input_json = json.loads(t_data["input"]) if t_data["input"] else {}
+                        
+                        log.info(f"[Chat] Tool call: {tool_name}({input_json})")
+                        
+                        assistant_content.append({
+                            "toolUse": {
+                                "toolUseId": tool_id,
+                                "name": tool_name,
+                                "input": input_json
+                            }
+                        })
+                        
+                        if tool_name == "query_data":
+                            result = execute_query_data(
+                                cached_df,
+                                operation=input_json.get("operation", "sum"),
+                                dimension=input_json.get("dimension"),
+                                metric=input_json.get("metric"),
+                                filters=input_json.get("filters"),
+                                limit=int(input_json.get("limit", 10)),
                             )
-                            
-                        def _send_tool_msg():
-                            return chat.send_message(tool_response_parts)
-                            
-                        second_response = await asyncio.wait_for(asyncio.to_thread(_send_tool_msg), timeout=25.0)
+                        else:
+                            result = {"error": f"Unknown tool: {tool_name}"}
                         
-                        if second_response.text:
-                            yield f"data: {json.dumps({'type': 'token', 'content': second_response.text})}\n\n"
+                        safe_result = json.loads(json.dumps(result, default=str))
+                        
+                        tool_results.append({
+                            "toolResult": {
+                                "toolUseId": tool_id,
+                                "content": [{"json": safe_result}],
+                                "status": "success"
+                            }
+                        })
+                    
+                    contents.append({"role": "assistant", "content": assistant_content})
+                    contents.append({"role": "user", "content": tool_results})
+                    
+                    second_response = await asyncio.to_thread(_call_bedrock, contents)
+                    
+                    for event in second_response.get("stream"):
+                        if "contentBlockDelta" in event:
+                            delta = event["contentBlockDelta"]["delta"]
+                            if "text" in delta:
+                                yield f"data: {json.dumps({'type': 'token', 'content': delta['text']})}\n\n"
                                 
-                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                    return  # Success — exit retry loop
-
-                except Exception as e:
-                    last_error = e
-                    error_str = str(e).lower()
-                    is_quota_error = "429" in str(e) or "quota" in error_str or "resource has been exhausted" in error_str or "rate limit" in error_str
-                    
-                    log.exception(f"[Chat] Stream error (attempt {attempt+1}): {e}")
-                    
-                    # If it's a quota error, do NOT sleep/retry because if limit is 0, it never recovers and just hangs the UI
-                    if is_quota_error:
-                        user_msg = "The AI service is temporarily rate-limited (Quota Exceeded). Please wait and try again."
-                        yield f"data: {json.dumps({'type': 'error', 'content': user_msg})}\n\n"
-                        return
-                        
-                    # For non-quota errors, we can retry without long sleeps
-                    if attempt < MAX_RETRIES - 1:
-                        await asyncio.sleep(2)
-                        continue
-                        
-                    # User-friendly error messages
-                    user_msg = str(e)
-                    yield f"data: {json.dumps({'type': 'error', 'content': user_msg})}\n\n"
-                    return
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                
+            except ClientError as e:
+                log.exception(f"[Chat] Bedrock ClientError: {e}")
+                err_code = e.response.get("Error", {}).get("Code", "Unknown")
+                err_msg = e.response.get("Error", {}).get("Message", str(e))
+                user_msg = f"AWS Bedrock Error ({err_code}): {err_msg}"
+                yield f"data: {json.dumps({'type': 'error', 'content': user_msg})}\n\n"
+            except Exception as e:
+                log.exception(f"[Chat] Stream error: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
         return StreamingResponse(
             stream_response(),
