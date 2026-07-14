@@ -68,26 +68,29 @@ def _send_email(subject: str, html_content: str, to_emails: List[str], pdf_bytes
     if pdf_bytes and pdf_filename:
         msg_obj.add_attachment(pdf_bytes, maintype='application', subtype='pdf', filename=pdf_filename)
 
+    # Force IPv4 to prevent "[Errno 101] Network is unreachable" on IPv4-only networks (like Render)
+    import socket
+    original_getaddrinfo = socket.getaddrinfo
+    def force_ipv4_getaddrinfo(*args, **kwargs):
+        res = original_getaddrinfo(*args, **kwargs)
+        # Filter for IPv4 only
+        v4_res = [r for r in res if r[0] == socket.AF_INET]
+        return v4_res if v4_res else res
+    
+    socket.getaddrinfo = force_ipv4_getaddrinfo
+
     try:
         context = ssl.create_default_context()
-        log.info(
-            "[EMAIL_SEND] Attempting SMTP_SSL to smtp.gmail.com:465 → %d recipient(s) | subject=%r",
-            len(to_emails), subject,
-        )
+        log.info("[EMAIL_START] Connecting to smtp.gmail.com:465 (SSL)...")
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=30) as server:
+            log.info("[EMAIL_AUTH] Logging in...")
             server.login(sender_email, app_password)
+            log.info("[EMAIL_SEND] Sending email to %d recipient(s)...", len(to_emails))
             server.send_message(msg_obj)
-
-        log.info("[EMAIL_SENT] Successfully sent %r to %s", subject, to_emails)
+            log.info("[EMAIL_SUCCESS] Email sent successfully.")
         return {"status": "success", "recipients": to_emails}
-
     except smtplib.SMTPAuthenticationError as e:
-        log.error(
-            "[EMAIL_SEND_FAILED] SMTP authentication failed. "
-            "Verify GMAIL_SENDER_EMAIL and GMAIL_APP_PASSWORD are correct, "
-            "and that 2-Step Verification is enabled on the Gmail account. "
-            "Error: %s", e,
-        )
+        log.error("[EMAIL_SEND_FAILED] Authentication failed (check App Password): %s", e)
         return {"error": f"Authentication failed: {e}", "status": "error"}
     except smtplib.SMTPConnectError as e:
         log.error("[EMAIL_SEND_FAILED] SMTP connection error (port/network issue): %s", e)
@@ -101,6 +104,9 @@ def _send_email(subject: str, html_content: str, to_emails: List[str], pdf_bytes
     except Exception as e:
         log.error("[EMAIL_SEND_FAILED] Unexpected error sending email: %s", e, exc_info=True)
         return {"error": str(e), "status": "error"}
+    finally:
+        # Restore the original getaddrinfo
+        socket.getaddrinfo = original_getaddrinfo
 
 
 def send_test_email(to_email: str) -> Dict[str, Any]:
