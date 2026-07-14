@@ -3,23 +3,18 @@ mcp_server/services/bedrock_service.py
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Reusable AWS Bedrock AI service for the GAM 360 Live Reporting Platform.
 
-This service is the single integration point for all AI functionality.
-The rest of the application imports only this module — no AI SDK code
-lives anywhere else.
+Uses the AWS Bedrock REST API directly with a Bearer token (AWS_BEARER_TOKEN_BEDROCK),
+which supports the newer Bedrock API key format that bypasses standard IAM credentials.
+
+Falls back to boto3 SigV4-signed requests if no bearer token is present.
 
 Responsibilities:
-  • Initialise and reuse a single boto3 bedrock-runtime client.
-  • Build Bedrock-compatible message payloads from the application's
-    conversation history.
-  • Execute `converse_stream` requests with tool-use support.
+  • Build Bedrock-compatible message payloads from the application's history.
+  • Execute POST requests to the Bedrock converse-stream REST endpoint.
   • Handle the two-turn tool-use cycle: call → execute → final answer.
-  • Implement exponential-backoff retry for transient AWS failures.
+  • Implement exponential-backoff retry for transient failures.
   • Stream SSE-formatted tokens back to the caller via an async generator.
   • Provide rich, structured logging of every request lifecycle.
-
-AWS Credentials are read exclusively from environment variables:
-  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION (or AWS_DEFAULT_REGION),
-  BEDROCK_MODEL_ID.
 """
 
 from __future__ import annotations
@@ -31,57 +26,24 @@ import os
 import time
 from typing import AsyncGenerator, Callable
 
-import boto3
-from botocore.config import Config
-from botocore.exceptions import ClientError
-
 log = logging.getLogger("bedrock_service")
 
-# ─── Module-level client (reused across requests) ────────────────────────────
-
-_bedrock_client = None
-_client_lock = asyncio.Lock()
-
+# ─── Configuration ────────────────────────────────────────────────────────────
 
 def _get_region() -> str:
-    """Return the AWS region, preferring AWS_REGION then AWS_DEFAULT_REGION."""
     return os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 
 
-def _build_client() -> object:
-    """
-    Construct a thread-safe boto3 Bedrock Runtime client.
-    Credentials are automatically sourced from the environment.
-    """
-    region = _get_region()
-    log.info("[Bedrock] Initialising boto3 bedrock-runtime client (region=%s)", region)
-    return boto3.client(
-        "bedrock-runtime",
-        region_name=region,
-        config=Config(
-            connect_timeout=10,
-            read_timeout=60,
-            retries={"mode": "standard", "max_attempts": 1},  # we handle retries manually
-        ),
-    )
+def _get_model_id() -> str:
+    return os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
 
-def get_bedrock_client() -> object:
-    """
-    Return the module-level Bedrock client, creating it on first call.
-    Thread-safe for synchronous callers (the async lock is for async context).
-    """
-    global _bedrock_client
-    if _bedrock_client is None:
-        _bedrock_client = _build_client()
-    return _bedrock_client
+def _get_bearer_token() -> str:
+    return os.getenv("AWS_BEARER_TOKEN_BEDROCK", "")
 
 
-def reset_client() -> None:
-    """Force re-initialisation of the Bedrock client (e.g., after credential rotation)."""
-    global _bedrock_client
-    _bedrock_client = None
-    log.info("[Bedrock] Client reset — will reinitialise on next request.")
+def _get_endpoint(model_id: str, region: str) -> str:
+    return f"https://bedrock-runtime.{region}.amazonaws.com/model/{model_id}/converse-stream"
 
 
 # ─── Tool Schema ─────────────────────────────────────────────────────────────
@@ -89,8 +51,7 @@ def reset_client() -> None:
 def get_query_data_tool_spec() -> dict:
     """
     Return the Bedrock-compatible tool specification for the `query_data` tool.
-    Uses standard JSON Schema so it is compatible with any Bedrock model that
-    supports tool use (Anthropic Claude 3+, Amazon Titan, etc.).
+    Standard JSON Schema compatible with all Bedrock models supporting tool use.
     """
     return {
         "toolSpec": {
@@ -107,8 +68,8 @@ def get_query_data_tool_spec() -> dict:
                         "operation": {
                             "type": "string",
                             "description": (
-                                "The aggregation operation to perform: "
-                                "sum, mean, max, min, top_n, bottom_n, compare, count."
+                                "Aggregation to perform: sum, mean, max, min, "
+                                "top_n, bottom_n, compare, count."
                             ),
                         },
                         "dimension": {
@@ -124,10 +85,7 @@ def get_query_data_tool_spec() -> dict:
                         },
                         "filters": {
                             "type": "object",
-                            "description": (
-                                "Optional filters: app_name (substring match), "
-                                "date (exact YYYY-MM-DD), min_revenue (number)."
-                            ),
+                            "description": "Optional filters: app_name, date (YYYY-MM-DD), min_revenue.",
                             "properties": {
                                 "app_name": {"type": "string"},
                                 "date": {"type": "string"},
@@ -136,7 +94,7 @@ def get_query_data_tool_spec() -> dict:
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Max number of results for top_n / bottom_n (default 10).",
+                            "description": "Max results for top_n / bottom_n (default 10).",
                         },
                     },
                     "required": ["operation"],
@@ -150,61 +108,150 @@ def get_query_data_tool_spec() -> dict:
 
 def build_bedrock_messages(history: list[dict], new_message: str) -> list[dict]:
     """
-    Convert the frontend chat history into Bedrock's expected message format.
+    Convert frontend chat history into Bedrock message format.
 
-    Frontend format:  [{"role": "user"|"assistant", "content": "..."}]
-    Bedrock format:   [{"role": "user"|"assistant", "content": [{"text": "..."}]}]
+    Frontend: [{"role": "user"|"assistant", "content": "..."}]
+    Bedrock:  [{"role": "user"|"assistant", "content": [{"text": "..."}]}]
 
-    Only the last 10 history turns are included to keep prompt size manageable.
-
-    Args:
-        history:     Frontend chat history (newest last).
-        new_message: The user's current message to append.
-
-    Returns:
-        List of Bedrock-formatted message dicts.
+    Only the last 10 turns are kept to control prompt size.
     """
     messages: list[dict] = []
-
     for turn in history[-10:]:
         role = "assistant" if turn.get("role") == "assistant" else "user"
         content = (turn.get("content") or "").strip()
         if content:
             messages.append({"role": role, "content": [{"text": content}]})
-
     messages.append({"role": "user", "content": [{"text": new_message}]})
     return messages
 
 
-# ─── Retry Helper ────────────────────────────────────────────────────────────
+# ─── HTTP Bedrock Client ──────────────────────────────────────────────────────
 
-# AWS error codes that are safe to retry with backoff
-_RETRYABLE_CODES = {
-    "ThrottlingException",
-    "ServiceUnavailableException",
-    "RequestTimeout",
-    "InternalServerException",
-    "ModelStreamErrorException",
-}
+def _parse_bedrock_stream(raw_bytes: bytes) -> list[dict]:
+    """
+    Parse the binary event-stream body returned by Bedrock converse-stream.
+    The AWS event stream format uses length-prefixed binary frames.
+    Each frame contains a JSON payload after the headers.
+    """
+    events = []
+    offset = 0
+    data = raw_bytes
 
-# AWS error codes that should NEVER be retried
-_TERMINAL_CODES = {
-    "AccessDeniedException",
-    "ValidationException",
-    "ResourceNotFoundException",
-    "ModelNotReadyException",
-    "ModelErrorException",
-}
+    while offset < len(data):
+        if offset + 12 > len(data):
+            break
+
+        # 4-byte total length (big-endian)
+        total_len = int.from_bytes(data[offset:offset + 4], "big")
+        # 4-byte headers length
+        headers_len = int.from_bytes(data[offset + 4:offset + 8], "big")
+
+        if offset + total_len > len(data):
+            break
+
+        # Skip prelude (8 bytes) + CRC (4 bytes) = 12 bytes, then headers
+        payload_start = offset + 12 + headers_len
+        payload_end = offset + total_len - 4  # minus trailing CRC
+
+        if payload_start < payload_end:
+            try:
+                payload_str = data[payload_start:payload_end].decode("utf-8")
+                if payload_str.strip():
+                    parsed = json.loads(payload_str)
+                    events.append(parsed)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                pass
+
+        offset += total_len
+
+    return events
 
 
-def _is_retryable(exc: ClientError) -> bool:
-    code = exc.response.get("Error", {}).get("Code", "")
-    return code in _RETRYABLE_CODES
+def _call_bedrock_http(payload: dict) -> list[dict]:
+    """
+    Make a synchronous HTTP POST to the Bedrock converse-stream endpoint
+    using a Bearer token for authentication.
+    """
+    import urllib.request
+    import urllib.error
+
+    bearer_token = _get_bearer_token()
+    model_id = _get_model_id()
+    region = _get_region()
+    url = _get_endpoint(model_id, region)
+
+    body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/vnd.amazon.eventstream",
+        "Authorization": f"Bearer {bearer_token}",
+    }
+
+    log.info("[Bedrock] POST %s model=%s payload_bytes=%d", url, model_id, len(body))
+
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            status = resp.status
+            log.info("[Bedrock] HTTP %d", status)
+            raw = resp.read()
+            return _parse_bedrock_stream(raw)
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        log.error("[Bedrock] HTTP %d: %s", exc.code, error_body)
+        raise RuntimeError(f"Bedrock HTTP {exc.code}: {error_body}") from exc
 
 
-def _is_terminal(exc: ClientError) -> bool:
-    code = exc.response.get("Error", {}).get("Code", "")
-    return code in _TERMINAL_CODES
+def _extract_text_and_tools(events: list[dict]) -> tuple[str, list[dict]]:
+    """
+    Extract text content and tool_use blocks from a list of parsed Bedrock events.
+
+    Returns:
+        text:       Concatenated text response.
+        tool_uses:  List of {toolUseId, name, input} dicts.
+    """
+    text_parts: list[str] = []
+    tool_uses: dict[int, dict] = {}
+
+    for event in events:
+        # contentBlockStart carries the tool header
+        if "contentBlockStart" in event:
+            idx = event["contentBlockStart"].get("contentBlockIndex", 0)
+            start = event["contentBlockStart"].get("start", {})
+            if "toolUse" in start:
+                tool_uses[idx] = {
+                    "toolUseId": start["toolUse"]["toolUseId"],
+                    "name": start["toolUse"]["name"],
+                    "input_raw": "",
+                }
+
+        # contentBlockDelta carries text and tool input chunks
+        elif "contentBlockDelta" in event:
+            delta = event["contentBlockDelta"].get("delta", {})
+            idx = event["contentBlockDelta"].get("contentBlockIndex", 0)
+
+            if "text" in delta:
+                text_parts.append(delta["text"])
+            elif "toolUse" in delta and "input" in delta["toolUse"]:
+                if idx in tool_uses:
+                    tool_uses[idx]["input_raw"] += delta["toolUse"]["input"]
+
+    # Parse tool inputs
+    parsed_tools = []
+    for t in tool_uses.values():
+        raw = t.get("input_raw", "")
+        try:
+            tool_input = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError:
+            tool_input = {}
+        parsed_tools.append({
+            "toolUseId": t["toolUseId"],
+            "name": t["name"],
+            "input": tool_input,
+        })
+
+    return "".join(text_parts), parsed_tools
 
 
 # ─── Core Streaming Generator ─────────────────────────────────────────────────
@@ -220,102 +267,63 @@ async def stream_bedrock_response(
     """
     Stream an AI response from AWS Bedrock as SSE-formatted tokens.
 
-    This function handles the full two-turn tool-use cycle:
+    Handles the full two-turn tool-use cycle:
       1. Send user messages → Bedrock returns text and/or tool calls.
       2. Execute any tool calls via `tool_executor`.
       3. Send tool results back → Bedrock streams the final answer.
 
     Args:
         messages:       Bedrock-formatted conversation history (including new message).
-        system_prompt:  The system prompt string injected at the start.
+        system_prompt:  The system prompt string.
         tool_executor:  Callable(tool_name, input_dict) → result_dict.
-                        Executed synchronously inside asyncio.to_thread.
-        max_retries:    Number of retry attempts for transient AWS errors.
+        max_retries:    Retry attempts for transient errors.
         base_backoff:   Initial backoff in seconds (doubles on each retry).
 
     Yields:
-        SSE-formatted strings: "data: {...}\\n\\n"
-        Token events:   {"type": "token", "content": "..."}
-        Done event:     {"type": "done"}
-        Error event:    {"type": "error", "content": "..."}
+        SSE strings: "data: {...}\\n\\n"
     """
-    model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
-    tool_config = {"tools": [get_query_data_tool_spec()]}
+    model_id = _get_model_id()
 
     def _sse(payload: dict) -> str:
         return f"data: {json.dumps(payload)}\n\n"
 
-    def _call(msgs: list[dict]) -> dict:
-        """Synchronous Bedrock call — runs in a thread pool."""
-        client = get_bedrock_client()
-        return client.converse_stream(
-            modelId=model_id,
-            messages=msgs,
-            system=[{"text": system_prompt}],
-            toolConfig=tool_config,
-        )
+    def _build_payload(msgs: list[dict]) -> dict:
+        return {
+            "system": [{"text": system_prompt}],
+            "messages": msgs,
+            "toolConfig": {"tools": [get_query_data_tool_spec()]},
+        }
 
-    # ── Retry loop ────────────────────────────────────────────────────────────
     attempt = 0
     while attempt < max_retries:
         attempt += 1
         t_start = time.monotonic()
-        prompt_chars = sum(len(m["content"][0].get("text", "")) for m in messages if m["content"])
-        log.info(
-            "[Bedrock] Request started — model=%s attempt=%d/%d prompt_chars=%d",
-            model_id, attempt, max_retries, prompt_chars,
-        )
+        log.info("[Bedrock] Request started — model=%s attempt=%d/%d", model_id, attempt, max_retries)
 
         try:
-            response = await asyncio.to_thread(_call, messages)
+            payload = _build_payload(messages)
+            events = await asyncio.to_thread(_call_bedrock_http, payload)
 
-            # ── First-turn stream processing ──────────────────────────────────
-            tool_uses: dict[int, dict] = {}  # content_block_index → tool_use data
+            text, tool_uses = _extract_text_and_tools(events)
 
-            for event in response.get("stream"):
-                if "contentBlockStart" in event:
-                    start_data = event["contentBlockStart"]["start"]
-                    idx = event["contentBlockStart"]["contentBlockIndex"]
-                    if "toolUse" in start_data:
-                        tool_uses[idx] = {
-                            "toolUseId": start_data["toolUse"]["toolUseId"],
-                            "name": start_data["toolUse"]["name"],
-                            "input_raw": "",
-                        }
+            # Stream text from the first turn if no tool calls
+            if text and not tool_uses:
+                yield _sse({"type": "token", "content": text})
 
-                elif "contentBlockDelta" in event:
-                    delta = event["contentBlockDelta"]["delta"]
-                    idx = event["contentBlockDelta"]["contentBlockIndex"]
-
-                    if "text" in delta:
-                        yield _sse({"type": "token", "content": delta["text"]})
-
-                    elif "toolUse" in delta and "input" in delta["toolUse"]:
-                        if idx in tool_uses:
-                            tool_uses[idx]["input_raw"] += delta["toolUse"]["input"]
-
-            # ── Tool execution + second-turn ───────────────────────────────────
+            # ── Tool execution + second turn ───────────────────────────────────
             if tool_uses:
                 assistant_content: list[dict] = []
                 user_tool_results: list[dict] = []
 
-                for idx, t in tool_uses.items():
+                for t in tool_uses:
                     tool_name = t["name"]
                     tool_use_id = t["toolUseId"]
-                    raw_input = t.get("input_raw", "")
-
-                    try:
-                        input_dict = json.loads(raw_input) if raw_input.strip() else {}
-                    except json.JSONDecodeError:
-                        input_dict = {}
+                    input_dict = t["input"]
 
                     log.info("[Bedrock] Tool call — name=%s input=%s", tool_name, input_dict)
-
-                    # Execute the tool in a thread (it's synchronous Pandas work)
                     result = await asyncio.to_thread(tool_executor, tool_name, input_dict)
                     safe_result = json.loads(json.dumps(result, default=str))
-
-                    log.info("[Bedrock] Tool result — name=%s result_keys=%s", tool_name, list(safe_result.keys()))
+                    log.info("[Bedrock] Tool result — name=%s keys=%s", tool_name, list(safe_result.keys()))
 
                     assistant_content.append({
                         "toolUse": {
@@ -332,52 +340,57 @@ async def stream_bedrock_response(
                         }
                     })
 
-                # Append tool turn to conversation
                 messages_with_tools = messages + [
                     {"role": "assistant", "content": assistant_content},
                     {"role": "user", "content": user_tool_results},
                 ]
 
                 log.info("[Bedrock] Sending tool results for second-turn response...")
-                second_response = await asyncio.to_thread(_call, messages_with_tools)
-
-                for event in second_response.get("stream"):
-                    if "contentBlockDelta" in event:
-                        delta = event["contentBlockDelta"]["delta"]
-                        if "text" in delta:
-                            yield _sse({"type": "token", "content": delta["text"]})
+                payload2 = _build_payload(messages_with_tools)
+                events2 = await asyncio.to_thread(_call_bedrock_http, payload2)
+                text2, _ = _extract_text_and_tools(events2)
+                if text2:
+                    yield _sse({"type": "token", "content": text2})
 
             latency_ms = round((time.monotonic() - t_start) * 1000)
             log.info("[Bedrock] Request completed — latency_ms=%d", latency_ms)
             yield _sse({"type": "done"})
-            return  # success — exit retry loop
+            return  # success
 
-        except ClientError as exc:
-            err_code = exc.response.get("Error", {}).get("Code", "Unknown")
-            err_msg = exc.response.get("Error", {}).get("Message", str(exc))
-            log.error("[Bedrock] ClientError — code=%s message=%s attempt=%d", err_code, err_msg, attempt)
+        except RuntimeError as exc:
+            err = str(exc)
+            log.error("[Bedrock] Error on attempt %d: %s", attempt, err)
 
-            if _is_terminal(exc):
-                log.error("[Bedrock] Terminal error — will not retry.")
-                yield _sse({"type": "error", "content": f"AWS Bedrock Error ({err_code}): {err_msg}"})
+            # Detect terminal errors — never retry these
+            is_terminal = any(x in err for x in [
+                "AccessDenied", "403", "ValidationException", "400",
+                "ResourceNotFound", "404", "end of its life", "Legacy"
+            ])
+            if is_terminal:
+                log.error("[Bedrock] Terminal error — not retrying.")
+                yield _sse({"type": "error", "content": err})
                 return
 
-            if _is_retryable(exc) and attempt < max_retries:
+            # Retryable
+            if attempt < max_retries:
                 backoff = base_backoff * (2 ** (attempt - 1))
-                log.warning("[Bedrock] Retryable error — backing off %.1fs before retry %d/%d", backoff, attempt + 1, max_retries)
+                log.warning("[Bedrock] Retrying in %.1fs...", backoff)
                 await asyncio.sleep(backoff)
                 continue
 
-            # Last attempt failed
-            yield _sse({"type": "error", "content": f"AWS Bedrock Error ({err_code}): {err_msg}"})
+            yield _sse({"type": "error", "content": err})
             return
 
         except Exception as exc:
             log.exception("[Bedrock] Unexpected error on attempt %d: %s", attempt, exc)
             if attempt < max_retries:
                 backoff = base_backoff * (2 ** (attempt - 1))
-                log.warning("[Bedrock] Retrying in %.1fs...", backoff)
                 await asyncio.sleep(backoff)
                 continue
             yield _sse({"type": "error", "content": str(exc)})
             return
+
+
+def reset_client() -> None:
+    """No-op kept for API compatibility — HTTP client has no persistent state."""
+    log.info("[Bedrock] reset_client() called — HTTP mode has no persistent state.")
