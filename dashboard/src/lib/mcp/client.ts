@@ -6,7 +6,7 @@
  * Never caches. Never stores. Always live.
  */
 
-const MCP_BASE_URL = process.env.NEXT_PUBLIC_MCP_SERVER_URL || process.env.MCP_SERVER_URL || "http://127.0.0.1:8000";
+const MCP_BASE_URL = process.env.NEXT_PUBLIC_MCP_SERVER_URL || process.env.MCP_SERVER_URL || "https://gam-360-live-reporting-platform.onrender.com";
 
 export interface McpToolArgs {
   startDate?: string;

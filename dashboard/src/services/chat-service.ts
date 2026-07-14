@@ -1,6 +1,6 @@
 import type { ChatMessage, ChatDateRange } from "@/types";
 
-const MCP_BASE_URL = process.env.NEXT_PUBLIC_MCP_URL || "http://127.0.0.1:8000";
+const MCP_BASE_URL = process.env.NEXT_PUBLIC_MCP_SERVER_URL || process.env.NEXT_PUBLIC_MCP_URL || "https://gam-360-live-reporting-platform.onrender.com";
 
 export type StreamEvent = 
   | { type: 'token'; content: string }
