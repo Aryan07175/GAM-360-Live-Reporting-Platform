@@ -316,13 +316,20 @@ async def stream_bedrock_response(
         }
 
     async def _stream_text(text: str):
-        """Yield the text split into small chunks to simulate streaming."""
-        words = text.split(" ")
-        for i, word in enumerate(words):
-            chunk = word if i == 0 else " " + word
-            if chunk:
-                yield _sse({"type": "token", "content": chunk})
-                await asyncio.sleep(0.01)  # small delay for typing effect
+        """
+        Stream the complete Bedrock response text as fixed-size character chunks.
+
+        CRITICAL: Do NOT split by spaces or inject spaces between chunks.
+        Splitting on ' ' then prepending ' ' before every word corrupts numbers,
+        dates and punctuation: '2026' -> '202 6', 'July 14,' -> 'July  14 ,'.
+        Instead, slice the text into fixed-size windows and send each slice
+        verbatim so the frontend can append them with zero modification.
+        """
+        CHUNK_SIZE = 4  # characters per SSE event — small enough for smooth typing
+        for i in range(0, len(text), CHUNK_SIZE):
+            chunk = text[i : i + CHUNK_SIZE]
+            yield _sse({"type": "token", "content": chunk})
+            await asyncio.sleep(0.008)  # ~125 chunks/s → smooth typing feel
 
     attempt = 0
     while attempt < max_retries:
