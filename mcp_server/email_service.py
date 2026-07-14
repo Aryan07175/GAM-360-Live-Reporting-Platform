@@ -42,7 +42,7 @@ def log_credential_status():
         )
 
 
-def _send_email(subject: str, html_content: str, to_emails: List[str]) -> Dict[str, Any]:
+def _send_email(subject: str, html_content: str, to_emails: List[str], pdf_bytes: bytes = None, pdf_filename: str = None) -> Dict[str, Any]:
     if not to_emails:
         log.info("[EMAIL_SKIPPED] No recipients provided. Skipping email send.")
         return {"error": "No recipients", "status": "skipped"}
@@ -64,6 +64,9 @@ def _send_email(subject: str, html_content: str, to_emails: List[str]) -> Dict[s
 
     msg_obj.set_content("Please enable HTML to view this email.")
     msg_obj.add_alternative(html_content, subtype='html')
+    
+    if pdf_bytes and pdf_filename:
+        msg_obj.add_attachment(pdf_bytes, maintype='application', subtype='pdf', filename=pdf_filename)
 
     try:
         context = ssl.create_default_context()
@@ -316,4 +319,19 @@ def send_daily_report_email(report_data: Dict[str, Any], to_emails: List[str]) -
     </div>
     """
 
-    return _send_email(subject, html, to_emails)
+    pdf_bytes = None
+    try:
+        from xhtml2pdf import pisa
+        import io
+        
+        # xhtml2pdf handles basic HTML but does better with a full document structure
+        pdf_html = f"<html><head><meta charset='utf-8'></head><body style='background-color: #ffffff;'>{html.replace('color: #f3f4f6;', 'color: #333333;').replace('color: #ffffff;', 'color: #111111;').replace('background-color: #111827;', 'background-color: #ffffff;').replace('background-color: #1f2937;', 'background-color: #f9fafb;')}</body></html>"
+        
+        pdf_buf = io.BytesIO()
+        pisa_status = pisa.CreatePDF(io.StringIO(pdf_html), dest=pdf_buf)
+        if not pisa_status.err:
+            pdf_bytes = pdf_buf.getvalue()
+    except Exception as e:
+        log.error(f"[EMAIL_PDF_ERROR] Failed to generate PDF: {e}")
+
+    return _send_email(subject, html, to_emails, pdf_bytes=pdf_bytes, pdf_filename=f"GAM_360_Report_{period}.pdf")
