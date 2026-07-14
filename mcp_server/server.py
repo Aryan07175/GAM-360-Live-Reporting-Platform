@@ -475,7 +475,7 @@ async def handle_chat(request):
                     log.info(f"[Chat] Attempt {attempt+1}/{MAX_RETRIES} using model={model_name}")
                     
                     def _send_msg():
-                        return chat.send_message(message, stream=False)
+                        return chat.send_message(message)
                         
                     response = await asyncio.wait_for(asyncio.to_thread(_send_msg), timeout=25.0)
                     
@@ -514,7 +514,7 @@ async def handle_chat(request):
                             )
                             
                         def _send_tool_msg():
-                            return chat.send_message(tool_response_parts, stream=False)
+                            return chat.send_message(tool_response_parts)
                             
                         second_response = await asyncio.wait_for(asyncio.to_thread(_send_tool_msg), timeout=25.0)
                         
