@@ -179,19 +179,13 @@ class GAMClient:
             job_id,
             {"exportFormat": "CSV_DUMP", "useGzipCompression": True},
         )
-        downloader = self.client.GetDataDownloader(version=API_VERSION)
-        try:
-            raw = downloader.DownloadReportAsString(
-                job_id, export_format="CSV_DUMP", use_gzip_compression=True
-            )
-        except Exception as e:
-            log.warning(f"DownloadReportAsString failed, falling back to manual download: {e}")
-            import urllib.request
-            with urllib.request.urlopen(report_url) as resp:
-                raw = resp.read()
-            if report_url.endswith("gz") or raw[:2] == b"\x1f\x8b":
-                raw = gzip.decompress(raw)
-            raw = raw.decode("utf-8")
+        import urllib.request
+        with urllib.request.urlopen(report_url) as resp:
+            raw = resp.read()
+        if report_url.endswith("gz") or raw[:2] == b"\x1f\x8b":
+            import gzip
+            raw = gzip.decompress(raw)
+        raw = raw.decode("utf-8")
 
         df = pd.read_csv(io.StringIO(raw))
         df.columns = [
