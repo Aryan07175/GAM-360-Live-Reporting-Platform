@@ -368,58 +368,122 @@ or Ad Exchange match rate for ANY time period — not just what the dashboard cu
 | no period mentioned (default) | {ytd_start} | {today} |
 
 ## Metric Definitions
-- **revenue**: Total ad revenue (CPM+CPC) in USD across all channels
-- **impressions**: Total impressions served (all channels)
-- **clicks**: Total ad clicks (all channels)
-- **ecpm**: Effective CPM = Revenue/Impressions × 1000
-- **ctr**: Click-through rate = Clicks/Impressions × 100 (%)
-- **fill_rate**: Ad Server fill rate = Impressions/Ad Requests × 100 (%)
-- **ad_requests**: Total ad requests sent to GAM Ad Server
-- **match_rate**: Ad Exchange match rate = AdX Impressions/Ad Requests × 100 (%)
-  (use with channel="ad_exchange")
-- **adx_impressions**: Impressions served via Ad Exchange only
-- **adx_revenue**: Revenue from Ad Exchange only
-- **adx_clicks**: Clicks from Ad Exchange only
+
+### Ad Server (direct-sold)
+- **revenue** = `ad_server_cpm_and_cpc_revenue`: Ad Server CPM+CPC revenue (USD)
+- **impressions** = `ad_server_impressions`: Ad Server impressions
+- **clicks** = `ad_server_clicks`: Ad Server clicks
+- **ctr** = derived: Clicks/Impressions x 100 (%)
+- **ecpm** = derived: Revenue/Impressions x 1000 (USD)
+- **ad_requests** = `ad_server_ad_requests`: Ad Server ad requests
+- **fill_rate** = derived: Impressions/Ad Requests x 100 (%) — Ad Server only
+
+### Ad Exchange (programmatic)
+- **adx_revenue** = `ad_exchange_line_item_level_revenue`: AdX revenue only
+- **adx_impressions** = `ad_exchange_line_item_level_impressions`: AdX impressions
+- **adx_clicks** = `ad_exchange_line_item_level_clicks`: AdX clicks
+- **adx_ctr** = `ad_exchange_line_item_level_ctr`: AdX CTR (%)
+- **adx_ecpm** = `ad_exchange_line_item_level_average_ecpm`: AdX avg eCPM (USD)
+- **match_rate** = derived: AdX Impressions/Total Requests x 100 (%) — use channel="ad_exchange"
+- **programmatic_match_rate** = `programmatic_match_rate`: GAM native programmatic match rate
+
+### AdSense
+- **adsense_revenue** = `adsense_line_item_level_revenue`: AdSense revenue
+- **adsense_impressions** = `adsense_line_item_level_impressions`: AdSense impressions
+- **adsense_clicks** = `adsense_line_item_level_clicks`: AdSense clicks
+- **adsense_ctr** = `adsense_line_item_level_ctr`: AdSense CTR (%)
+- **adsense_ecpm** = `adsense_line_item_level_average_ecpm`: AdSense avg eCPM (USD)
+
+### Network-Wide (all demand channels)
+- **total_ad_requests** = `total_ad_requests`: True total ad requests (PREFERRED over ad_requests)
+- **total_responses_served** = `total_responses_served`: Total responses served
+- **total_fill_rate** = `total_fill_rate`: Network-wide fill rate (%)
+- **total_code_served** = `total_code_served_count`: Total code served count
+
+## Natural-Language to Tool Reference
+| User phrase | metric= | channel= | dimension= |
+|---|---|---|---|
+| "fill rate" | fill_rate | ad_server | none |
+| "total fill rate" | total_fill_rate | all | none |
+| "match rate" / "AdX match rate" | match_rate | ad_exchange | none |
+| "programmatic match rate" | programmatic_match_rate | all | none |
+| "total ad requests" | total_ad_requests | all | none |
+| "code served" | total_code_served | all | none |
+| "responses served" | total_responses_served | all | none |
+| "AdX CTR" | adx_ctr | ad_exchange | none |
+| "AdX eCPM" | adx_ecpm | ad_exchange | none |
+| "AdSense revenue" | adsense_revenue | adsense | none |
+| "AdSense eCPM" | adsense_ecpm | adsense | none |
+| "by app" / "by ad unit" | revenue | all | app |
+| "top-level ad units" | revenue | all | ad_unit_top |
+| "by website" / "by domain" | revenue | all | website |
+| "by advertiser" | revenue | all | advertiser |
+| "by country" | revenue | all | country |
+| "by child network" / "MCM" | revenue | all | child_network |
 
 ## Dimension Options
-- `none` — network-wide totals only
-- `app` / `ad_unit` — breakdown by mobile app / ad unit
-- `website` — breakdown by website domain; use filter_name for a specific site
-- `child_network` — breakdown by MCM child publisher network code
+- `none` -- network-wide totals only (no breakdown)
+- `app` / `ad_unit` -- breakdown by ad unit / mobile app name
+- `ad_unit_top` -- breakdown by top-level ad unit (first segment before "/")
+- `website` -- breakdown by website domain; use filter_name for a specific site
+- `advertiser` -- breakdown by advertiser name
+- `advertiser_classified` -- breakdown by classified advertiser
+- `country` -- breakdown by country name
+- `child_network` -- breakdown by MCM child publisher network code
 
 ## Few-Shot Examples
-**Example 1 — no time period (YTD default):**
-User: “What is total revenue?”
-→ Call: query_gam_data(start_date="{ytd_start}", end_date="{today}", metric="revenue", dimension="none", channel="all")
-→ Answer: “From January 1, {today.year} to today ({today.strftime('%B %-d, %Y')}), total revenue was **$X.XX**.”
+**Example 1 -- no time period (YTD default):**
+User: "What is total revenue?"
+-> Call: query_gam_data(start_date="{ytd_start}", end_date="{today}", metric="revenue", dimension="none", channel="all")
+-> Answer: "From January 1, {today.year} to today ({today.strftime('%B %-d, %Y')}), total revenue was **$X.XX**."
 
-**Example 2 — yesterday:**
-User: “Revenue yesterday”
-→ Call: query_gam_data(start_date="{yesterday}", end_date="{yesterday}", metric="revenue", dimension="none", channel="all")
+**Example 2 -- yesterday:**
+User: "Revenue yesterday"
+-> Call: query_gam_data(start_date="{yesterday}", end_date="{yesterday}", metric="revenue", dimension="none", channel="all")
 
-**Example 3 — past 30 days:**
-User: “Impressions past 30 days”
-→ Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="impressions", dimension="none", channel="all")
+**Example 3 -- past 30 days:**
+User: "Impressions past 30 days"
+-> Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="impressions", dimension="none", channel="all")
 
-**Example 4 — past 6 months:**
-User: “Total revenue past 6 months”
-→ Call: query_gam_data(start_date="{past180}", end_date="{today}", metric="revenue", dimension="none", channel="all")
+**Example 4 -- past 6 months:**
+User: "Total revenue past 6 months"
+-> Call: query_gam_data(start_date="{past180}", end_date="{today}", metric="revenue", dimension="none", channel="all")
 
-**Example 5 — past 1 year (rolling):**
-User: “Revenue past 1 year”
-→ Call: query_gam_data(start_date="{past365}", end_date="{today}", metric="revenue", dimension="none", channel="all")
+**Example 5 -- past 1 year (rolling):**
+User: "Revenue past 1 year"
+-> Call: query_gam_data(start_date="{past365}", end_date="{today}", metric="revenue", dimension="none", channel="all")
 
-**Example 6 — Ad Exchange match rate:**
-User: “Ad Exchange match rate yesterday”
-→ Call: query_gam_data(start_date="{yesterday}", end_date="{yesterday}", metric="match_rate", dimension="none", channel="ad_exchange")
+**Example 6 -- Ad Exchange match rate:**
+User: "Ad Exchange match rate yesterday"
+-> Call: query_gam_data(start_date="{yesterday}", end_date="{yesterday}", metric="match_rate", dimension="none", channel="ad_exchange")
 
-**Example 7 — website revenue:**
-User: “cardekho.com revenue past 30 days”
-→ Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="revenue", dimension="website", channel="all", filter_name="cardekho.com")
+**Example 7 -- website revenue:**
+User: "cardekho.com revenue past 30 days"
+-> Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="revenue", dimension="website", channel="all", filter_name="cardekho.com")
 
-**Example 8 — child network breakdown:**
-User: “Revenue by child network code past 30 days”
-→ Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="revenue", dimension="child_network", channel="all")
+**Example 8 -- child network breakdown:**
+User: "Revenue by child network code past 30 days"
+-> Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="revenue", dimension="child_network", channel="all")
+
+**Example 9 -- by country:**
+User: "Revenue by country this month"
+-> Call: query_gam_data(start_date="{mtd_start}", end_date="{today}", metric="revenue", dimension="country", channel="all")
+
+**Example 10 -- by advertiser:**
+User: "Top advertisers by revenue past 7 days"
+-> Call: query_gam_data(start_date="{past7}", end_date="{today}", metric="revenue", dimension="advertiser", channel="all")
+
+**Example 11 -- total ad requests:**
+User: "Total ad requests yesterday"
+-> Call: query_gam_data(start_date="{yesterday}", end_date="{yesterday}", metric="total_ad_requests", dimension="none", channel="all")
+
+**Example 12 -- AdSense eCPM:**
+User: "AdSense eCPM past 7 days"
+-> Call: query_gam_data(start_date="{past7}", end_date="{today}", metric="adsense_ecpm", dimension="none", channel="adsense")
+
+**Rule: fill rate vs match rate -- NEVER substitute one for the other:**
+- fill_rate = Ad Server: impressions/ad_requests (channel="ad_server")
+- match_rate = Ad Exchange: AdX impressions/total requests (channel="ad_exchange")
 
 ## Current Dashboard Context (reference only — do NOT use these numbers to answer questions)
 {summary_str}
@@ -517,19 +581,21 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
     """
     Execute a live query_gam_data tool call from the Bedrock chat.
 
-    Goes DIRECTLY to the live GAM SOAP API for the requested date range and
-    dimension — completely independent of any dashboard-scoped cache.
+    Supported metrics: revenue, impressions, clicks, ctr, ecpm, fill_rate,
+      ad_requests, total_ad_requests, total_fill_rate, total_responses_served,
+      total_code_served, match_rate, programmatic_match_rate,
+      adx_impressions, adx_revenue, adx_clicks, adx_ctr, adx_ecpm,
+      adsense_impressions, adsense_clicks, adsense_revenue, adsense_ctr, adsense_ecpm
 
-    Handles all four new capabilities:
-      - AdX match_rate / adx_* metrics (Part 2)
-      - filter_name for domain/app substring filtering (Part 3)
-      - child_network dimension via CHILD_NETWORK_CODE GAM dim (Part 4)
-      - YTD default when start_date not provided (Part 1)
+    Supported dimensions: none, app, ad_unit, ad_unit_top, website,
+      child_network, advertiser, advertiser_classified, country
     """
+    from mcp_server.gam_client import DIMENSION_MAP, DIMENSIONS_NEED_SEPARATE_REPORT
+
     today = date.today()
     ytd_start = today.replace(month=1, day=1)
 
-    # ── Apply YTD default when no dates provided (Part 1) ──────────────────
+    # ── Apply YTD default when no dates provided ─────────────────────────────
     start_raw = input_dict.get("start_date", "").strip()
     end_raw   = input_dict.get("end_date",   "").strip()
     if not start_raw:
@@ -537,37 +603,46 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         end_raw   = today.isoformat()
         log.info("[Chat:query_gam_data] No date provided — defaulting to YTD: %s to %s", start_raw, end_raw)
 
-    dimension   = input_dict.get("dimension", "none")     # none|app|website|ad_unit|child_network
-    metric      = input_dict.get("metric", "revenue")     # revenue|impressions|...|match_rate|adx_*
-    channel     = input_dict.get("channel", "all")        # all|ad_server|adsense|ad_exchange
-    filter_name = (input_dict.get("filter_name") or "").strip()  # optional name filter
+    dimension   = input_dict.get("dimension", "none")
+    metric      = input_dict.get("metric", "revenue")
+    channel     = input_dict.get("channel", "all")
+    filter_name = (input_dict.get("filter_name") or "").strip()
 
     try:
         start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
     except Exception as e:
         return {"error": f"Invalid date format: {e}. Use YYYY-MM-DD."}
 
-    # ── Map channel param to demand_channel expected by gam_client ─────────
+    # ── Map channel → demand_channel for gam_client ──────────────────────────
     demand_map = {
         "all":         "all",
-        "ad_server":   "all",       # use full report; filter below or by column
+        "ad_server":   "all",
         "adsense":     "programmatic",
-        "ad_exchange": "programmatic",  # AdX → programmatic report
+        "ad_exchange": "programmatic",
     }
     demand_channel = demand_map.get(channel, "all")
 
-    # ── Extra GAM dimensions for MCM child network breakdown (Part 4) ──────
+    # ── Resolve dimension → extra_dims + separate_report flag ────────────────
+    gam_dim_name = DIMENSION_MAP.get(dimension)
     extra_dims: list[str] = []
-    if dimension == "child_network":
-        extra_dims = ["CHILD_NETWORK_CODE"]
+    separate_report = False
+    if gam_dim_name:
+        extra_dims = [gam_dim_name]
+        if gam_dim_name in DIMENSIONS_NEED_SEPARATE_REPORT:
+            separate_report = True
 
     log.info(
-        "[Chat:query_gam_data] Fetching LIVE — %s to %s | dim=%s metric=%s channel=%s filter=%r extra_dims=%s",
-        start_date, end_date, dimension, metric, channel, filter_name, extra_dims,
+        "[Chat:query_gam_data] Fetching LIVE — %s to %s | dim=%s metric=%s channel=%s "
+        "filter=%r extra_dims=%s separate=%s",
+        start_date, end_date, dimension, metric, channel,
+        filter_name, extra_dims, separate_report,
     )
 
     try:
-        df = await gam.get_live_data_multi_day(start_date, end_date, False, demand_channel, extra_dims or None)
+        df = await gam.get_live_data_multi_day(
+            start_date, end_date, False, demand_channel,
+            extra_dims or None, separate_report,
+        )
     except Exception as e:
         log.error("[Chat:query_gam_data] GAM fetch failed: %s", e)
         return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
@@ -584,129 +659,238 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
             "note":       "No data returned by GAM for this date range / channel combination.",
         }
 
-    # ── Column mappings (for sort selection) ─────────────────────────────
+    # ── Helper: safe column sum ───────────────────────────────────────────────
+    def _col(name: str, default=0):
+        if name in df.columns:
+            v = df[name].sum()
+            return float(v) if isinstance(default, float) else int(v)
+        return default
+
+    # ── Column mappings (metric name → DataFrame column for sort) ────────────
     METRIC_COL = {
-        "revenue":        "ad_server_cpm_and_cpc_revenue",
-        "impressions":    "ad_server_impressions",
-        "clicks":         "ad_server_clicks",
-        "ad_requests":    "ad_server_ad_requests",
-        "match_rate":     "adx_match_rate",
-        "adx_impressions":"adx_impressions",
-        "adx_revenue":    "adx_revenue",
-        "adx_clicks":     "adx_clicks",
-        "ctr":            None,   # derived
-        "ecpm":           None,   # derived
-        "fill_rate":      None,   # derived
+        "revenue":                 "ad_server_cpm_and_cpc_revenue",
+        "impressions":             "ad_server_impressions",
+        "clicks":                  "ad_server_clicks",
+        "ad_requests":             "ad_server_ad_requests",
+        "ctr":                     None,
+        "ecpm":                    None,
+        "fill_rate":               None,
+        "match_rate":              "adx_match_rate",
+        "adx_impressions":         "adx_impressions",
+        "adx_revenue":             "adx_revenue",
+        "adx_clicks":              "adx_clicks",
+        "adx_ctr":                 "ad_exchange_line_item_level_ctr",
+        "adx_ecpm":                "ad_exchange_line_item_level_average_ecpm",
+        "adsense_impressions":     "adsense_line_item_level_impressions",
+        "adsense_clicks":          "adsense_line_item_level_clicks",
+        "adsense_revenue":         "adsense_line_item_level_revenue",
+        "adsense_ctr":             "adsense_line_item_level_ctr",
+        "adsense_ecpm":            "adsense_line_item_level_average_ecpm",
+        "total_ad_requests":       "total_ad_requests",
+        "total_responses_served":  "total_responses_served",
+        "total_fill_rate":         "total_fill_rate",
+        "total_code_served":       "total_code_served_count",
+        "programmatic_match_rate": "programmatic_match_rate",
     }
 
-    # ── Compute network-wide totals ────────────────────────────────────
-    total_rev   = float(df["ad_server_cpm_and_cpc_revenue"].sum())
-    total_imp   = int(df["ad_server_impressions"].sum())
-    total_clk   = int(df["ad_server_clicks"].sum())
-    total_req   = int(df["ad_server_ad_requests"].sum())
-    total_adx_imp = int(df["adx_impressions"].sum()) if "adx_impressions" in df.columns else 0
-    total_adx_rev = float(df["adx_revenue"].sum())   if "adx_revenue"    in df.columns else 0.0
-    total_adx_clk = int(df["adx_clicks"].sum())      if "adx_clicks"     in df.columns else 0
+    # ── Compute network-wide totals ───────────────────────────────────────────
+    total_rev   = _col("ad_server_cpm_and_cpc_revenue", 0.0)
+    total_imp   = _col("ad_server_impressions")
+    total_clk   = _col("ad_server_clicks")
+    total_req   = _col("ad_server_ad_requests")
 
-    total_ecpm      = round((total_rev / total_imp * 1000), 6) if total_imp > 0 else 0.0
-    total_ctr       = round((total_clk / total_imp * 100), 4)  if total_imp > 0 else 0.0
-    total_fill      = round((total_imp / total_req * 100), 2)  if total_req > 0 else 0.0
-    total_match_rate= round((total_adx_imp / total_req * 100), 4) if total_req > 0 else 0.0
+    true_ad_req  = _col("total_ad_requests")
+    true_resp    = _col("total_responses_served")
+    true_unmatch = _col("total_unmatched_ad_requests")
+    true_fill    = _col("total_fill_rate", 0.0)
+    true_code    = _col("total_code_served_count")
+    prog_match   = _col("programmatic_match_rate", 0.0)
+    prog_resp    = _col("programmatic_responses_served")
+
+    adx_imp      = _col("adx_impressions")
+    adx_rev      = _col("adx_revenue", 0.0)
+    adx_clk      = _col("adx_clicks")
+    adx_ctr_val  = _col("ad_exchange_line_item_level_ctr", 0.0)
+    adx_ecpm_val = _col("ad_exchange_line_item_level_average_ecpm", 0.0)
+
+    as_imp  = _col("adsense_line_item_level_impressions")
+    as_clk  = _col("adsense_line_item_level_clicks")
+    as_rev  = _col("adsense_line_item_level_revenue", 0.0)
+    as_ctr  = _col("adsense_line_item_level_ctr", 0.0)
+    as_ecpm = _col("adsense_line_item_level_average_ecpm", 0.0)
+
+    total_ecpm = round((total_rev / total_imp * 1000), 6) if total_imp > 0 else 0.0
+    total_ctr  = round((total_clk / total_imp * 100),  4) if total_imp > 0 else 0.0
+    fill_rate  = round((total_imp / total_req * 100),  2) if total_req > 0 else 0.0
+    match_rate = round((adx_imp  / total_req * 100),   4) if total_req > 0 else 0.0
+
+    best_fill  = round(float(true_fill), 2) if true_fill > 0 else fill_rate
+    best_req   = true_ad_req if true_ad_req > 0 else total_req
+    best_match = round(float(prog_match), 4) if prog_match > 0 else match_rate
 
     metric_total_map = {
-        "revenue":         round(total_rev, 6),
-        "impressions":     total_imp,
-        "clicks":          total_clk,
-        "ad_requests":     total_req,
-        "ecpm":            total_ecpm,
-        "ctr":             total_ctr,
-        "fill_rate":       total_fill,
-        "match_rate":      total_match_rate,
-        "adx_impressions": total_adx_imp,
-        "adx_revenue":     round(total_adx_rev, 6),
-        "adx_clicks":      total_adx_clk,
+        "revenue":                 round(total_rev, 6),
+        "impressions":             total_imp,
+        "clicks":                  total_clk,
+        "ad_requests":             total_req,
+        "total_ad_requests":       true_ad_req,
+        "total_responses_served":  true_resp,
+        "total_fill_rate":         best_fill,
+        "total_code_served":       true_code,
+        "ctr":                     total_ctr,
+        "ecpm":                    total_ecpm,
+        "fill_rate":               best_fill,
+        "match_rate":              best_match,
+        "programmatic_match_rate": best_match,
+        "adx_impressions":         adx_imp,
+        "adx_revenue":             round(adx_rev, 6),
+        "adx_clicks":              adx_clk,
+        "adx_ctr":                 round(adx_ctr_val, 4),
+        "adx_ecpm":                round(adx_ecpm_val, 6),
+        "adsense_impressions":     as_imp,
+        "adsense_clicks":          as_clk,
+        "adsense_revenue":         round(as_rev, 6),
+        "adsense_ctr":             round(as_ctr, 4),
+        "adsense_ecpm":            round(as_ecpm, 6),
     }
     scalar_total = metric_total_map.get(metric, round(total_rev, 6))
 
     result = {
-        "start_date":           str(start_date),
-        "end_date":             str(end_date),
-        "dimension":            dimension,
-        "metric":               metric,
-        "channel":              channel,
-        "total_revenue_usd":    round(total_rev, 6),
-        "total_impressions":    total_imp,
-        "total_clicks":         total_clk,
-        "total_ad_requests":    total_req,
-        "avg_ecpm_usd":         total_ecpm,
-        "avg_ctr_pct":          total_ctr,
-        "fill_rate_pct":        total_fill,
-        "adx_impressions":      total_adx_imp,
-        "adx_revenue_usd":      round(total_adx_rev, 6),
-        "adx_clicks":           total_adx_clk,
-        "adx_match_rate_pct":   total_match_rate,
-        "primary_metric":       metric,
-        "primary_total":        scalar_total,
-        "rows":                 [],
+        "start_date":                    str(start_date),
+        "end_date":                      str(end_date),
+        "dimension":                     dimension,
+        "metric":                        metric,
+        "channel":                       channel,
+        "total_revenue_usd":             round(total_rev, 6),
+        "total_impressions":             total_imp,
+        "total_clicks":                  total_clk,
+        "total_ad_requests":             best_req,
+        "total_responses_served":        true_resp,
+        "total_unmatched_ad_requests":   true_unmatch,
+        "total_code_served_count":       true_code,
+        "avg_ecpm_usd":                  total_ecpm,
+        "avg_ctr_pct":                   total_ctr,
+        "fill_rate_pct":                 best_fill,
+        "adx_impressions":               adx_imp,
+        "adx_revenue_usd":               round(adx_rev, 6),
+        "adx_clicks":                    adx_clk,
+        "adx_ctr_pct":                   round(adx_ctr_val, 4),
+        "adx_ecpm_usd":                  round(adx_ecpm_val, 6),
+        "adx_match_rate_pct":            match_rate,
+        "programmatic_match_rate_pct":   best_match,
+        "programmatic_responses_served": prog_resp,
+        "adsense_impressions":           as_imp,
+        "adsense_clicks":                as_clk,
+        "adsense_revenue_usd":           round(as_rev, 6),
+        "adsense_ctr_pct":               round(as_ctr, 4),
+        "adsense_ecpm_usd":              round(as_ecpm, 6),
+        "primary_metric":                metric,
+        "primary_total":                 scalar_total,
+        "rows":                          [],
     }
 
-    # ── Helper: compute per-row stats ──────────────────────────────────
+    # ── Helper: compute per-row derived stats ─────────────────────────────────
     def _add_derived_cols(g: pd.DataFrame) -> pd.DataFrame:
         g = g.copy()
-        g["ecpm_usd"] = (
-            g["ad_server_cpm_and_cpc_revenue"] / g["ad_server_impressions"] * 1000
-        ).where(g["ad_server_impressions"] > 0, 0).round(6)
-        g["ctr_pct"] = (
-            g["ad_server_clicks"] / g["ad_server_impressions"] * 100
-        ).where(g["ad_server_impressions"] > 0, 0).round(4)
-        g["fill_rate_pct"] = (
-            g["ad_server_impressions"] / g["ad_server_ad_requests"] * 100
-        ).where(g["ad_server_ad_requests"] > 0, 0).round(2)
-        if "adx_impressions" in g.columns:
+        rev_c = next((c for c in ["ad_server_cpm_and_cpc_revenue",
+                                   "total_line_item_level_cpm_and_cpc_revenue"]
+                      if c in g.columns), None)
+        imp_c = next((c for c in ["ad_server_impressions",
+                                   "total_line_item_level_impressions"]
+                      if c in g.columns), None)
+        clk_c = next((c for c in ["ad_server_clicks",
+                                   "total_line_item_level_clicks"]
+                      if c in g.columns), None)
+        req_c = next((c for c in ["ad_server_ad_requests", "total_ad_requests"]
+                      if c in g.columns), None)
+        if rev_c and imp_c:
+            g["ecpm_usd"] = (g[rev_c] / g[imp_c] * 1000).where(g[imp_c] > 0, 0).round(6)
+        if clk_c and imp_c:
+            g["ctr_pct"] = (g[clk_c] / g[imp_c] * 100).where(g[imp_c] > 0, 0).round(4)
+        if imp_c and req_c:
+            g["fill_rate_pct"] = (g[imp_c] / g[req_c] * 100).where(g[req_c] > 0, 0).round(2)
+        if "adx_impressions" in g.columns and req_c:
             g["adx_match_rate_pct"] = (
-                g["adx_impressions"] / g["ad_server_ad_requests"] * 100
-            ).where(g["ad_server_ad_requests"] > 0, 0).round(4)
+                g["adx_impressions"] / g[req_c] * 100
+            ).where(g[req_c] > 0, 0).round(4)
         return g
 
-    AGG_COLS = {
-        "ad_server_cpm_and_cpc_revenue": "sum",
-        "ad_server_impressions":         "sum",
-        "ad_server_clicks":              "sum",
-        "ad_server_ad_requests":         "sum",
-    }
-    if "adx_impressions" in df.columns:
-        AGG_COLS["adx_impressions"] = "sum"
-        AGG_COLS["adx_revenue"]     = "sum"
-        AGG_COLS["adx_clicks"]      = "sum"
+    # Aggregation columns — different for separate-report mode
+    if separate_report:
+        AGG_COLS = {c: "sum" for c in [
+            "total_line_item_level_cpm_and_cpc_revenue",
+            "total_line_item_level_impressions",
+            "total_line_item_level_clicks",
+            "total_ad_requests", "total_responses_served", "total_fill_rate",
+        ] if c in df.columns}
+    else:
+        AGG_COLS = {
+            "ad_server_cpm_and_cpc_revenue": "sum",
+            "ad_server_impressions":         "sum",
+            "ad_server_clicks":              "sum",
+            "ad_server_ad_requests":         "sum",
+        }
+        for extra_c in [
+            "adx_impressions", "adx_revenue", "adx_clicks",
+            "adsense_line_item_level_impressions", "adsense_line_item_level_clicks",
+            "adsense_line_item_level_revenue", "adsense_line_item_level_ctr",
+            "adsense_line_item_level_average_ecpm",
+            "ad_exchange_line_item_level_ctr", "ad_exchange_line_item_level_average_ecpm",
+            "total_ad_requests", "total_responses_served",
+            "programmatic_match_rate", "programmatic_responses_served",
+        ]:
+            if extra_c in df.columns:
+                AGG_COLS[extra_c] = "sum"
 
-    # ── Dimension breakdown ───────────────────────────────────────────────
-    if dimension in ("app", "ad_unit"):
-        grouped = df.groupby("ad_unit_name").agg(AGG_COLS).reset_index()
-        grouped = grouped.rename(columns={"ad_unit_name": "name"})
-
-        # ─ filter_name: substring match (Part 3 — app/ad_unit filtering) ───
-        if filter_name:
-            mask = grouped["name"].str.lower().str.contains(
-                filter_name.lower().replace("www.", ""), na=False
-            )
-            if mask.any():
-                grouped = grouped[mask]
-
-        grouped = _add_derived_cols(grouped)
-        sort_col = METRIC_COL.get(metric) or "ad_server_cpm_and_cpc_revenue"
-        if sort_col in grouped.columns:
+    def _sort_and_store(grouped: pd.DataFrame):
+        sort_col = METRIC_COL.get(metric)
+        if not sort_col or sort_col not in grouped.columns:
+            for cand in ["ad_server_cpm_and_cpc_revenue",
+                         "total_line_item_level_cpm_and_cpc_revenue"]:
+                if cand in grouped.columns:
+                    sort_col = cand
+                    break
+        if sort_col and sort_col in grouped.columns:
             grouped = grouped.sort_values(sort_col, ascending=False)
         result["rows"] = sanitize_for_json(grouped.head(50).to_dict(orient="records"))
 
-    elif dimension == "website":
-        df_copy = df.copy()
-        df_copy["name"] = df_copy["ad_unit_name"].apply(_extract_domain)
-        grouped = df_copy.groupby("name").agg(AGG_COLS).reset_index()
-        grouped = _add_derived_cols(grouped)
+    # ── Dimension breakdown ───────────────────────────────────────────────────
 
-        # ─ filter_name: normalised domain match (Part 3) ────────────────
-        if filter_name:
-            # Normalise: strip protocol, www, trailing slashes, lowercase
+    if dimension in ("app", "ad_unit"):
+        if "ad_unit_name" not in df.columns:
+            result["note"] = "ad_unit_name not available."
+        else:
+            grouped = df.groupby("ad_unit_name").agg(AGG_COLS).reset_index()
+            grouped = grouped.rename(columns={"ad_unit_name": "name"})
+            if filter_name:
+                mask = grouped["name"].str.lower().str.contains(
+                    filter_name.lower().replace("www.", ""), na=False)
+                if mask.any():
+                    grouped = grouped[mask]
+            grouped = _add_derived_cols(grouped)
+            _sort_and_store(grouped)
+
+    elif dimension == "ad_unit_top":
+        if "ad_unit_name" not in df.columns:
+            result["note"] = "ad_unit_name not available."
+        else:
+            df_copy = df.copy()
+            df_copy["top_unit"] = df_copy["ad_unit_name"].apply(
+                lambda n: n.split("/")[0].strip() if isinstance(n, str) else n)
+            grouped = df_copy.groupby("top_unit").agg(AGG_COLS).reset_index()
+            grouped = grouped.rename(columns={"top_unit": "name"})
+            if filter_name:
+                mask = grouped["name"].str.lower().str.contains(
+                    filter_name.lower().replace("www.", ""), na=False)
+                if mask.any():
+                    grouped = grouped[mask]
+            grouped = _add_derived_cols(grouped)
+            _sort_and_store(grouped)
+
+    elif dimension == "website":
+        if "ad_unit_name" not in df.columns:
+            result["note"] = "ad_unit_name not available."
+        else:
             import re as _re
             def _norm_domain(s: str) -> str:
                 s = s.lower()
@@ -714,42 +898,67 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
                 s = _re.sub(r'^www\.', '', s)
                 return s.strip('/')
 
-            query_norm = _norm_domain(filter_name)
-            # Exact normalised match first
-            exact_mask = grouped["name"].apply(_norm_domain) == query_norm
-            if exact_mask.any():
-                grouped = grouped[exact_mask]
-            else:
-                # Substring fallback
-                sub_mask = grouped["name"].apply(_norm_domain).str.contains(
-                    query_norm, regex=False, na=False
-                )
-                if sub_mask.any():
-                    grouped = grouped[sub_mask]
-                # else: return all (no match — let model report "not found in breakdown")
-
-        sort_col = METRIC_COL.get(metric) or "ad_server_cpm_and_cpc_revenue"
-        if sort_col in grouped.columns:
-            grouped = grouped.sort_values(sort_col, ascending=False)
-        result["rows"] = sanitize_for_json(grouped.head(50).to_dict(orient="records"))
+            df_copy = df.copy()
+            df_copy["name"] = df_copy["ad_unit_name"].apply(_extract_domain)
+            grouped = df_copy.groupby("name").agg(AGG_COLS).reset_index()
+            grouped = _add_derived_cols(grouped)
+            if filter_name:
+                qn = _norm_domain(filter_name)
+                exact = grouped["name"].apply(_norm_domain) == qn
+                if exact.any():
+                    grouped = grouped[exact]
+                else:
+                    sub = grouped["name"].apply(_norm_domain).str.contains(qn, regex=False, na=False)
+                    if sub.any():
+                        grouped = grouped[sub]
+            _sort_and_store(grouped)
 
     elif dimension == "child_network":
-        # Part 4: MCM child network breakdown
         group_col = "child_network_code" if "child_network_code" in df.columns else None
         if group_col:
             grouped = df.groupby(group_col).agg(AGG_COLS).reset_index()
             grouped = grouped.rename(columns={group_col: "name"})
             grouped = _add_derived_cols(grouped)
-            sort_col = METRIC_COL.get(metric) or "ad_server_cpm_and_cpc_revenue"
-            if sort_col in grouped.columns:
-                grouped = grouped.sort_values(sort_col, ascending=False)
-            result["rows"] = sanitize_for_json(grouped.to_dict(orient="records"))
+            _sort_and_store(grouped)
         else:
             result["note"] = (
-                "child_network_code column not present in this report. "
-                "This account may not be an MCM network manager, or the dimension "
-                "was not available for this date range."
+                "child_network_code column not present. "
+                "This account may not be an MCM network manager."
             )
+
+    elif dimension in ("advertiser", "advertiser_classified"):
+        group_col = (
+            "advertiser_name" if dimension == "advertiser"
+            else "classified_advertiser_name"
+        )
+        if group_col not in df.columns:
+            result["note"] = (
+                f"'{group_col}' not available. Advertiser dimension may not be "
+                "supported for this account/date range."
+            )
+        else:
+            grouped = df.groupby(group_col).agg(AGG_COLS).reset_index()
+            grouped = grouped.rename(columns={group_col: "name"})
+            if filter_name:
+                mask = grouped["name"].str.lower().str.contains(filter_name.lower(), na=False)
+                if mask.any():
+                    grouped = grouped[mask]
+            grouped = _add_derived_cols(grouped)
+            _sort_and_store(grouped)
+
+    elif dimension == "country":
+        group_col = "country_name" if "country_name" in df.columns else None
+        if group_col:
+            grouped = df.groupby(group_col).agg(AGG_COLS).reset_index()
+            grouped = grouped.rename(columns={group_col: "name"})
+            if filter_name:
+                mask = grouped["name"].str.lower().str.contains(filter_name.lower(), na=False)
+                if mask.any():
+                    grouped = grouped[mask]
+            grouped = _add_derived_cols(grouped)
+            _sort_and_store(grouped)
+        else:
+            result["note"] = "country_name column not present in this report."
 
     # dimension="none": rows stays empty — totals only
     log.info(

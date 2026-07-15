@@ -105,37 +105,73 @@ def get_query_gam_data_tool_spec() -> dict:
                         },
                         "dimension": {
                             "type": "string",
-                            "enum": ["none", "app", "website", "ad_unit", "child_network"],
+                            "enum": [
+                                "none", "app", "ad_unit", "ad_unit_top",
+                                "website", "child_network",
+                                "advertiser", "advertiser_classified", "country"
+                            ],
                             "description": (
                                 "How to break down the result. "
                                 "'none' = network-wide totals only (no breakdown). "
-                                "'app' = breakdown by mobile app / ad unit name. "
-                                "'website' = breakdown by website domain (strips protocol/www, groups by domain). "
-                                "'ad_unit' = breakdown by ad unit name (same as 'app'). "
-                                "'child_network' = breakdown by MCM child network code (for publisher network managers)."
+                                "'app'/'ad_unit' = breakdown by ad unit / mobile app name. "
+                                "'ad_unit_top' = breakdown by top-level ad unit (root segment before '/'). "
+                                "'website' = breakdown by website domain (strips protocol/www). "
+                                "'child_network' = breakdown by MCM child network code. "
+                                "'advertiser' = breakdown by advertiser name (uses separate report, no ad-unit split). "
+                                "'advertiser_classified' = breakdown by classified advertiser. "
+                                "'country' = breakdown by country name (uses separate report, no ad-unit split). "
+                                "Use 'advertiser' when user says 'by advertiser'. "
+                                "Use 'country' when user says 'by country'. "
+                                "Use 'ad_unit_top' when user says 'top-level ad units'."
                             ),
                         },
                         "metric": {
                             "type": "string",
                             "enum": [
+                                # Core
                                 "revenue", "impressions", "clicks", "ctr", "ecpm",
                                 "fill_rate", "ad_requests",
-                                "match_rate", "adx_impressions", "adx_revenue", "adx_clicks"
+                                # Ad Exchange
+                                "match_rate", "programmatic_match_rate",
+                                "adx_impressions", "adx_revenue", "adx_clicks",
+                                "adx_ctr", "adx_ecpm",
+                                # AdSense
+                                "adsense_impressions", "adsense_clicks", "adsense_revenue",
+                                "adsense_ctr", "adsense_ecpm",
+                                # Network-wide totals
+                                "total_ad_requests", "total_responses_served",
+                                "total_fill_rate", "total_code_served"
                             ],
                             "description": (
                                 "Primary metric to report. "
-                                "revenue = total ad revenue in USD (all channels). "
-                                "impressions = total impressions (all channels). "
-                                "clicks = total ad clicks (all channels). "
-                                "ctr = click-through rate (%). "
-                                "ecpm = effective CPM in USD. "
-                                "fill_rate = Ad Server impression fill rate = impressions/ad_requests × 100 (%). "
-                                "ad_requests = total ad requests sent to GAM Ad Server. "
-                                "match_rate = Ad Exchange match rate = AdX impressions / ad_requests × 100 (%). "
-                                "  Use channel='ad_exchange' with match_rate. "
-                                "adx_impressions = Ad Exchange impressions only. "
-                                "adx_revenue = Ad Exchange revenue only. "
-                                "adx_clicks = Ad Exchange clicks only."
+                                "--- Ad Server --- "
+                                "revenue = Ad Server CPM+CPC revenue (USD). "
+                                "impressions = Ad Server impressions. "
+                                "clicks = Ad Server clicks. "
+                                "ctr = Ad Server CTR (%). "
+                                "ecpm = Ad Server effective CPM (USD). "
+                                "fill_rate = Ad Server fill rate = impressions/ad_requests x 100 (%). "
+                                "ad_requests = Ad Server ad requests. "
+                                "--- Ad Exchange --- "
+                                "adx_revenue = AdX revenue. "
+                                "adx_impressions = AdX impressions. "
+                                "adx_clicks = AdX clicks. "
+                                "adx_ctr = AdX CTR (%). "
+                                "adx_ecpm = AdX average eCPM (USD). "
+                                "match_rate = AdX match rate = AdX impressions/total requests x 100 (%). Use channel='ad_exchange'. "
+                                "programmatic_match_rate = GAM native PROGRAMMATIC_MATCH_RATE column. "
+                                "--- AdSense --- "
+                                "adsense_revenue = AdSense revenue. "
+                                "adsense_impressions = AdSense impressions. "
+                                "adsense_clicks = AdSense clicks. "
+                                "adsense_ctr = AdSense CTR (%). "
+                                "adsense_ecpm = AdSense avg eCPM (USD). "
+                                "--- Network-wide (WSDL TOTAL_* columns) --- "
+                                "total_ad_requests = TOTAL_AD_REQUESTS (preferred for true total across all channels). "
+                                "total_responses_served = TOTAL_RESPONSES_SERVED. "
+                                "total_fill_rate = TOTAL_FILL_RATE (%). "
+                                "total_code_served = TOTAL_CODE_SERVED_COUNT. "
+                                "IMPORTANT: fill_rate != match_rate. Never substitute one for the other."
                             ),
                         },
                         "channel": {
