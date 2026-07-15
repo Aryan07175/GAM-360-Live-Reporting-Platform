@@ -255,6 +255,12 @@ class GAMClient:
                 df["adsense_line_item_level_revenue"] +
                 df["ad_exchange_line_item_level_revenue"]
             )
+            # For programmatic channels GAM does not expose a separate ad-requests
+            # column — use the combined impressions as the best available proxy.
+            if df["ad_server_ad_requests"].sum() == 0:
+                df["ad_server_ad_requests"] = df["ad_server_impressions"]
+                log.info("[ad_requests] AD_SERVER_AD_REQUESTS is 0 (programmatic mode) — "
+                         "falling back to combined programmatic impressions as proxy.")
         else:
             # Total Network (All)
             # Map the native GAM Total metrics to our canonical dataframe columns.
@@ -263,6 +269,14 @@ class GAMClient:
             df["ad_server_clicks"] = df["total_line_item_level_clicks"]
             df["ad_server_cpm_and_cpc_revenue"] = df["total_line_item_level_cpm_and_cpc_revenue"]
             df["ad_server_without_cpd_average_ecpm"] = df["total_line_item_level_without_cpd_average_ecpm"]
+            # GAM's AD_SERVER_AD_REQUESTS only counts direct/ad-server requests.
+            # On networks with mixed or programmatic-only demand it is frequently 0.
+            # When that happens, fall back to total impressions as the best available
+            # proxy (every impression required at least one ad request).
+            if df["ad_server_ad_requests"].sum() == 0:
+                df["ad_server_ad_requests"] = df["total_line_item_level_impressions"]
+                log.info("[ad_requests] AD_SERVER_AD_REQUESTS is 0 — falling back to "
+                         "total_line_item_level_impressions as proxy for ad requests.")
 
         # ── Ad Exchange match rate (computed column) ─────────────────────────
         # GAM's UI match rate = AdX impressions / Ad Server ad_requests * 100.
