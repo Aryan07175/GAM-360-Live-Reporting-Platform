@@ -35,6 +35,7 @@ COLUMNS = [
     "AD_SERVER_CPM_AND_CPC_REVENUE",
     "AD_SERVER_WITHOUT_CPD_AVERAGE_ECPM",
     "AD_SERVER_RESPONSES_SERVED",
+    "AD_SERVER_BEGIN_TO_RENDER_IMPRESSIONS",     # inactive begin-to-render impressions
 
     # --- AdSense backfill ---
     "ADSENSE_LINE_ITEM_LEVEL_IMPRESSIONS",
@@ -50,23 +51,42 @@ COLUMNS = [
     "AD_EXCHANGE_LINE_ITEM_LEVEL_CTR",
     "AD_EXCHANGE_LINE_ITEM_LEVEL_AVERAGE_ECPM",
 
-    # --- Total Network (All Channels) ---
+    # --- Total Network: line-item-level aggregates ---
     "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
+    "TOTAL_LINE_ITEM_LEVEL_TARGETED_IMPRESSIONS",
     "TOTAL_LINE_ITEM_LEVEL_CLICKS",
+    "TOTAL_LINE_ITEM_LEVEL_TARGETED_CLICKS",
     "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
+    "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",          # Total revenue (all demand incl. CPD)
     "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
+    "TOTAL_LINE_ITEM_LEVEL_WITH_CPD_AVERAGE_ECPM",
     "TOTAL_LINE_ITEM_LEVEL_CTR",
 
-    # --- True network-wide request / fill metrics (WSDL-confirmed) ---
+    # --- Total Network: request / fill / code metrics (WSDL-confirmed) ---
     "TOTAL_AD_REQUESTS",
     "TOTAL_RESPONSES_SERVED",
     "TOTAL_UNMATCHED_AD_REQUESTS",
     "TOTAL_FILL_RATE",
     "TOTAL_CODE_SERVED_COUNT",
 
+    # --- Total Network: inventory / opportunity metrics ---
+    "TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS",  # unfilled impressions
+
+    # --- Total Active View (network-wide) ---
+    "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
+    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
+    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
+    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE",   # % measurable
+    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE",     # % viewable
+    "TOTAL_ACTIVE_VIEW_AVERAGE_VIEWABLE_TIME",
+    "TOTAL_ACTIVE_VIEW_REVENUE",
+
     # --- Programmatic match rate ---
     "PROGRAMMATIC_RESPONSES_SERVED",
     "PROGRAMMATIC_MATCH_RATE",
+
+    # --- Drop-off rate ---
+    "DROPOFF_RATE",
 ]
 
 # ─── Dimension map: logical name → GAM API Dimension enum value ───────────────
@@ -94,6 +114,7 @@ ALL_CHANNEL_COLS = [
     "ad_server_impressions", "ad_server_clicks", "ad_server_cpm_and_cpc_revenue",
     "ad_server_ctr", "ad_server_ad_requests", "ad_server_fill_rate",
     "ad_server_without_cpd_average_ecpm", "ad_server_responses_served",
+    "ad_server_begin_to_render_impressions",
     # AdSense
     "adsense_line_item_level_impressions", "adsense_line_item_level_clicks",
     "adsense_line_item_level_revenue", "adsense_line_item_level_ctr",
@@ -102,16 +123,31 @@ ALL_CHANNEL_COLS = [
     "ad_exchange_line_item_level_impressions", "ad_exchange_line_item_level_clicks",
     "ad_exchange_line_item_level_revenue", "ad_exchange_line_item_level_ctr",
     "ad_exchange_line_item_level_average_ecpm",
-    # Total Network
-    "total_line_item_level_impressions", "total_line_item_level_clicks",
+    # Total Network: line-item-level
+    "total_line_item_level_impressions", "total_line_item_level_targeted_impressions",
+    "total_line_item_level_clicks", "total_line_item_level_targeted_clicks",
     "total_line_item_level_cpm_and_cpc_revenue",
+    "total_line_item_level_all_revenue",
     "total_line_item_level_without_cpd_average_ecpm",
+    "total_line_item_level_with_cpd_average_ecpm",
     "total_line_item_level_ctr",
-    # True network-wide request/fill metrics
+    # Total Network: request/fill/code
     "total_ad_requests", "total_responses_served",
     "total_unmatched_ad_requests", "total_fill_rate", "total_code_served_count",
+    # Total Network: inventory
+    "total_inventory_level_unfilled_impressions",
+    # Total Active View
+    "total_active_view_eligible_impressions",
+    "total_active_view_measurable_impressions",
+    "total_active_view_viewable_impressions",
+    "total_active_view_measurable_impressions_rate",
+    "total_active_view_viewable_impressions_rate",
+    "total_active_view_average_viewable_time",
+    "total_active_view_revenue",
     # Programmatic
     "programmatic_responses_served", "programmatic_match_rate",
+    # Drop-off
+    "dropoff_rate",
 ]
 
 

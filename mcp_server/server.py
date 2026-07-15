@@ -403,23 +403,46 @@ or Ad Exchange match rate for ANY time period — not just what the dashboard cu
 ## Natural-Language to Tool Reference
 | User phrase | metric= | channel= | dimension= |
 |---|---|---|---|
-| "fill rate" | fill_rate | ad_server | none |
-| "total fill rate" | total_fill_rate | all | none |
+| "fill rate" / "ad server fill rate" | fill_rate | ad_server | none |
+| "total fill rate" / "overall fill rate" | total_fill_rate | all | none |
 | "match rate" / "AdX match rate" | match_rate | ad_exchange | none |
 | "programmatic match rate" | programmatic_match_rate | all | none |
 | "total ad requests" | total_ad_requests | all | none |
-| "code served" | total_code_served | all | none |
-| "responses served" | total_responses_served | all | none |
+| "unmatched ad requests" / "unmatched requests" | total_unmatched_ad_requests | all | none |
+| "code served" / "total code served" | total_code_served | all | none |
+| "responses served" / "total responses served" | total_responses_served | all | none |
 | "AdX CTR" | adx_ctr | ad_exchange | none |
 | "AdX eCPM" | adx_ecpm | ad_exchange | none |
 | "AdSense revenue" | adsense_revenue | adsense | none |
 | "AdSense eCPM" | adsense_ecpm | adsense | none |
+| "total revenue" / "all demand revenue" | total_revenue | all | none |
+| "total CPM and CPC revenue" | total_cpm_and_cpc_revenue | all | none |
+| "total impressions" | total_impressions | all | none |
+| "total clicks" | total_clicks | all | none |
+| "total CTR" | total_ctr | all | none |
+| "total eCPM" / "total average eCPM" | total_average_ecpm | all | none |
+| "total eCPM with CPD" / "total average eCPM w/ CPD" | total_average_ecpm_with_cpd | all | none |
+| "targeted impressions" / "total targeted impressions" | total_targeted_impressions | all | none |
+| "targeted clicks" / "total targeted clicks" | total_targeted_clicks | all | none |
+| "unfilled impressions" / "unfilled" | unfilled_impressions | all | none |
+| "drop-off rate" / "dropoff rate" | drop_off_rate | all | none |
+| "begin to render" / "inactive begin to render" | inactive_begin_to_render_impressions | all | none |
+| "Active View eligible" / "total AV eligible" | total_active_view_eligible_impressions | all | none |
+| "Active View measurable" / "total AV measurable" | total_active_view_measurable_impressions | all | none |
+| "Active View viewable" / "total AV viewable" | total_active_view_viewable_impressions | all | none |
+| "% measurable" / "AV measurable rate" | total_active_view_measurable_impressions_rate | all | none |
+| "% viewable" / "viewable rate" / "AV viewable rate" | total_active_view_viewable_impressions_rate | all | none |
+| "viewable time" / "avg viewable time" | total_active_view_average_viewable_time | all | none |
+| "Active View revenue" / "total AV revenue" | total_active_view_revenue | all | none |
 | "by app" / "by ad unit" | revenue | all | app |
 | "top-level ad units" | revenue | all | ad_unit_top |
 | "by website" / "by domain" | revenue | all | website |
 | "by advertiser" | revenue | all | advertiser |
 | "by country" | revenue | all | country |
 | "by child network" / "MCM" | revenue | all | child_network |
+| "muted impressions" / "mute eligible" / "overdelivered" / "rewards" / "unloaded" / "opportunities" / "audible and visible" | (UNSUPPORTED) | all | none |
+
+**Note on UNSUPPORTED metrics:** For "muted impressions", "mute eligible impressions", "overdelivered impressions", "MCM auto-payment revenue", "rewards granted", "unloaded impressions due to CPU/network", "opportunities", and "Active View audible and visible at completion" -- these are UI-only or BETA columns not available in the SOAP Reporting API v202602. Report them as "not available for this period via the API" and direct the user to the native GAM UI report builder.
 
 ## Dimension Options
 - `none` -- network-wide totals only (no breakdown)
@@ -430,6 +453,7 @@ or Ad Exchange match rate for ANY time period — not just what the dashboard cu
 - `advertiser_classified` -- breakdown by classified advertiser
 - `country` -- breakdown by country name
 - `child_network` -- breakdown by MCM child publisher network code
+
 
 ## Few-Shot Examples
 **Example 1 -- no time period (YTD default):**
@@ -691,6 +715,28 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         "total_fill_rate":         "total_fill_rate",
         "total_code_served":       "total_code_served_count",
         "programmatic_match_rate": "programmatic_match_rate",
+        # --- New Total-group metrics ---
+        "total_revenue":                            "total_line_item_level_all_revenue",
+        "total_cpm_and_cpc_revenue":                "total_line_item_level_cpm_and_cpc_revenue",
+        "total_impressions":                        "total_line_item_level_impressions",
+        "total_clicks":                             "total_line_item_level_clicks",
+        "total_targeted_impressions":               "total_line_item_level_targeted_impressions",
+        "total_targeted_clicks":                    "total_line_item_level_targeted_clicks",
+        "total_ctr":                                "total_line_item_level_ctr",
+        "total_average_ecpm":                       "total_line_item_level_without_cpd_average_ecpm",
+        "total_average_ecpm_with_cpd":              "total_line_item_level_with_cpd_average_ecpm",
+        "total_unmatched_ad_requests":              "total_unmatched_ad_requests",
+        "unfilled_impressions":                     "total_inventory_level_unfilled_impressions",
+        "drop_off_rate":                            "dropoff_rate",
+        "inactive_begin_to_render_impressions":     "ad_server_begin_to_render_impressions",
+        # --- Total Active View ---
+        "total_active_view_eligible_impressions":          "total_active_view_eligible_impressions",
+        "total_active_view_measurable_impressions":        "total_active_view_measurable_impressions",
+        "total_active_view_viewable_impressions":          "total_active_view_viewable_impressions",
+        "total_active_view_measurable_impressions_rate":   "total_active_view_measurable_impressions_rate",
+        "total_active_view_viewable_impressions_rate":     "total_active_view_viewable_impressions_rate",
+        "total_active_view_average_viewable_time":         "total_active_view_average_viewable_time",
+        "total_active_view_revenue":                       "total_active_view_revenue",
     }
 
     # ── Compute network-wide totals ───────────────────────────────────────────
@@ -718,6 +764,29 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
     as_rev  = _col("adsense_line_item_level_revenue", 0.0)
     as_ctr  = _col("adsense_line_item_level_ctr", 0.0)
     as_ecpm = _col("adsense_line_item_level_average_ecpm", 0.0)
+
+    # Total-group totals
+    total_all_rev   = _col("total_line_item_level_all_revenue", 0.0)
+    total_cpm_cpc_rev = _col("total_line_item_level_cpm_and_cpc_revenue", 0.0)
+    total_li_imp    = _col("total_line_item_level_impressions")
+    total_li_clk    = _col("total_line_item_level_clicks")
+    total_tgt_imp   = _col("total_line_item_level_targeted_impressions")
+    total_tgt_clk   = _col("total_line_item_level_targeted_clicks")
+    total_li_ctr    = _col("total_line_item_level_ctr", 0.0)
+    total_ecpm_no_cpd = _col("total_line_item_level_without_cpd_average_ecpm", 0.0)
+    total_ecpm_w_cpd  = _col("total_line_item_level_with_cpd_average_ecpm", 0.0)
+    unfilled_imp    = _col("total_inventory_level_unfilled_impressions")
+    dropoff         = _col("dropoff_rate", 0.0)
+    begin_to_render = _col("ad_server_begin_to_render_impressions")
+
+    # Total Active View totals
+    av_eligible     = _col("total_active_view_eligible_impressions")
+    av_measurable   = _col("total_active_view_measurable_impressions")
+    av_viewable     = _col("total_active_view_viewable_impressions")
+    av_meas_rate    = _col("total_active_view_measurable_impressions_rate", 0.0)
+    av_view_rate    = _col("total_active_view_viewable_impressions_rate", 0.0)
+    av_view_time    = _col("total_active_view_average_viewable_time", 0.0)
+    av_revenue      = _col("total_active_view_revenue", 0.0)
 
     total_ecpm = round((total_rev / total_imp * 1000), 6) if total_imp > 0 else 0.0
     total_ctr  = round((total_clk / total_imp * 100),  4) if total_imp > 0 else 0.0
@@ -752,8 +821,70 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         "adsense_revenue":         round(as_rev, 6),
         "adsense_ctr":             round(as_ctr, 4),
         "adsense_ecpm":            round(as_ecpm, 6),
+        # Total-group
+        "total_revenue":                            round(total_all_rev, 6),
+        "total_cpm_and_cpc_revenue":                round(total_cpm_cpc_rev, 6),
+        "total_impressions":                        total_li_imp,
+        "total_clicks":                             total_li_clk,
+        "total_targeted_impressions":               total_tgt_imp,
+        "total_targeted_clicks":                    total_tgt_clk,
+        "total_ctr":                                round(total_li_ctr, 4),
+        "total_average_ecpm":                       round(total_ecpm_no_cpd, 6),
+        "total_average_ecpm_with_cpd":              round(total_ecpm_w_cpd, 6),
+        "total_unmatched_ad_requests":              true_unmatch,
+        "unfilled_impressions":                     unfilled_imp,
+        "drop_off_rate":                            round(dropoff, 4),
+        "inactive_begin_to_render_impressions":     begin_to_render,
+        # Total Active View
+        "total_active_view_eligible_impressions":          av_eligible,
+        "total_active_view_measurable_impressions":        av_measurable,
+        "total_active_view_viewable_impressions":          av_viewable,
+        "total_active_view_measurable_impressions_rate":   round(av_meas_rate, 4),
+        "total_active_view_viewable_impressions_rate":     round(av_view_rate, 4),
+        "total_active_view_average_viewable_time":         round(av_view_time, 4),
+        "total_active_view_revenue":                       round(av_revenue, 6),
     }
     scalar_total = metric_total_map.get(metric, round(total_rev, 6))
+
+    # For BETA/optional metrics — if value is 0 and column name suggests BETA,
+    # we note it in the result so the AI can communicate it properly.
+    BETA_METRICS = {
+        "inactive_begin_to_render_impressions",
+        "total_active_view_revenue",
+        "total_active_view_eligible_impressions",
+        "total_active_view_measurable_impressions",
+        "total_active_view_viewable_impressions",
+        "total_active_view_measurable_impressions_rate",
+        "total_active_view_viewable_impressions_rate",
+        "total_active_view_average_viewable_time",
+    }
+    # Metrics that are GENUINELY UNAVAILABLE for this API version
+    UNSUPPORTED_METRICS = {
+        "total_muted_impressions",
+        "total_mute_eligible_impressions",
+        "total_overdelivered_impressions",
+        "total_mcm_autopayment_revenue",
+        "total_rewards_granted",
+        "total_unloaded_impressions_cpu",
+        "total_unloaded_impressions_network",
+        "total_opportunities",
+        "total_active_view_audible_and_visible",
+    }
+    if metric in UNSUPPORTED_METRICS:
+        return {
+            "start_date": str(start_date),
+            "end_date":   str(end_date),
+            "metric":     metric,
+            "channel":    channel,
+            "primary_total": None,
+            "rows": [],
+            "note": (
+                f"Metric '{metric}' is not available in the GAM SOAP Reporting API "
+                "(v202602) for this account. It may exist in the UI under a different "
+                "report type, or require a beta feature flag. Please check the native "
+                "GAM report builder for availability."
+            ),
+        }
 
     result = {
         "start_date":                    str(start_date),
@@ -761,6 +892,7 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         "dimension":                     dimension,
         "metric":                        metric,
         "channel":                       channel,
+        # Core Ad Server totals
         "total_revenue_usd":             round(total_rev, 6),
         "total_impressions":             total_imp,
         "total_clicks":                  total_clk,
@@ -771,6 +903,7 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         "avg_ecpm_usd":                  total_ecpm,
         "avg_ctr_pct":                   total_ctr,
         "fill_rate_pct":                 best_fill,
+        # Ad Exchange
         "adx_impressions":               adx_imp,
         "adx_revenue_usd":               round(adx_rev, 6),
         "adx_clicks":                    adx_clk,
@@ -779,15 +912,47 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         "adx_match_rate_pct":            match_rate,
         "programmatic_match_rate_pct":   best_match,
         "programmatic_responses_served": prog_resp,
+        # AdSense
         "adsense_impressions":           as_imp,
         "adsense_clicks":                as_clk,
         "adsense_revenue_usd":           round(as_rev, 6),
         "adsense_ctr_pct":               round(as_ctr, 4),
         "adsense_ecpm_usd":              round(as_ecpm, 6),
+        # Total-group (network-wide pre-aggregated)
+        "total_all_revenue_usd":         round(total_all_rev, 6),
+        "total_cpm_and_cpc_revenue_usd": round(total_cpm_cpc_rev, 6),
+        "total_li_impressions":          total_li_imp,
+        "total_li_clicks":               total_li_clk,
+        "total_targeted_impressions":    total_tgt_imp,
+        "total_targeted_clicks":         total_tgt_clk,
+        "total_li_ctr_pct":              round(total_li_ctr, 4),
+        "total_avg_ecpm_usd":            round(total_ecpm_no_cpd, 6),
+        "total_avg_ecpm_with_cpd_usd":   round(total_ecpm_w_cpd, 6),
+        "unfilled_impressions":          unfilled_imp,
+        "drop_off_rate_pct":             round(dropoff, 4),
+        "begin_to_render_impressions":   begin_to_render,
+        # Total Active View
+        "total_av_eligible_impressions":        av_eligible,
+        "total_av_measurable_impressions":      av_measurable,
+        "total_av_viewable_impressions":        av_viewable,
+        "total_av_measurable_rate_pct":         round(av_meas_rate, 4),
+        "total_av_viewable_rate_pct":           round(av_view_rate, 4),
+        "total_av_average_viewable_time_sec":   round(av_view_time, 4),
+        "total_av_revenue_usd":                 round(av_revenue, 6),
+        # Primary metric
         "primary_metric":                metric,
         "primary_total":                 scalar_total,
         "rows":                          [],
     }
+
+    # Add a note if the requested metric is BETA and returns 0
+    if metric in BETA_METRICS and scalar_total == 0:
+        result["note"] = (
+            f"Metric '{metric}' returned 0. This may be a BETA feature not yet "
+            "available for this date range or account. Verify in the native GAM "
+            "report builder — if it shows data there, the column may need account-level "
+            "enablement in the API."
+        )
 
     # ── Helper: compute per-row derived stats ─────────────────────────────────
     def _add_derived_cols(g: pd.DataFrame) -> pd.DataFrame:

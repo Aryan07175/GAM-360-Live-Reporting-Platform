@@ -128,52 +128,105 @@ def get_query_gam_data_tool_spec() -> dict:
                         "metric": {
                             "type": "string",
                             "enum": [
-                                # Core
+                                # --- Ad Server (direct-sold) ---
                                 "revenue", "impressions", "clicks", "ctr", "ecpm",
                                 "fill_rate", "ad_requests",
-                                # Ad Exchange
+                                # --- Ad Exchange ---
                                 "match_rate", "programmatic_match_rate",
                                 "adx_impressions", "adx_revenue", "adx_clicks",
                                 "adx_ctr", "adx_ecpm",
-                                # AdSense
+                                # --- AdSense ---
                                 "adsense_impressions", "adsense_clicks", "adsense_revenue",
                                 "adsense_ctr", "adsense_ecpm",
-                                # Network-wide totals
+                                # --- Network-wide request/fill ---
                                 "total_ad_requests", "total_responses_served",
-                                "total_fill_rate", "total_code_served"
+                                "total_fill_rate", "total_code_served",
+                                # --- Total line-item aggregates (all demand channels) ---
+                                "total_revenue",              # Total revenue (all demand, incl. CPD)
+                                "total_cpm_and_cpc_revenue",  # Total CPM+CPC revenue
+                                "total_impressions",          # Total impressions
+                                "total_clicks",               # Total clicks
+                                "total_ctr",                  # Total CTR
+                                "total_average_ecpm",         # Total avg eCPM (w/o CPD)
+                                "total_average_ecpm_with_cpd",# Total avg eCPM (with CPD)
+                                "total_targeted_impressions", # Total targeted impressions
+                                "total_targeted_clicks",      # Total targeted clicks
+                                "total_unmatched_ad_requests",# Total unmatched ad requests
+                                "unfilled_impressions",       # Unfilled impressions (inventory-level)
+                                "drop_off_rate",              # Drop-off rate
+                                "inactive_begin_to_render_impressions",  # Inactive begin-to-render (BETA)
+                                # --- Total Active View ---
+                                "total_active_view_eligible_impressions",
+                                "total_active_view_measurable_impressions",
+                                "total_active_view_viewable_impressions",
+                                "total_active_view_measurable_impressions_rate",  # % measurable
+                                "total_active_view_viewable_impressions_rate",    # % viewable
+                                "total_active_view_average_viewable_time",        # avg viewable time (sec)
+                                "total_active_view_revenue",
+                                # --- BETA / UI-only metrics (returned as 'not available') ---
+                                "total_muted_impressions",
+                                "total_mute_eligible_impressions",
+                                "total_overdelivered_impressions",
+                                "total_mcm_autopayment_revenue",
+                                "total_rewards_granted",
+                                "total_unloaded_impressions_cpu",
+                                "total_unloaded_impressions_network",
+                                "total_opportunities",
+                                "total_active_view_audible_and_visible",
                             ],
                             "description": (
                                 "Primary metric to report. "
-                                "--- Ad Server --- "
+                                "--- Ad Server (direct-sold) --- "
                                 "revenue = Ad Server CPM+CPC revenue (USD). "
                                 "impressions = Ad Server impressions. "
                                 "clicks = Ad Server clicks. "
                                 "ctr = Ad Server CTR (%). "
                                 "ecpm = Ad Server effective CPM (USD). "
-                                "fill_rate = Ad Server fill rate = impressions/ad_requests x 100 (%). "
+                                "fill_rate = Ad Server fill rate (impressions/ad_requests x 100). "
                                 "ad_requests = Ad Server ad requests. "
-                                "--- Ad Exchange --- "
-                                "adx_revenue = AdX revenue. "
-                                "adx_impressions = AdX impressions. "
-                                "adx_clicks = AdX clicks. "
-                                "adx_ctr = AdX CTR (%). "
-                                "adx_ecpm = AdX average eCPM (USD). "
-                                "match_rate = AdX match rate = AdX impressions/total requests x 100 (%). Use channel='ad_exchange'. "
-                                "programmatic_match_rate = GAM native PROGRAMMATIC_MATCH_RATE column. "
+                                "--- Ad Exchange / Programmatic --- "
+                                "match_rate = AdX match rate (AdX impressions/total requests x 100). Use channel='ad_exchange'. "
+                                "programmatic_match_rate = GAM PROGRAMMATIC_MATCH_RATE column. "
+                                "adx_revenue/impressions/clicks/ctr/ecpm = AdX-only metrics. "
                                 "--- AdSense --- "
-                                "adsense_revenue = AdSense revenue. "
-                                "adsense_impressions = AdSense impressions. "
-                                "adsense_clicks = AdSense clicks. "
-                                "adsense_ctr = AdSense CTR (%). "
-                                "adsense_ecpm = AdSense avg eCPM (USD). "
-                                "--- Network-wide (WSDL TOTAL_* columns) --- "
-                                "total_ad_requests = TOTAL_AD_REQUESTS (preferred for true total across all channels). "
+                                "adsense_revenue/impressions/clicks/ctr/ecpm = AdSense-only metrics. "
+                                "--- Network-wide request/fill (WSDL TOTAL_* columns) --- "
+                                "total_ad_requests = TOTAL_AD_REQUESTS (true network total). "
                                 "total_responses_served = TOTAL_RESPONSES_SERVED. "
                                 "total_fill_rate = TOTAL_FILL_RATE (%). "
                                 "total_code_served = TOTAL_CODE_SERVED_COUNT. "
+                                "total_unmatched_ad_requests = TOTAL_UNMATCHED_AD_REQUESTS. "
+                                "--- Total line-item aggregates (GAM 'Total' column group) --- "
+                                "total_revenue = TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE (all demand incl. CPD). "
+                                "total_cpm_and_cpc_revenue = TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE. "
+                                "total_impressions = TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS. "
+                                "total_clicks = TOTAL_LINE_ITEM_LEVEL_CLICKS. "
+                                "total_ctr = TOTAL_LINE_ITEM_LEVEL_CTR (%). "
+                                "total_average_ecpm = TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM. "
+                                "total_average_ecpm_with_cpd = TOTAL_LINE_ITEM_LEVEL_WITH_CPD_AVERAGE_ECPM. "
+                                "total_targeted_impressions = TOTAL_LINE_ITEM_LEVEL_TARGETED_IMPRESSIONS. "
+                                "total_targeted_clicks = TOTAL_LINE_ITEM_LEVEL_TARGETED_CLICKS. "
+                                "unfilled_impressions = TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS. "
+                                "drop_off_rate = DROPOFF_RATE (video). "
+                                "inactive_begin_to_render_impressions = AD_SERVER_BEGIN_TO_RENDER_IMPRESSIONS (BETA). "
+                                "--- Total Active View --- "
+                                "total_active_view_eligible_impressions = TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS. "
+                                "total_active_view_measurable_impressions = TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS. "
+                                "total_active_view_viewable_impressions = TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS. "
+                                "total_active_view_measurable_impressions_rate = % measurable impressions. "
+                                "total_active_view_viewable_impressions_rate = % viewable impressions. "
+                                "total_active_view_average_viewable_time = avg viewable time in seconds. "
+                                "total_active_view_revenue = TOTAL_ACTIVE_VIEW_REVENUE. "
+                                "--- BETA/UI-only (will return 'not available' note) --- "
+                                "total_muted_impressions, total_mute_eligible_impressions, "
+                                "total_overdelivered_impressions, total_mcm_autopayment_revenue, "
+                                "total_rewards_granted, total_unloaded_impressions_cpu, "
+                                "total_unloaded_impressions_network, total_opportunities, "
+                                "total_active_view_audible_and_visible. "
                                 "IMPORTANT: fill_rate != match_rate. Never substitute one for the other."
                             ),
                         },
+
                         "channel": {
                             "type": "string",
                             "enum": ["all", "ad_server", "adsense", "ad_exchange"],
