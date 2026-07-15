@@ -335,26 +335,139 @@ def _call_bedrock(payload: dict) -> dict:
     Make a synchronous HTTP POST to the Bedrock /converse endpoint.
     Returns the full parsed JSON response dict.
     Raises RuntimeError with a descriptive message on failure.
+
+    Auth priority:
+    1. AWS SigV4 (standard IAM keys: AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)
+    2. Bearer token (AWS_BEARER_TOKEN_BEDROCK) — for IAM Identity Center / SSO sessions
     """
     bearer_token = _get_bearer_token()
     model_id = _get_model_id()
     region = _get_region()
     url = _get_endpoint(model_id, region)
 
-    body = json.dumps(payload).encode("utf-8")
+    body_bytes = json.dumps(payload).encode("utf-8")
+
+    # ── Try SigV4 first (standard IAM auth) ──────────────────────────────────
+    access_key = os.getenv("AWS_ACCESS_KEY_ID", "")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+    session_token = os.getenv("AWS_SESSION_TOKEN", "")
+
+    if access_key and secret_key:
+        # Build SigV4 signed request using Python stdlib (no boto3 required for signing)
+        try:
+            import hmac
+            import hashlib
+            from datetime import datetime as _dt, timezone as _tz
+            import urllib.parse
+
+            now = _dt.now(_tz.utc)
+            amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+            date_stamp = now.strftime("%Y%m%d")
+            service = "bedrock"
+
+            # Parse URL for signing
+            parsed = urllib.parse.urlparse(url)
+            host = parsed.netloc
+            canonical_uri = parsed.path or "/"
+
+            payload_hash = hashlib.sha256(body_bytes).hexdigest()
+
+            canonical_headers_dict = {
+                "content-type": "application/json",
+                "host": host,
+                "x-amz-date": amz_date,
+            }
+            if session_token:
+                canonical_headers_dict["x-amz-security-token"] = session_token
+
+            sorted_header_names = sorted(canonical_headers_dict.keys())
+            canonical_headers = "".join(f"{k}:{canonical_headers_dict[k]}\n" for k in sorted_header_names)
+            signed_headers = ";".join(sorted_header_names)
+
+            canonical_request = "\n".join([
+                "POST",
+                canonical_uri,
+                "",  # canonical query string (empty)
+                canonical_headers,
+                signed_headers,
+                payload_hash,
+            ])
+
+            algorithm = "AWS4-HMAC-SHA256"
+            credential_scope = f"{date_stamp}/{region}/{service}/aws4_request"
+            string_to_sign = "\n".join([
+                algorithm,
+                amz_date,
+                credential_scope,
+                hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+            ])
+
+            def _sign(key: bytes, msg: str) -> bytes:
+                return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
+
+            signing_key = _sign(
+                _sign(
+                    _sign(
+                        _sign(f"AWS4{secret_key}".encode("utf-8"), date_stamp),
+                        region,
+                    ),
+                    service,
+                ),
+                "aws4_request",
+            )
+            signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+
+            authorization = (
+                f"{algorithm} "
+                f"Credential={access_key}/{credential_scope}, "
+                f"SignedHeaders={signed_headers}, "
+                f"Signature={signature}"
+            )
+
+            req_headers = {
+                "Content-Type": "application/json",
+                "X-Amz-Date": amz_date,
+                "Authorization": authorization,
+            }
+            if session_token:
+                req_headers["X-Amz-Security-Token"] = session_token
+
+            log.info("[Bedrock] POST %s model=%s bytes=%d (SigV4 auth)", url, model_id, len(body_bytes))
+            req = urllib.request.Request(url, data=body_bytes, headers=req_headers, method="POST")
+
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    raw = resp.read()
+                    log.info("[Bedrock] HTTP %d — response %d bytes (SigV4)", resp.status, len(raw))
+                    return json.loads(raw.decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                error_body = exc.read().decode("utf-8", errors="replace")
+                log.error("[Bedrock] SigV4 HTTP %d — %s", exc.code, error_body)
+                # Fall through to Bearer token attempt if 401/403
+                if exc.code not in (401, 403) or not bearer_token:
+                    raise RuntimeError(f"Bedrock HTTP {exc.code}: {error_body}") from exc
+                log.warning("[Bedrock] SigV4 failed with %d — retrying with Bearer token", exc.code)
+        except ImportError:
+            log.warning("[Bedrock] SigV4 signing failed (import error) — falling back to Bearer token")
+
+    # ── Bearer token auth (IAM Identity Center / SSO) ────────────────────────
+    if not bearer_token:
+        raise RuntimeError(
+            "Bedrock auth not configured: set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY "
+            "(for SigV4) or AWS_BEARER_TOKEN_BEDROCK (for IAM Identity Center)."
+        )
+
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {bearer_token}",
     }
-
-    log.info("[Bedrock] POST %s model=%s bytes=%d", url, model_id, len(body))
-
-    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    log.info("[Bedrock] POST %s model=%s bytes=%d (Bearer auth)", url, model_id, len(body_bytes))
+    req = urllib.request.Request(url, data=body_bytes, headers=headers, method="POST")
 
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             raw = resp.read()
-            log.info("[Bedrock] HTTP %d — response %d bytes", resp.status, len(raw))
+            log.info("[Bedrock] HTTP %d — response %d bytes (Bearer)", resp.status, len(raw))
             return json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
@@ -363,6 +476,7 @@ def _call_bedrock(payload: dict) -> dict:
     except Exception as exc:
         log.error("[Bedrock] Request failed: %s", exc)
         raise RuntimeError(f"Bedrock request failed: {exc}") from exc
+
 
 
 def _extract_text_and_tools(response: dict) -> tuple[str, list[dict]]:

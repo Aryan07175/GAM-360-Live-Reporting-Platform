@@ -9,6 +9,7 @@ services:
     region: oregon
     buildCommand: pip install -r requirements.txt
     startCommand: python mcp_server/render_start.py
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"
@@ -34,3 +35,7 @@ services:
         value: "us-east-1"
       - key: BEDROCK_MODEL_ID
         value: "anthropic.claude-3-5-sonnet-20241022-v2:0"
+      - key: GMAIL_SENDER_EMAIL
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false

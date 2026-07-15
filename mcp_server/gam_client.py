@@ -15,7 +15,7 @@ import logging
 from datetime import date, datetime, timezone, timedelta
 from typing import Optional, Callable, List
 import pandas as pd
-from googleads import ad_manager
+from googleads import ad_manager, errors
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("gam_client")
@@ -287,12 +287,23 @@ class GAMClient:
             "endDate": self._to_gam_date(end),
         }
         report_job = {"reportQuery": report_query}
-        report_job = report_service.runReportJob(report_job)
-        log.info(
-            "GAM report job submitted: %s (%s to %s) dims=%s separate=%s",
-            report_job["id"], start, end, report_dims, separate_report,
-        )
-        return report_job["id"]
+
+        try:
+            report_job = report_service.runReportJob(report_job)
+            log.info(
+                "GAM report job submitted: %s (%s to %s) dims=%s separate=%s",
+                report_job["id"], start, end, report_dims, separate_report,
+            )
+            return report_job["id"]
+        except errors.GoogleAdsServerFault as e:
+            log.error(
+                "GoogleAdsServerFault running GAM report. The API version %s may be deprecated or the query is invalid.\nFault: %s",
+                API_VERSION, e
+            )
+            raise RuntimeError(f"GAM API Fault (Version {API_VERSION} may be deprecated): {e}") from e
+        except Exception as e:
+            log.error("Failed to run GAM report: %s", e)
+            raise RuntimeError(f"GAM API Error: {e}") from e
 
     async def wait_for_report(self, job_id: int, poll_interval: int = 3) -> bool:
         """Poll GAM until report is ready. Non-blocking via asyncio.sleep."""

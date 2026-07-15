@@ -309,6 +309,57 @@ export function LiveReportProvider({
         })),
       });
 
+      // ── Backend health pre-check ────────────────────────────────────────────
+      // Ping /health first so users see a clear message if the backend is
+      // cold-starting (Render free plan) instead of a silent endless spinner.
+      const MCP_URL =
+        process.env.NEXT_PUBLIC_MCP_SERVER_URL ||
+        "https://gam-360-live-reporting-platform.onrender.com";
+      try {
+        const healthRes = await fetch(`${MCP_URL}/health`, {
+          method: "GET",
+          cache: "no-store",
+          signal: AbortSignal.timeout(8000), // 8s for cold start check
+        });
+        if (healthRes.ok) {
+          const health = await healthRes.json();
+          // Warn if credentials are not configured
+          if (health?.gam?.network_code === null || health?.gam?.credentials_file_present === false) {
+            setError(
+              "Backend is running but GAM credentials are not configured. " +
+              "Set GAM_NETWORK_CODE and GAM_SERVICE_ACCOUNT_JSON in your Render environment."
+            );
+            setIsLoading(false);
+            return;
+          }
+        }
+      } catch (healthErr: any) {
+        // Health check failed — backend is likely cold-starting or down
+        if (healthErr?.name === "TimeoutError" || healthErr?.message?.includes("timeout")) {
+          setError(
+            "Backend is starting up (cold start). This can take 30–60 seconds on the free plan. " +
+            "Please wait and try again."
+          );
+        } else {
+          setError(
+            "Cannot reach the backend server. Check that the Render service is running and " +
+            `NEXT_PUBLIC_MCP_SERVER_URL is set correctly (${MCP_URL}).`
+          );
+        }
+        setIsLoading(false);
+        setProgress({
+          total: 6,
+          completed: 0,
+          currentSection: "",
+          sections: defaultProgress.sections.map((s) => ({
+            ...s,
+            status: "error" as const,
+            error: "Backend unavailable",
+          })),
+        });
+        return;
+      }
+
       try {
         const result = await fetchFullReport(
           startDate,
@@ -337,6 +388,8 @@ export function LiveReportProvider({
             })),
           });
         } else {
+          const noDataMsg = "No data returned from the backend. The GAM API may have returned an empty report for this date range.";
+          setError(noDataMsg);
           setProgress((prev) => ({
             ...prev,
             sections: prev.sections.map((s) => ({
@@ -347,12 +400,14 @@ export function LiveReportProvider({
           }));
         }
       } catch (err: any) {
+        const errMsg = err?.message || "Failed to fetch report from backend";
+        setError(errMsg);
         setProgress((prev) => ({
           ...prev,
           sections: prev.sections.map((s) => ({
             ...s,
             status: "error" as const,
-            error: err.message || "Failed to fetch report",
+            error: errMsg,
           })),
         }));
       }
@@ -362,6 +417,7 @@ export function LiveReportProvider({
     },
     [startDate, endDate, startTime, endTime, demandChannel, updateSection]
   );
+
 
   // ─── Refresh (force new GAM request) ──────────────────────────────────────
 

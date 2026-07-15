@@ -15,6 +15,8 @@ import json
 import math
 import logging
 import asyncio
+import time
+from contextlib import asynccontextmanager
 from datetime import date, timedelta, datetime
 
 from starlette.applications import Starlette
@@ -2303,8 +2305,50 @@ async def handle_api_test_email(request):
             headers={"Access-Control-Allow-Origin": "*"},
         )
 
+async def handle_health(request):
+    """
+    GET /health — lightweight health-check endpoint.
+    Returns instantly without making any GAM or Bedrock calls.
+    Used by Render's health check and the frontend keep-alive ping.
+    """
+    _start_time = getattr(handle_health, "_start_time", None)
+    if _start_time is None:
+        handle_health._start_time = time.time()
+    uptime_s = int(time.time() - handle_health._start_time)
 
-from contextlib import asynccontextmanager
+    # Check if GAM credentials file exists
+    creds_path = os.getenv("GAM_CREDENTIALS_PATH", "config/googleads.yaml")
+    gam_creds_present = os.path.exists(creds_path)
+    sa_path = os.path.join(os.path.dirname(creds_path), "service_account.json")
+    sa_present = os.path.exists(sa_path)
+    network_code = os.getenv("GAM_NETWORK_CODE", gam.network_code if gam else "")
+
+    return JSONResponse(
+        {
+            "status": "ok",
+            "service": "GAM 360 Live Reporting Platform",
+            "uptime_seconds": uptime_s,
+            "gam": {
+                "credentials_file_present": gam_creds_present,
+                "service_account_present": sa_present,
+                "network_code": str(network_code) if network_code else None,
+                "api_version": os.getenv("GAM_API_VERSION", "v202602"),
+            },
+            "bedrock": {
+                "available": HAS_BEDROCK,
+                "bearer_token_set": bool(os.getenv("AWS_BEARER_TOKEN_BEDROCK")),
+                "access_key_set": bool(os.getenv("AWS_ACCESS_KEY_ID")),
+                "region": os.getenv("AWS_REGION", "us-east-1"),
+            },
+            "email": {
+                "gmail_sender_set": bool(os.getenv("GMAIL_SENDER_EMAIL")),
+                "gmail_password_set": bool(os.getenv("GMAIL_APP_PASSWORD")),
+            },
+        },
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
 
 @asynccontextmanager
 async def lifespan(app):
@@ -2315,6 +2359,7 @@ async def lifespan(app):
 starlette_app = Starlette(
     debug=True,
     routes=[
+        Route("/health", endpoint=handle_health, methods=["GET"]),
         Route("/sse", endpoint=handle_sse),
         Route("/messages/", endpoint=handle_messages, methods=["POST"]),
         Route("/api/tool", endpoint=handle_api_tool, methods=["POST", "OPTIONS"]),
