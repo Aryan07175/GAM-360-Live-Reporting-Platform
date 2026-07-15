@@ -34,8 +34,6 @@ COLUMNS = [
     "AD_SERVER_FILL_RATE",
     "AD_SERVER_CPM_AND_CPC_REVENUE",
     "AD_SERVER_WITHOUT_CPD_AVERAGE_ECPM",
-    "AD_SERVER_RESPONSES_SERVED",
-    "AD_SERVER_BEGIN_TO_RENDER_IMPRESSIONS",     # inactive begin-to-render impressions
 
     # --- AdSense backfill ---
     "ADSENSE_LINE_ITEM_LEVEL_IMPRESSIONS",
@@ -53,40 +51,20 @@ COLUMNS = [
 
     # --- Total Network: line-item-level aggregates ---
     "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
-    "TOTAL_LINE_ITEM_LEVEL_TARGETED_IMPRESSIONS",
     "TOTAL_LINE_ITEM_LEVEL_CLICKS",
-    "TOTAL_LINE_ITEM_LEVEL_TARGETED_CLICKS",
     "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
-    "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",          # Total revenue (all demand incl. CPD)
     "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
-    "TOTAL_LINE_ITEM_LEVEL_WITH_CPD_AVERAGE_ECPM",
     "TOTAL_LINE_ITEM_LEVEL_CTR",
 
     # --- Total Network: request / fill / code metrics (WSDL-confirmed) ---
-    "TOTAL_AD_REQUESTS",
-    "TOTAL_RESPONSES_SERVED",
-    "TOTAL_UNMATCHED_AD_REQUESTS",
-    "TOTAL_FILL_RATE",
     "TOTAL_CODE_SERVED_COUNT",
 
     # --- Total Network: inventory / opportunity metrics ---
     "TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS",  # unfilled impressions
 
-    # --- Total Active View (network-wide) ---
-    "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
-    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
-    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
-    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE",   # % measurable
-    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE",     # % viewable
-    "TOTAL_ACTIVE_VIEW_AVERAGE_VIEWABLE_TIME",
-    "TOTAL_ACTIVE_VIEW_REVENUE",
-
     # --- Programmatic match rate ---
     "PROGRAMMATIC_RESPONSES_SERVED",
     "PROGRAMMATIC_MATCH_RATE",
-
-    # --- Drop-off rate ---
-    "DROPOFF_RATE",
 ]
 
 # ─── Dimension map: logical name → GAM API Dimension enum value ───────────────

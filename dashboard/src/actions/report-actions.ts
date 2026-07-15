@@ -332,7 +332,10 @@ export async function fetchFullReport(
       "generateFullReport",
       baseArgs(startDate, endDate, startTime, endTime, demandChannel, forceRefresh)
     );
-    if (!res || res.status === "error") return null;
+    if (!res) return null;
+    if (res.status === "error") {
+      throw new Error(res.error || "Unknown backend error");
+    }
 
     const summaryData = res.summary || {};
     const appsRaw = res.apps || [];
