@@ -23,6 +23,7 @@ import os
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 from typing import AsyncGenerator, Callable, Awaitable
 
 log = logging.getLogger("bedrock_service")
@@ -358,7 +359,6 @@ def _call_bedrock(payload: dict) -> dict:
             import hmac
             import hashlib
             from datetime import datetime as _dt, timezone as _tz
-            import urllib.parse
 
             now = _dt.now(_tz.utc)
             amz_date = now.strftime("%Y%m%dT%H%M%SZ")
