@@ -49,10 +49,12 @@ def _send_email(subject: str, html_content: str, to_emails: List[str], pdf_bytes
 
     sender_email, app_password = _get_credentials()
     if not sender_email or not app_password:
-        msg = (
-            "GMAIL_SENDER_EMAIL missing." if not sender_email else ""
-            + " GMAIL_APP_PASSWORD missing." if not app_password else ""
-        ).strip()
+        parts = []
+        if not sender_email:
+            parts.append("GMAIL_SENDER_EMAIL missing.")
+        if not app_password:
+            parts.append("GMAIL_APP_PASSWORD missing.")
+        msg = " ".join(parts)
         log.error("[EMAIL_SEND_FAILED] Gmail credentials not configured: %s", msg)
         return {"error": f"Credentials missing: {msg}", "status": "error"}
 

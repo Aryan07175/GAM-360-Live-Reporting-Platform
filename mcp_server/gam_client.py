@@ -12,6 +12,7 @@ import io
 import gzip
 import asyncio
 import logging
+import urllib.request
 from datetime import date, datetime, timezone, timedelta
 from typing import Optional, Callable, List
 import pandas as pd
@@ -310,11 +311,9 @@ class GAMClient:
             job_id,
             {"exportFormat": "CSV_DUMP", "useGzipCompression": True},
         )
-        import urllib.request
         with urllib.request.urlopen(report_url) as resp:
             raw = resp.read()
         if report_url.endswith("gz") or raw[:2] == b"\x1f\x8b":
-            import gzip
             raw = gzip.decompress(raw)
         raw = raw.decode("utf-8")
 

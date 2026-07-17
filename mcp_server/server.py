@@ -60,7 +60,6 @@ import os
 # Allow imports from the project root (fixes IDE warnings and CLI execution)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import time
 from mcp_server.gam_client import GAMClient
 from mcp_server.recipients_store import get_recipients, add_recipient, remove_recipient, get_preferences, update_preferences
 from mcp_server.email_service import send_alert_email, send_daily_report_email, send_test_email, log_credential_status
@@ -94,6 +93,9 @@ gam = GAMClient()
 
 _session_cache: dict[str, dict] = {}
 # Structure: { "session_key": { "df": DataFrame, "summary": dict, "stored_at": datetime, "start": str, "end": str } }
+
+# Server start time for uptime tracking
+_server_start_time: float = time.time()
 
 
 def _cache_key(start_date: str, end_date: str, demand_channel: str = "all") -> str:
@@ -343,7 +345,7 @@ or Ad Exchange match rate for ANY time period — not just what the dashboard cu
 2. **NEVER state a number that was not returned by a tool in this conversation.**
 3. Compute the exact YYYY-MM-DD dates from the Date Reference table below BEFORE calling the tool.
 4. **DEFAULT (no time period mentioned):** Use start_date={ytd_start} (Jan 1 this year), end_date={today} (YTD).
-   Always label the answer: “From January 1, {today.year} to today ({today.strftime('%B %-d, %Y')})…”
+   Always label the answer: “From January 1, {today.year} to today ({today.strftime('%B %d, %Y')})…”
 5. Keep answers concise: bold key numbers, 1–4 sentences max.
 6. Format revenue as `$X.XX` (or `$X.XXXXXX` for very small values). Use commas for large numbers.
 7. If GAM returns zero / empty data, say so honestly — don’t fabricate numbers.
@@ -461,7 +463,7 @@ or Ad Exchange match rate for ANY time period — not just what the dashboard cu
 **Example 1 -- no time period (YTD default):**
 User: "What is total revenue?"
 -> Call: query_gam_data(start_date="{ytd_start}", end_date="{today}", metric="revenue", dimension="none", channel="all")
--> Answer: "From January 1, {today.year} to today ({today.strftime('%B %-d, %Y')}), total revenue was **$X.XX**."
+-> Answer: "From January 1, {today.year} to today ({today.strftime('%B')} {today.day}, {today.year}), total revenue was **$X.XX**."
 
 **Example 2 -- yesterday:**
 User: "Revenue yesterday"
@@ -538,12 +540,14 @@ def _resolve_chat_dates(start_raw: str, end_raw: str) -> tuple[date, date]:
 
     # Relativedelta-style month arithmetic without dateutil
     def months_ago(n: int) -> date:
-        m = today.month - n
-        y = today.year + m // 12 if m < 1 else today.year
-        m = m % 12 or 12
+        year = today.year
+        month = today.month - n
+        while month <= 0:
+            month += 12
+            year -= 1
         import calendar
-        last_day = calendar.monthrange(y, m)[1]
-        return today.replace(year=y, month=m, day=min(today.day, last_day))
+        last_day = calendar.monthrange(year, month)[1]
+        return today.replace(year=year, month=month, day=min(today.day, last_day))
 
     presets = {
         "today":           (today, today),
@@ -2311,10 +2315,7 @@ async def handle_health(request):
     Returns instantly without making any GAM or Bedrock calls.
     Used by Render's health check and the frontend keep-alive ping.
     """
-    _start_time = getattr(handle_health, "_start_time", None)
-    if _start_time is None:
-        handle_health._start_time = time.time()
-    uptime_s = int(time.time() - handle_health._start_time)
+    uptime_s = int(time.time() - _server_start_time)
 
     # Check if GAM credentials file exists
     creds_path = os.getenv("GAM_CREDENTIALS_PATH", "config/googleads.yaml")
@@ -2357,7 +2358,7 @@ async def lifespan(app):
     task.cancel()
 
 starlette_app = Starlette(
-    debug=True,
+    debug=os.getenv("DEBUG", "false").lower() == "true",
     routes=[
         Route("/health", endpoint=handle_health, methods=["GET"]),
         Route("/sse", endpoint=handle_sse),
