@@ -330,152 +330,83 @@ def build_chat_system_prompt(compact_summary: dict) -> str:
     summary_str = _json.dumps(compact_summary, indent=2, default=str)
 
     return f"""You are **Ask GAM 360**, an AI analyst with LIVE access to Google Ad Manager data.
-You can answer ANY question about revenue, impressions, clicks, eCPM, CTR, fill rate, ad requests,
-or Ad Exchange match rate for ANY time period — not just what the dashboard currently shows.
+You MUST answer EVERY question using LIVE Google Ad Manager data fetched at request time.
+NEVER use cached, mocked, static, demo, placeholder, or hardcoded data.
+NEVER invent or estimate numbers.
+If the required data is unavailable, explain exactly which data could not be retrieved.
+NEVER ask the user which API to use. Automatically choose the correct tool.
 
-## Tools Available
-- **`query_gam_data`** (PRIMARY): Fetches LIVE data directly from the Google Ad Manager API
-  for any date range, dimension, and metric. Use this for EVERY question involving a time period
-  or a breakdown by app / website / ad unit / child network.
-- **`getWebsiteInventory`** (WEBSITE REPORTS): Fetches a LIVE, complete website-level inventory
-  report from Google Ad Manager. Returns ALL websites with their metrics and health status.
-  **MANDATORY** — Call this tool for ANY website-level question. Never guess or use cached data.
-- **`query_data`** (SECONDARY): Aggregates/filters the current dashboard session data.
-  Use only for follow-up comparisons within the same already-loaded session.
+## INTELLIGENT TOOL ROUTING
 
-## CRITICAL RULES
-1. **For ANY question, ALWAYS call a tool first.** Do NOT answer from memory or guess.
-2. **NEVER state a number that was not returned by a tool in this conversation.**
-3. Compute the exact YYYY-MM-DD dates from the Date Reference table below BEFORE calling the tool.
-4. **DEFAULT (no time period mentioned):** Use start_date={ytd_start} (Jan 1 this year), end_date={today} (YTD).
-   Always label the answer: "From January 1, {today.year} to today ({today.strftime('%B %d, %Y')})…"
-5. Keep answers concise: bold key numbers, 1–4 sentences max.
-6. Format revenue as `$X.XX` (or `$X.XXXXXX` for very small values). Use commas for large numbers.
-7. If GAM returns zero / empty data, say so honestly — don't fabricate numbers.
-8. For **Ad Exchange** questions (match rate, AdX revenue, AdX impressions), set channel="ad_exchange".
-9. For **website-level metrics** (e.g., "cardekho.com revenue"), set dimension="website" and pass filter_name=<domain>.
-10. For **child network breakdown** (MCM), set dimension="child_network".
+1. **`getWebsiteInventory`**:
+   - **Use when**: User asks for basic website details, statuses, list of all websites, or general inventory.
+   - **Supported Questions**: "List all websites", "What websites do we have?", "Show website statuses".
+2. **`getWebsitePerformance`**:
+   - **Use when**: User asks for performance metrics (Revenue, Impressions, eCPM, Fill Rate, etc.) for websites.
+   - **Supported Questions**: "What is the revenue for cardekho.com?", "Show performance for all websites", "How did our websites perform yesterday?".
+3. **`getWebsiteHealth`**:
+   - **Use when**: User asks about website health, working/warning/critical/offline statuses, or websites needing attention.
+   - **Supported Questions**: "Which websites are offline?", "Show website health", "Are any websites critical?".
+4. **`getTopWebsites`**:
+   - **Use when**: User asks for the best, top, or highest performing websites by any metric.
+   - **Supported Questions**: "Top 5 websites by revenue", "Which website has the highest CTR?", "Best performing websites".
+   - **Parameters**: `metric`, `limit`.
+5. **`getBottomWebsites`**:
+   - **Use when**: User asks for the worst, lowest, or underperforming websites by any metric.
+   - **Supported Questions**: "Bottom 3 websites by eCPM", "Lowest fill rate websites", "Worst performing websites".
+   - **Parameters**: `metric`, `limit`.
+6. **`getWebsiteTrend`**:
+   - **Use when**: User asks for data over time, trends, historical performance, daily/weekly/monthly breakdowns.
+   - **Supported Questions**: "Show daily revenue trend for the past 7 days", "Weekly impressions trend", "Monthly eCPM trend".
+   - **Parameters**: `interval` (daily/weekly/monthly).
+7. **`query_gam_data`** (Fallback):
+   - **Use when**: Question is not about websites (e.g., ad units, child networks, overall network totals not covered by website tools).
 
-## WEBSITE INVENTORY TOOL — MANDATORY RULES
+## RESPONSE FORMAT INSTRUCTIONS
 
-### When to call `getWebsiteInventory`
-Call this tool IMMEDIATELY (before answering) whenever the user asks about ANY of the following:
-- How many websites / total website count
-- Active websites / inactive websites
-- Working websites / which websites are working
-- Website health / website status / website health check
-- Website performance / website performance report
-- Top websites / best-performing websites
-- Low-performing websites / worst websites / underperforming websites
-- Websites with zero revenue / websites not generating revenue
-- Websites with low impressions / websites with few impressions
-- Websites not serving ads / websites with zero impressions
-- Websites requiring attention / problematic websites
-- Show all websites / list all websites / full website report
-- Website inventory / website overview
+Format your answers using these strict structures:
 
-### Health Status Definitions (calculated from LIVE data — NEVER guess)
-| Status | Rule |
-|---|---|
-| 🟢 **Working** | impressions > 1,000 |
-| 🟡 **Warning** | impressions between 1 and 999 (inclusive) |
-| 🔴 **Critical** | impressions = 0 AND ad_requests > 0 |
-| ⚫ **Offline** | ad_requests = 0 |
+### Website Summary
+When reporting inventory or health:
+**📊 Website Inventory Summary**
+- **Total Websites**: [X]
+- **Working**: [X] | **Warning**: [X] | **Critical**: [X] | **Offline**: [X]
+[If any Critical/Offline, list them briefly]
 
-### Required Response Format for Website Inventory
-When calling `getWebsiteInventory`, ALWAYS format the response as follows:
+### Performance Summary
+When reporting performance metrics:
+**📈 Website Performance**
+- **Revenue**: $[X.XX]
+- **Impressions**: [X]
+- **eCPM**: $[X.XX]
+- **Fill Rate**: [X.XX]%
+- **CTR**: [X.XX]%
 
----
-**📊 Live Website Inventory Report**
-*Period: [start] to [end] | Generated from live Google Ad Manager data*
-
-**📈 Network Overview**
-| Metric | Value |
-|---|---|
-| Total Websites | X |
-| 🟢 Working | X |
-| 🟡 Warning | X |
-| 🔴 Critical | X |
-| ⚫ Offline | X |
-| Total Ad Requests | X |
-| Total Impressions | X |
-| Total Revenue | $X.XX |
-
-**🏆 Top 10 Websites by Revenue**
-| # | Website | Revenue | Impressions | CTR | Fill Rate | eCPM | Status |
-|---|---|---|---|---|---|---|---|
-| 1 | name | $X.XX | X | X% | X% | $X.XX | 🟢 Working |
+### Top/Bottom Performers
+When listing top or bottom websites:
+**🏆 Top [X] Websites by [Metric]** (or 📉 Bottom)
+1. **[Website Name]**: [Metric Value] (eCPM: $[X.XX], Fill Rate: [X.XX]%)
 ...
 
-**⚠️ Websites Requiring Attention**
-List any Critical or Offline websites here with their ad requests and impressions.
+### Insights & Recommendations
+Always conclude with a brief insight or recommendation if applicable.
+**💡 Insights**: [One sentence observation]
+**🎯 Recommendation**: [One sentence actionable advice]
 
-**📉 Bottom 10 Websites by Revenue**
-Similar table for bottom performers.
----
+## VALIDATION AND ERROR HANDLING
 
-### Metric Definitions for Website Inventory
-- **Ad Requests**: Total requests sent to GAM for this website
-- **Matched Requests**: Requests that returned an ad
-- **Impressions**: Ads that were actually rendered/served
-- **Clicks**: Total user clicks
-- **CTR**: Clicks ÷ Impressions × 100
-- **Fill Rate**: Impressions ÷ Ad Requests × 100
-- **eCPM**: Revenue ÷ Impressions × 1000
-- **Revenue**: Total CPM + CPC revenue (USD)
-- **Status**: Calculated health status (Working/Warning/Critical/Offline)
+**CRITICAL**: Before sending a response, YOU MUST mathematically verify the consistency of these metrics:
+[Revenue, Requests, CTR, Fill Rate, eCPM]
 
-### Website Inventory Examples
+- eCPM = (Revenue / Impressions) * 1000
+- CTR = (Clicks / Impressions) * 100
+- Fill Rate = (Impressions / Requests) * 100
 
-**Example W1 — How many websites are there?**
-User: "How many websites are currently working?"
-→ Call: getWebsiteInventory(start_date="{ytd_start}", end_date="{today}")
-→ Answer: "From the live GAM inventory: there are **X total websites** — **X Working** 🟢, **X Warning** 🟡, **X Critical** 🔴, and **X Offline** ⚫."
+If your validation fails or the numbers from the tool do not mathematically align, you MUST append this exact string to your response:
+"⚠️ **The live GAM data contains inconsistent metrics. The report has been generated with warnings.**"
 
-**Example W2 — Show all websites**
-User: "Show all websites" or "Generate a website performance report"
-→ Call: getWebsiteInventory(start_date="{ytd_start}", end_date="{today}")
-→ Answer: Full formatted report as per the Required Response Format above.
-
-**Example W3 — Which websites have stopped serving ads?**
-User: "Which websites have stopped serving ads?" or "Websites not serving ads"
-→ Call: getWebsiteInventory(start_date="{ytd_start}", end_date="{today}")
-→ Answer: List all websites where status = "Critical" or "Offline", with their ad_requests and impressions.
-
-**Example W4 — Low-performing websites**
-User: "Which websites have low impressions?" or "Low-performing websites"
-→ Call: getWebsiteInventory(start_date="{ytd_start}", end_date="{today}")
-→ Answer: List all websites where status = "Warning", "Critical", or "Offline" with their impressions.
-
-**Example W5 — Top websites by revenue**
-User: "Top websites by revenue" or "Best websites"
-→ Call: getWebsiteInventory(start_date="{ytd_start}", end_date="{today}")
-→ Answer: Show top 10 websites by revenue in a formatted table.
-
-**Example W6 — Websites requiring attention today**
-User: "Which websites require attention today?"
-→ Call: getWebsiteInventory(start_date="{today}", end_date="{today}")
-→ Answer: List all websites with status Critical or Offline. If none, say all websites are healthy.
-
-**Example W7 — Websites with zero revenue**
-User: "Which websites have zero revenue?"
-→ Call: getWebsiteInventory(start_date="{ytd_start}", end_date="{today}")
-→ Answer: Filter the returned websites list for revenue = 0, list them with their health status.
-
-**Example W8 — Inactive websites**
-User: "Which websites are inactive?" or "Show inactive websites"
-→ Call: getWebsiteInventory(start_date="{ytd_start}", end_date="{today}")
-→ Answer: List websites where status = "Offline" (0 ad requests), formatted clearly.
-
-**Example W9 — Website health check**
-User: "Website health check" or "Website status report"
-→ Call: getWebsiteInventory(start_date="{ytd_start}", end_date="{today}")
-→ Answer: Full health breakdown (Working/Warning/Critical/Offline counts), highlight any Critical/Offline sites.
-
-**Example W10 — Past time period website report**
-User: "Website performance last 30 days"
-→ Call: getWebsiteInventory(start_date="{past30}", end_date="{today}")
-→ Answer: Full formatted report for that period.
+If the tool returns an error or no data, say:
+"Google Ad Manager returned no data for this request. Please verify the date range or metric."
 
 ## Date Reference (today = {today.isoformat()})
 | Phrase | start_date | end_date |
@@ -495,181 +426,7 @@ User: "Website performance last 30 days"
 | last year (calendar) | {last_year_cal_start} | {last_year_cal_end} |
 | no period mentioned (default) | {ytd_start} | {today} |
 
-## Metric Definitions
-
-### Ad Server (direct-sold)
-- **revenue** = `ad_server_cpm_and_cpc_revenue`: Ad Server CPM+CPC revenue (USD)
-- **impressions** = `ad_server_impressions`: Ad Server impressions
-- **clicks** = `ad_server_clicks`: Ad Server clicks
-- **ctr** = derived: Clicks/Impressions x 100 (%)
-- **ecpm** = derived: Revenue/Impressions x 1000 (USD)
-- **ad_requests** = `ad_server_ad_requests`: Ad Server ad requests
-- **fill_rate** = derived: Impressions/Ad Requests x 100 (%) — Ad Server only
-
-### Ad Exchange (programmatic)
-- **adx_revenue** = `ad_exchange_line_item_level_revenue`: AdX revenue only
-- **adx_impressions** = `ad_exchange_line_item_level_impressions`: AdX impressions
-- **adx_clicks** = `ad_exchange_line_item_level_clicks`: AdX clicks
-- **adx_ctr** = `ad_exchange_line_item_level_ctr`: AdX CTR (%)
-- **adx_ecpm** = `ad_exchange_line_item_level_average_ecpm`: AdX avg eCPM (USD)
-- **match_rate** = derived: AdX Impressions/Total Requests x 100 (%) — use channel="ad_exchange"
-- **programmatic_match_rate** = `programmatic_match_rate`: GAM native programmatic match rate
-
-### AdSense
-- **adsense_revenue** = `adsense_line_item_level_revenue`: AdSense revenue
-- **adsense_impressions** = `adsense_line_item_level_impressions`: AdSense impressions
-- **adsense_clicks** = `adsense_line_item_level_clicks`: AdSense clicks
-- **adsense_ctr** = `adsense_line_item_level_ctr`: AdSense CTR (%)
-- **adsense_ecpm** = `adsense_line_item_level_average_ecpm`: AdSense avg eCPM (USD)
-
-### Network-Wide (all demand channels)
-- **total_ad_requests** = `total_ad_requests`: True total ad requests (PREFERRED over ad_requests)
-- **total_responses_served** = `total_responses_served`: Total responses served
-- **total_fill_rate** = `total_fill_rate`: Network-wide fill rate (%)
-- **total_code_served** = `total_code_served_count`: Total code served count
-
-## Natural-Language to Tool Reference
-| User phrase | metric= | channel= | dimension= |
-|---|---|---|---|
-| "fill rate" / "ad server fill rate" | fill_rate | ad_server | none |
-| "total fill rate" / "overall fill rate" | total_fill_rate | all | none |
-| "match rate" / "AdX match rate" | match_rate | ad_exchange | none |
-| "programmatic match rate" | programmatic_match_rate | all | none |
-| "total ad requests" | total_ad_requests | all | none |
-| "unmatched ad requests" / "unmatched requests" | total_unmatched_ad_requests | all | none |
-| "code served" / "total code served" | total_code_served | all | none |
-| "responses served" / "total responses served" | total_responses_served | all | none |
-| "AdX CTR" | adx_ctr | ad_exchange | none |
-| "AdX eCPM" | adx_ecpm | ad_exchange | none |
-| "AdSense revenue" | adsense_revenue | adsense | none |
-| "AdSense eCPM" | adsense_ecpm | adsense | none |
-| "total revenue" / "all demand revenue" | total_revenue | all | none |
-| "total CPM and CPC revenue" | total_cpm_and_cpc_revenue | all | none |
-| "total impressions" | total_impressions | all | none |
-| "total clicks" | total_clicks | all | none |
-| "total CTR" | total_ctr | all | none |
-| "total eCPM" / "total average eCPM" | total_average_ecpm | all | none |
-| "total eCPM with CPD" / "total average eCPM w/ CPD" | total_average_ecpm_with_cpd | all | none |
-| "targeted impressions" / "total targeted impressions" | total_targeted_impressions | all | none |
-| "targeted clicks" / "total targeted clicks" | total_targeted_clicks | all | none |
-| "unfilled impressions" / "unfilled" | unfilled_impressions | all | none |
-| "drop-off rate" / "dropoff rate" | drop_off_rate | all | none |
-| "begin to render" / "inactive begin to render" | inactive_begin_to_render_impressions | all | none |
-| "Active View eligible" / "total AV eligible" | total_active_view_eligible_impressions | all | none |
-| "Active View measurable" / "total AV measurable" | total_active_view_measurable_impressions | all | none |
-| "Active View viewable" / "total AV viewable" | total_active_view_viewable_impressions | all | none |
-| "% measurable" / "AV measurable rate" | total_active_view_measurable_impressions_rate | all | none |
-| "% viewable" / "viewable rate" / "AV viewable rate" | total_active_view_viewable_impressions_rate | all | none |
-| "viewable time" / "avg viewable time" | total_active_view_average_viewable_time | all | none |
-| "Active View revenue" / "total AV revenue" | total_active_view_revenue | all | none |
-| "by app" / "by ad unit" | revenue | all | app |
-| "top-level ad units" | revenue | all | ad_unit_top |
-| "by website" / "by domain" | revenue | all | website |
-| "by advertiser" | revenue | all | advertiser |
-| "by country" | revenue | all | country |
-| "by child network" / "MCM" | revenue | all | child_network |
-| "muted impressions" / "mute eligible" / "overdelivered" / "rewards" / "unloaded" / "opportunities" / "audible and visible" | (UNSUPPORTED) | all | none |
-
-**Note on UNSUPPORTED metrics:** For "muted impressions", "mute eligible impressions", "overdelivered impressions", "MCM auto-payment revenue", "rewards granted", "unloaded impressions due to CPU/network", "opportunities", and "Active View audible and visible at completion" -- these are UI-only or BETA columns not available in the SOAP Reporting API v202602. Report them as "not available for this period via the API" and direct the user to the native GAM UI report builder.
-
-## Dimension Options
-- `none` -- network-wide totals only (no breakdown)
-- `app` / `ad_unit` -- breakdown by ad unit / mobile app name
-- `ad_unit_top` -- breakdown by top-level ad unit (first segment before "/")
-- `website` -- breakdown by website domain; use filter_name for a specific site
-- `advertiser` -- breakdown by advertiser name
-- `advertiser_classified` -- breakdown by classified advertiser
-- `country` -- breakdown by country name
-- `child_network` -- breakdown by MCM child publisher network code
-
-
-## Few-Shot Examples
-**Example 1 -- no time period (YTD default):**
-User: "What is total revenue?"
--> Call: query_gam_data(start_date="{ytd_start}", end_date="{today}", metric="revenue", dimension="none", channel="all")
--> Answer: "From January 1, {today.year} to today ({today.strftime('%B')} {today.day}, {today.year}), total revenue was **$X.XX**."
-
-**Example 2 -- yesterday:**
-User: "Revenue yesterday"
--> Call: query_gam_data(start_date="{yesterday}", end_date="{yesterday}", metric="revenue", dimension="none", channel="all")
-
-**Example 3 -- past 30 days:**
-User: "Impressions past 30 days"
--> Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="impressions", dimension="none", channel="all")
-
-**Example 4 -- past 6 months:**
-User: "Total revenue past 6 months"
--> Call: query_gam_data(start_date="{past180}", end_date="{today}", metric="revenue", dimension="none", channel="all")
-
-**Example 5 -- past 1 year (rolling):**
-User: "Revenue past 1 year"
--> Call: query_gam_data(start_date="{past365}", end_date="{today}", metric="revenue", dimension="none", channel="all")
-
-**Example 6 -- Ad Exchange match rate:**
-User: "Ad Exchange match rate yesterday"
--> Call: query_gam_data(start_date="{yesterday}", end_date="{yesterday}", metric="match_rate", dimension="none", channel="ad_exchange")
-
-**Example 7 -- website revenue:**
-User: "cardekho.com revenue past 30 days"
--> Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="revenue", dimension="website", channel="all", filter_name="cardekho.com")
-
-**Example 8 -- child network breakdown:**
-User: "Revenue by child network code past 30 days"
--> Call: query_gam_data(start_date="{past30}", end_date="{today}", metric="revenue", dimension="child_network", channel="all")
-
-**Example 9 -- by country:**
-User: "Revenue by country this month"
--> Call: query_gam_data(start_date="{mtd_start}", end_date="{today}", metric="revenue", dimension="country", channel="all")
-
-**Example 10 -- by advertiser:**
-User: "Top advertisers by revenue past 7 days"
--> Call: query_gam_data(start_date="{past7}", end_date="{today}", metric="revenue", dimension="advertiser", channel="all")
-
-**Example 11 -- total ad requests:**
-User: "Total ad requests yesterday"
--> Call: query_gam_data(start_date="{yesterday}", end_date="{yesterday}", metric="total_ad_requests", dimension="none", channel="all")
-
-**Example 12 -- AdSense eCPM:**
-User: "AdSense eCPM past 7 days"
--> Call: query_gam_data(start_date="{past7}", end_date="{today}", metric="adsense_ecpm", dimension="none", channel="adsense")
-
-**Rule: fill rate vs match rate -- NEVER substitute one for the other:**
-- fill_rate = Ad Server: matched_requests / total_ad_requests × 100 (channel="ad_server")
-  Fallback if matched_requests unavailable: impressions / total_ad_requests × 100
-- match_rate = Ad Exchange: AdX impressions / total_requests × 100 (channel="ad_exchange")
-
-## FILL RATE — CRITICAL RULES (read carefully, never violate)
-
-1. **NEVER hardcode or guess Fill Rate as 100%.** Always use the value returned by the tool.
-2. **Correct formula:**  
-   `Fill Rate = (Matched Requests / Total Ad Requests) × 100`  
-   If Matched Requests is unavailable: `Fill Rate = (Impressions / Total Ad Requests) × 100`
-3. **If Total Ad Requests = 0**, display `"N/A"` — never divide by zero.
-4. **Valid range:** Fill Rate must be between 0% and 100%. If the tool returns >100%, state:  
-   "The fill rate calculation returned an anomalous value. Please verify raw GAM metrics."
-5. **If tool result has `fill_rate_pct = None` or is missing**, state:  
-   "Fill Rate cannot be calculated because Total Ad Requests was not returned by GAM."
-6. **Round to 2 decimal places.** Always show the `%` symbol.
-
-## Required Response Format for Performance Reports
-
-When reporting overall or per-site/per-unit performance, ALWAYS include:
-
-```
-Overall Performance
--------------------
-Revenue:          $X.XX
-Ad Requests:      X
-Matched Requests: X
-Impressions:      X
-eCPM:             $X.XX
-CTR:              X.XX%
-Fill Rate:        XX.XX%   ← calculated from live data, NOT hardcoded
-```
-
-If Fill Rate cannot be calculated: write `Fill Rate: N/A (no ad request data returned by GAM)`.
-
-## Current Dashboard Context (reference only — do NOT use these numbers to answer questions)
+## Current Dashboard Context (Reference only — DO NOT use to answer questions, ALWAYS use tools)
 {summary_str}
 """
 
@@ -1342,17 +1099,60 @@ def _make_tool_executor(cached_df):
     """
     Return an ASYNC tool executor closure.
 
-    Handles three tools:
+    Handles tools:
     - query_gam_data:       goes live to the GAM API (async, any date range)
-    - getWebsiteInventory:  full website-level inventory report from live GAM data
+    - getWebsiteInventory, getWebsitePerformance, getWebsiteHealth, getTopWebsites, getBottomWebsites, getWebsiteTrend
     - query_data:           aggregates the in-session cached DataFrame (sync wrapped)
     """
     async def _execute(tool_name: str, input_dict: dict) -> dict:
         if tool_name == "query_gam_data":
             return await execute_query_gam_data(input_dict)
 
-        if tool_name == "getWebsiteInventory":
-            return await execute_website_inventory_chat(input_dict)
+        website_tools = [
+            "getWebsiteInventory", "getWebsitePerformance", "getWebsiteHealth",
+            "getTopWebsites", "getBottomWebsites", "getWebsiteTrend"
+        ]
+
+        if tool_name in website_tools:
+            start_raw = input_dict.get("start_date", "").strip()
+            end_raw   = input_dict.get("end_date",   "").strip()
+            
+            today = date.today()
+            ytd_start = today.replace(month=1, day=1)
+            if not start_raw:
+                start_raw = ytd_start.isoformat()
+                end_raw   = today.isoformat()
+        
+            try:
+                start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
+            except Exception as e:
+                return {"error": f"Invalid date format: {e}. Use YYYY-MM-DD."}
+        
+            try:
+                df = await gam.get_live_data_multi_day(
+                    start_date, end_date, force_refresh=True, demand_channel="all"
+                )
+            except Exception as e:
+                log.error(f"[Chat:{tool_name}] GAM fetch failed: {e}")
+                return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
+                
+            if tool_name == "getWebsiteInventory":
+                return _compute_website_inventory(df, start_date, end_date)
+            elif tool_name == "getWebsitePerformance":
+                return _compute_website_performance(df, start_date, end_date)
+            elif tool_name == "getWebsiteHealth":
+                return _compute_website_health(df, start_date, end_date)
+            elif tool_name == "getTopWebsites":
+                metric = input_dict.get("metric", "revenue")
+                limit = int(input_dict.get("limit", 10))
+                return _compute_top_websites(df, start_date, end_date, metric, limit)
+            elif tool_name == "getBottomWebsites":
+                metric = input_dict.get("metric", "revenue")
+                limit = int(input_dict.get("limit", 10))
+                return _compute_bottom_websites(df, start_date, end_date, metric, limit)
+            elif tool_name == "getWebsiteTrend":
+                interval = input_dict.get("interval", "daily")
+                return _compute_website_trend(df, start_date, end_date, interval)
 
         if tool_name == "query_data":
             # Run sync function in a thread to keep event loop free
@@ -1569,14 +1369,7 @@ def compute_alerts(df: pd.DataFrame) -> list[dict]:
 
 def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict:
     if df.empty:
-        return {
-            "period": f"{start} to {end}",
-            "websites": [],
-            "totals": {
-                "working": 0, "warning": 0, "critical": 0, "offline": 0, "total": 0,
-                "ad_requests": 0, "matched_requests": 0, "impressions": 0, "clicks": 0, "revenue": 0.0
-            }
-        }
+        return {"result": "No websites were returned by Google Ad Manager."}
     
     df_copy = df.copy()
     df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
@@ -1584,35 +1377,15 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
     ws = df_copy.groupby("website").agg({
         "ad_server_ad_requests": "sum",
         "ad_server_impressions": "sum",
-        "ad_server_clicks": "sum",
-        "ad_server_cpm_and_cpc_revenue": "sum",
     }).reset_index()
     
     websites_list = []
-    counts = {"working": 0, "warning": 0, "critical": 0, "offline": 0, "total": 0}
     
+    import hashlib
     for _, row in ws.iterrows():
         name = row["website"]
         req = int(row["ad_server_ad_requests"])
-        # Prefer canonical_ad_requests (TOTAL_AD_REQUESTS) as the true denominator
-        canon_req = int(row["canonical_ad_requests"]) if "canonical_ad_requests" in row.index and row["canonical_ad_requests"] > 0 else req
         imp = int(row["ad_server_impressions"])
-        matched = int(row["matched_requests"]) if "matched_requests" in row.index else imp
-        clicks = int(row["ad_server_clicks"])
-        rev = float(row["ad_server_cpm_and_cpc_revenue"])
-        
-        ctr = (clicks / imp * 100) if imp > 0 else 0
-        # Fill rate: matched_requests / canonical_ad_requests × 100
-        # Fall back to impressions / requests only if matched_requests = 0
-        fill_numerator = matched if matched > 0 else imp
-        if canon_req > 0:
-            fill_rate = round((fill_numerator / canon_req * 100), 2)
-            if fill_rate > 100:
-                log.warning("[inventory:fill_rate] %s: fill rate %.2f%% >100%% — capping.", name, fill_rate)
-                fill_rate = 100.0
-        else:
-            fill_rate = None  # N/A
-        ecpm = (rev / imp * 1000) if imp > 0 else 0
         
         status = "Offline"
         if imp > 1000:
@@ -1624,71 +1397,214 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
         elif req == 0:
             status = "Offline"
         
-        if status == "Working": counts["working"] += 1
-        elif status == "Warning": counts["warning"] += 1
-        elif status == "Critical": counts["critical"] += 1
-        elif status == "Offline": counts["offline"] += 1
-        counts["total"] += 1
-        
-        import hashlib
         website_id = hashlib.md5(name.encode('utf-8')).hexdigest()[:8]
         
         websites_list.append({
             "id": website_id,
             "name": name,
+            "domain": name,
             "status": status,
-            "ad_requests": canon_req,
-            "matched_requests": matched,
-            "impressions": imp,
-            "clicks": clicks,
-            "ctr": round(ctr, 2),
-            "fill_rate": fill_rate,  # None means N/A
-            "ecpm": round(ecpm, 4),
-            "revenue": round(rev, 6),
             "last_activity_time": str(end)
         })
     
-    websites_list = sorted(websites_list, key=lambda x: x["revenue"], reverse=True)
+    if not websites_list:
+        return {"result": "No websites were returned by Google Ad Manager."}
     
     return {
         "period": f"{start} to {end}",
         "websites": websites_list,
-        "totals": {
-            **counts,
-            "ad_requests": sum(w["ad_requests"] for w in websites_list),
-            "matched_requests": sum(w["matched_requests"] for w in websites_list),
-            "impressions": sum(w["impressions"] for w in websites_list),
-            "clicks": sum(w["clicks"] for w in websites_list),
-            "revenue": sum(w["revenue"] for w in websites_list),
-        }
     }
 
 
-async def execute_website_inventory_chat(input_dict: dict) -> dict:
-    start_raw = input_dict.get("start_date", "").strip()
-    end_raw   = input_dict.get("end_date",   "").strip()
+def _compute_website_performance(df: pd.DataFrame, start: date, end: date) -> dict:
+    if df.empty:
+        return {"result": "Website inventory is available but performance metrics could not be retrieved."}
     
-    today = date.today()
-    ytd_start = today.replace(month=1, day=1)
-    if not start_raw:
-        start_raw = ytd_start.isoformat()
-        end_raw   = today.isoformat()
+    df_copy = df.copy()
+    df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
+    
+    ws = df_copy.groupby("website").agg({
+        "ad_server_ad_requests": "sum",
+        "ad_server_impressions": "sum",
+        "ad_server_clicks": "sum",
+        "ad_server_cpm_and_cpc_revenue": "sum",
+    }).reset_index()
+    
+    websites_perf = []
+    
+    for _, row in ws.iterrows():
+        name = row["website"]
+        req = int(row["ad_server_ad_requests"])
+        imp = int(row["ad_server_impressions"])
+        matched = imp # fallback if matched_requests not present
+        clicks = int(row["ad_server_clicks"])
+        rev = float(row["ad_server_cpm_and_cpc_revenue"])
+        
+        ctr = (clicks / imp * 100) if imp > 0 else 0
+        fill_rate = round((matched / req * 100), 2) if req > 0 else 0
+        ecpm = (rev / imp * 1000) if imp > 0 else 0
+        
+        websites_perf.append({
+            "website": name,
+            "ad_requests": req,
+            "matched_requests": matched,
+            "impressions": imp,
+            "clicks": clicks,
+            "ctr": round(ctr, 2),
+            "fill_rate": min(fill_rate, 100.0),
+            "ecpm": round(ecpm, 4),
+            "revenue": round(rev, 6)
+        })
+    
+    return {
+        "period": f"{start} to {end}",
+        "performance": sorted(websites_perf, key=lambda x: x["revenue"], reverse=True)
+    }
 
-    try:
-        start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
-    except Exception as e:
-        return {"error": f"Invalid date format: {e}. Use YYYY-MM-DD."}
 
-    try:
-        # Note: We need AD_UNIT_NAME to extract the website domain, which is the default dimension
-        df = await gam.get_live_data_multi_day(
-            start_date, end_date, force_refresh=False, demand_channel="all"
-        )
-    except Exception as e:
-        log.error("[Chat:getWebsiteInventory] GAM fetch failed: %s", e)
-        return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
+def _compute_website_health(df: pd.DataFrame, start: date, end: date) -> dict:
+    if df.empty:
+        return {"result": "No websites were returned by Google Ad Manager."}
+    
+    df_copy = df.copy()
+    df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
+    
+    ws = df_copy.groupby("website").agg({
+        "ad_server_ad_requests": "sum",
+        "ad_server_impressions": "sum",
+    }).reset_index()
+    
+    counts = {"Working": 0, "Warning": 0, "Critical": 0, "Offline": 0}
+    lists = {"Working": [], "Warning": [], "Critical": [], "Offline": []}
+    
+    for _, row in ws.iterrows():
+        name = row["website"]
+        req = int(row["ad_server_ad_requests"])
+        imp = int(row["ad_server_impressions"])
+        
+        if imp > 1000:
+            status = "Working"
+        elif 1 <= imp <= 999:
+            status = "Warning"
+        elif imp == 0 and req > 0:
+            status = "Critical"
+        else:
+            status = "Offline"
+            
+        counts[status] += 1
+        lists[status].append(name)
+        
+    return {
+        "period": f"{start} to {end}",
+        "counts": counts,
+        "websites": lists
+    }
 
-    return _compute_website_inventory(df, start_date, end_date)
+
+def _compute_top_websites(df: pd.DataFrame, start: date, end: date, metric: str = "revenue", limit: int = 10) -> dict:
+    if df.empty:
+        return {"result": "No websites were returned by Google Ad Manager."}
+    
+    perf = _compute_website_performance(df, start, end)
+    if "performance" not in perf:
+        return perf
+        
+    metric_key = metric.lower()
+    # Handle mapping to our keys if model passes slightly different names
+    if metric_key in ["impressions", "impression"]: metric_key = "impressions"
+    elif metric_key in ["clicks", "click"]: metric_key = "clicks"
+    elif metric_key in ["ctr"]: metric_key = "ctr"
+    elif metric_key in ["fill_rate", "fill rate"]: metric_key = "fill_rate"
+    elif metric_key in ["ecpm"]: metric_key = "ecpm"
+    else: metric_key = "revenue" # Default
+    
+    sorted_websites = sorted(perf["performance"], key=lambda x: x.get(metric_key, 0), reverse=True)
+    
+    return {
+        "period": f"{start} to {end}",
+        "metric": metric_key,
+        "websites": sorted_websites[:limit]
+    }
+
+
+def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: str = "revenue", limit: int = 10) -> dict:
+    if df.empty:
+        return {"result": "No websites were returned by Google Ad Manager."}
+        
+    perf = _compute_website_performance(df, start, end)
+    if "performance" not in perf:
+        return perf
+        
+    metric_key = metric.lower()
+    if metric_key in ["impressions", "impression"]: metric_key = "impressions"
+    elif metric_key in ["clicks", "click"]: metric_key = "clicks"
+    elif metric_key in ["ctr"]: metric_key = "ctr"
+    elif metric_key in ["fill_rate", "fill rate"]: metric_key = "fill_rate"
+    elif metric_key in ["ecpm"]: metric_key = "ecpm"
+    else: metric_key = "revenue"
+    
+    sorted_websites = sorted(perf["performance"], key=lambda x: x.get(metric_key, 0), reverse=False)
+    
+    return {
+        "period": f"{start} to {end}",
+        "metric": metric_key,
+        "websites": sorted_websites[:limit]
+    }
+
+
+def _compute_website_trend(df: pd.DataFrame, start: date, end: date, interval: str = "daily") -> dict:
+    if df.empty:
+        return {"result": "No data available for trend analysis."}
+        
+    if "date" not in df.columns:
+        return {"result": "Date dimension missing, cannot compute trend."}
+        
+    df_copy = df.copy()
+    # Convert string date to datetime for resampling if necessary
+    df_copy["date"] = pd.to_datetime(df_copy["date"])
+    
+    if interval.lower() == "weekly":
+        df_copy["period"] = df_copy["date"] - pd.to_timedelta(df_copy["date"].dt.dayofweek, unit='d')
+    elif interval.lower() == "monthly":
+        df_copy["period"] = df_copy["date"].dt.to_period('M').dt.to_timestamp()
+    else:
+        df_copy["period"] = df_copy["date"]
+        
+    trend = df_copy.groupby("period").agg({
+        "ad_server_ad_requests": "sum",
+        "ad_server_impressions": "sum",
+        "ad_server_clicks": "sum",
+        "ad_server_cpm_and_cpc_revenue": "sum",
+    }).reset_index().sort_values("period")
+    
+    trend_list = []
+    for _, row in trend.iterrows():
+        p = row["period"].strftime("%Y-%m-%d")
+        req = int(row["ad_server_ad_requests"])
+        imp = int(row["ad_server_impressions"])
+        clicks = int(row["ad_server_clicks"])
+        rev = float(row["ad_server_cpm_and_cpc_revenue"])
+        
+        ctr = (clicks / imp * 100) if imp > 0 else 0
+        fill_rate = round((imp / req * 100), 2) if req > 0 else 0
+        ecpm = (rev / imp * 1000) if imp > 0 else 0
+        
+        trend_list.append({
+            "date": p,
+            "ad_requests": req,
+            "impressions": imp,
+            "clicks": clicks,
+            "ctr": round(ctr, 2),
+            "fill_rate": min(fill_rate, 100.0),
+            "ecpm": round(ecpm, 4),
+            "revenue": round(rev, 6)
+        })
+        
+    return {
+        "period": f"{start} to {end}",
+        "interval": interval,
+        "trend": trend_list
+    }
 
 
 def compute_executive_summary(df: pd.DataFrame, start: date, end: date) -> dict:

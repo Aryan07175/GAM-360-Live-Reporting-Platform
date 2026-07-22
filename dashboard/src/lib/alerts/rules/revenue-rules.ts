@@ -4,6 +4,7 @@ import { getRecommendations } from "../alert-recommendations";
 import type { BIAppRow, BIAnomaly, BISummaryKPI } from "@/types";
 import { fmt } from "../alert-utils";
 
+
 /**
  * Revenue alert rules.
  * Fires on: zero revenue, large drops, large spikes, anomaly-detected drops.
@@ -98,8 +99,8 @@ export function generateRevenueAlerts(
     const isDrop = anomaly.changePct < 0;
     const sev: AlertSeverity =
       anomaly.severity === "High" ? (anomaly.changePct <= -50 ? "critical" : "high")
-      : anomaly.severity === "Medium" ? "medium"
-      : "low";
+        : anomaly.severity === "Medium" ? "medium"
+          : "low";
 
     alerts.push({
       id: `rev-anomaly-${anomaly.id}-${now}`,

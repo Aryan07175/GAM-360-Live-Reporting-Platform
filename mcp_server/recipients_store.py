@@ -200,3 +200,4 @@ def update_preferences(prefs: Dict[str, bool]) -> Dict[str, bool]:
 
     log.info("[RECIPIENTS] Preferences updated: %s", current_prefs)
     return current_prefs
+
