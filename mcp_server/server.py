@@ -634,8 +634,40 @@ User: "AdSense eCPM past 7 days"
 -> Call: query_gam_data(start_date="{past7}", end_date="{today}", metric="adsense_ecpm", dimension="none", channel="adsense")
 
 **Rule: fill rate vs match rate -- NEVER substitute one for the other:**
-- fill_rate = Ad Server: impressions/ad_requests (channel="ad_server")
-- match_rate = Ad Exchange: AdX impressions/total requests (channel="ad_exchange")
+- fill_rate = Ad Server: matched_requests / total_ad_requests × 100 (channel="ad_server")
+  Fallback if matched_requests unavailable: impressions / total_ad_requests × 100
+- match_rate = Ad Exchange: AdX impressions / total_requests × 100 (channel="ad_exchange")
+
+## FILL RATE — CRITICAL RULES (read carefully, never violate)
+
+1. **NEVER hardcode or guess Fill Rate as 100%.** Always use the value returned by the tool.
+2. **Correct formula:**  
+   `Fill Rate = (Matched Requests / Total Ad Requests) × 100`  
+   If Matched Requests is unavailable: `Fill Rate = (Impressions / Total Ad Requests) × 100`
+3. **If Total Ad Requests = 0**, display `"N/A"` — never divide by zero.
+4. **Valid range:** Fill Rate must be between 0% and 100%. If the tool returns >100%, state:  
+   "The fill rate calculation returned an anomalous value. Please verify raw GAM metrics."
+5. **If tool result has `fill_rate_pct = None` or is missing**, state:  
+   "Fill Rate cannot be calculated because Total Ad Requests was not returned by GAM."
+6. **Round to 2 decimal places.** Always show the `%` symbol.
+
+## Required Response Format for Performance Reports
+
+When reporting overall or per-site/per-unit performance, ALWAYS include:
+
+```
+Overall Performance
+-------------------
+Revenue:          $X.XX
+Ad Requests:      X
+Matched Requests: X
+Impressions:      X
+eCPM:             $X.XX
+CTR:              X.XX%
+Fill Rate:        XX.XX%   ← calculated from live data, NOT hardcoded
+```
+
+If Fill Rate cannot be calculated: write `Fill Rate: N/A (no ad request data returned by GAM)`.
 
 ## Current Dashboard Context (reference only — do NOT use these numbers to answer questions)
 {summary_str}
@@ -920,10 +952,30 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
 
     total_ecpm = round((total_rev / total_imp * 1000), 6) if total_imp > 0 else 0.0
     total_ctr  = round((total_clk / total_imp * 100),  4) if total_imp > 0 else 0.0
-    fill_rate  = round((total_imp / total_req * 100),  2) if total_req > 0 else 0.0
+
+    # Fill rate: prefer TOTAL_AD_REQUESTS (true network-wide denominator)
+    # Use matched_requests (total_responses_served) as numerator if available.
+    # NEVER use impressions as the denominator — that forces fill rate to 100%.
+    best_req_for_fill = true_ad_req if true_ad_req > 0 else total_req
+    total_resp_served = _col("total_responses_served")
+    fill_numerator = total_resp_served if total_resp_served > 0 else total_imp
+    if best_req_for_fill > 0:
+        fill_rate = round((fill_numerator / best_req_for_fill * 100), 2)
+        # Validate: fill rate must be 0-100%
+        if fill_rate > 100:
+            log.warning(
+                "[fill_rate] Calculated fill rate %.2f%% exceeds 100%% "
+                "(numerator=%d, denominator=%d). This indicates a metric mismatch. "
+                "Investigate before reporting.",
+                fill_rate, fill_numerator, best_req_for_fill
+            )
+            fill_rate = min(fill_rate, 100.0)  # cap; AI will note the anomaly
+    else:
+        fill_rate = None  # Genuinely unknown — AI must report N/A
+    fill_rate  = fill_rate
     match_rate = round((adx_imp  / total_req * 100),   4) if total_req > 0 else 0.0
 
-    best_fill  = round(float(true_fill), 2) if true_fill > 0 else fill_rate
+    best_fill  = round(float(true_fill), 2) if (true_fill > 0 and true_fill <= 100) else fill_rate
     best_req   = true_ad_req if true_ad_req > 0 else total_req
     best_match = round(float(prog_match), 4) if prog_match > 0 else match_rate
 
@@ -1096,14 +1148,35 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         clk_c = next((c for c in ["ad_server_clicks",
                                    "total_line_item_level_clicks"]
                       if c in g.columns), None)
-        req_c = next((c for c in ["ad_server_ad_requests", "total_ad_requests"]
-                      if c in g.columns), None)
+        # Fill rate denominator priority: canonical_ad_requests > total_ad_requests > ad_server_ad_requests
+        req_c = next((c for c in ["canonical_ad_requests", "total_ad_requests", "ad_server_ad_requests"]
+                      if c in g.columns and g[c].sum() > 0), None)
+        # Matched requests for fill rate numerator (preferred over impressions)
+        matched_c = "matched_requests" if "matched_requests" in g.columns else None
+
         if rev_c and imp_c:
             g["ecpm_usd"] = (g[rev_c] / g[imp_c] * 1000).where(g[imp_c] > 0, 0).round(6)
         if clk_c and imp_c:
             g["ctr_pct"] = (g[clk_c] / g[imp_c] * 100).where(g[imp_c] > 0, 0).round(4)
-        if imp_c and req_c:
-            g["fill_rate_pct"] = (g[imp_c] / g[req_c] * 100).where(g[req_c] > 0, 0).round(2)
+        if req_c:
+            # Fill rate = matched_requests / ad_requests (preferred)
+            # Fallback: impressions / ad_requests
+            num_c = matched_c if (matched_c and g[matched_c].sum() > 0) else imp_c
+            if num_c:
+                raw_fill = (g[num_c] / g[req_c] * 100).where(g[req_c] > 0, 0).round(2)
+                # Cap at 100% — values > 100 indicate a data anomaly
+                g["fill_rate_pct"] = raw_fill.clip(upper=100.0)
+                over_100 = (raw_fill > 100).sum()
+                if over_100 > 0:
+                    log.warning("[fill_rate] %d rows have fill rate >100%% — capped. "
+                                "Check canonical_ad_requests vs matched/impressions.", over_100)
+            # Expose matched requests in result rows
+            if matched_c:
+                g["matched_requests"] = g[matched_c]
+        else:
+            # No valid request denominator — fill rate is genuinely unknown
+            g["fill_rate_pct"] = None  # AI will report "N/A"
+
         if "adx_impressions" in g.columns and req_c:
             g["adx_match_rate_pct"] = (
                 g["adx_impressions"] / g[req_c] * 100
@@ -1521,12 +1594,24 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
     for _, row in ws.iterrows():
         name = row["website"]
         req = int(row["ad_server_ad_requests"])
+        # Prefer canonical_ad_requests (TOTAL_AD_REQUESTS) as the true denominator
+        canon_req = int(row["canonical_ad_requests"]) if "canonical_ad_requests" in row.index and row["canonical_ad_requests"] > 0 else req
         imp = int(row["ad_server_impressions"])
+        matched = int(row["matched_requests"]) if "matched_requests" in row.index else imp
         clicks = int(row["ad_server_clicks"])
         rev = float(row["ad_server_cpm_and_cpc_revenue"])
         
         ctr = (clicks / imp * 100) if imp > 0 else 0
-        fill_rate = (imp / req * 100) if req > 0 else 0
+        # Fill rate: matched_requests / canonical_ad_requests × 100
+        # Fall back to impressions / requests only if matched_requests = 0
+        fill_numerator = matched if matched > 0 else imp
+        if canon_req > 0:
+            fill_rate = round((fill_numerator / canon_req * 100), 2)
+            if fill_rate > 100:
+                log.warning("[inventory:fill_rate] %s: fill rate %.2f%% >100%% — capping.", name, fill_rate)
+                fill_rate = 100.0
+        else:
+            fill_rate = None  # N/A
         ecpm = (rev / imp * 1000) if imp > 0 else 0
         
         status = "Offline"
@@ -1552,14 +1637,14 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
             "id": website_id,
             "name": name,
             "status": status,
-            "ad_requests": req,
-            "matched_requests": imp,
+            "ad_requests": canon_req,
+            "matched_requests": matched,
             "impressions": imp,
             "clicks": clicks,
-            "ctr": ctr,
-            "fill_rate": fill_rate,
-            "ecpm": ecpm,
-            "revenue": rev,
+            "ctr": round(ctr, 2),
+            "fill_rate": fill_rate,  # None means N/A
+            "ecpm": round(ecpm, 4),
+            "revenue": round(rev, 6),
             "last_activity_time": str(end)
         })
     

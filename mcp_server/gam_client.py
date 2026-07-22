@@ -57,7 +57,13 @@ COLUMNS = [
     "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
     "TOTAL_LINE_ITEM_LEVEL_CTR",
 
-    # --- Total Network: request / fill / code metrics (WSDL-confirmed) ---
+    # --- Total Network: request / fill / code metrics ---
+    # TOTAL_AD_REQUESTS is the true network-wide ad request count (includes
+    # both direct and programmatic). This is the CORRECT denominator for Fill Rate.
+    # IMPORTANT: always fetch this — do NOT substitute impressions as a proxy.
+    "TOTAL_AD_REQUESTS",
+    "TOTAL_RESPONSES_SERVED",
+    "TOTAL_FILL_RATE",
     "TOTAL_CODE_SERVED_COUNT",
 
     # --- Total Network: inventory / opportunity metrics ---
@@ -127,6 +133,8 @@ ALL_CHANNEL_COLS = [
     "programmatic_responses_served", "programmatic_match_rate",
     # Drop-off
     "dropoff_rate",
+    # Derived fill rate columns (added by download_report \u2014 must be initialized)
+    "canonical_ad_requests", "matched_requests",
 ]
 
 
@@ -335,8 +343,6 @@ class GAMClient:
         # ── Combine channels based on Demand Channel Filter ──────────────────
         if demand_channel == "programmatic":
             # Isolate programmatic revenue by excluding Ad Server (Direct-sold) revenue.
-            # NOTE: This excludes Programmatic Guaranteed and Preferred Deals because
-            # we cannot use LINE_ITEM_TYPE dimension without breaking Ad Requests.
             df["ad_server_impressions"] = (
                 df["adsense_line_item_level_impressions"] +
                 df["ad_exchange_line_item_level_impressions"]
@@ -349,28 +355,45 @@ class GAMClient:
                 df["adsense_line_item_level_revenue"] +
                 df["ad_exchange_line_item_level_revenue"]
             )
-            # For programmatic channels GAM does not expose a separate ad-requests
-            # column — use the combined impressions as the best available proxy.
-            if df["ad_server_ad_requests"].sum() == 0:
-                df["ad_server_ad_requests"] = df["ad_server_impressions"]
-                log.info("[ad_requests] AD_SERVER_AD_REQUESTS is 0 (programmatic mode) — "
-                         "falling back to combined programmatic impressions as proxy.")
+            # For programmatic mode: use TOTAL_AD_REQUESTS if available.
+            # NEVER substitute impressions as a proxy — that forces fill rate to 100%.
+            has_total_req = df["total_ad_requests"].sum() > 0
+            if has_total_req:
+                df["canonical_ad_requests"] = df["total_ad_requests"]
+                log.info("[fill_rate/prog] Using TOTAL_AD_REQUESTS as denominator.")
+            else:
+                df["canonical_ad_requests"] = df["ad_server_ad_requests"]
+                log.info("[fill_rate/prog] TOTAL_AD_REQUESTS=0, using AD_SERVER_AD_REQUESTS.")
+            df["matched_requests"] = df["total_responses_served"] if "total_responses_served" in df.columns else 0
         else:
             # Total Network (All)
             # Map the native GAM Total metrics to our canonical dataframe columns.
-            # AD_SERVER_AD_REQUESTS is untouched, as GAM does not have a "Total ad requests".
             df["ad_server_impressions"] = df["total_line_item_level_impressions"]
             df["ad_server_clicks"] = df["total_line_item_level_clicks"]
             df["ad_server_cpm_and_cpc_revenue"] = df["total_line_item_level_cpm_and_cpc_revenue"]
             df["ad_server_without_cpd_average_ecpm"] = df["total_line_item_level_without_cpd_average_ecpm"]
-            # GAM's AD_SERVER_AD_REQUESTS only counts direct/ad-server requests.
-            # On networks with mixed or programmatic-only demand it is frequently 0.
-            # When that happens, fall back to total impressions as the best available
-            # proxy (every impression required at least one ad request).
-            if df["ad_server_ad_requests"].sum() == 0:
-                df["ad_server_ad_requests"] = df["total_line_item_level_impressions"]
-                log.info("[ad_requests] AD_SERVER_AD_REQUESTS is 0 — falling back to "
-                         "total_line_item_level_impressions as proxy for ad requests.")
+
+            # Fill Rate denominator priority:
+            # 1. TOTAL_AD_REQUESTS — the true network-wide request count (preferred)
+            # 2. AD_SERVER_AD_REQUESTS — direct-sold requests only (fallback)
+            # 3. NEVER substitute impressions — that forces fill rate to 100%.
+            has_total_req = df["total_ad_requests"].sum() > 0
+            has_ad_server_req = df["ad_server_ad_requests"].sum() > 0
+            if has_total_req:
+                # Use canonical total requests from GAM
+                df["canonical_ad_requests"] = df["total_ad_requests"]
+                log.info("[fill_rate] Using TOTAL_AD_REQUESTS as fill rate denominator.")
+            elif has_ad_server_req:
+                df["canonical_ad_requests"] = df["ad_server_ad_requests"]
+                log.info("[fill_rate] TOTAL_AD_REQUESTS=0, falling back to AD_SERVER_AD_REQUESTS.")
+            else:
+                # Both are zero — fill rate is genuinely unknown
+                df["canonical_ad_requests"] = 0
+                log.warning("[fill_rate] Both TOTAL_AD_REQUESTS and AD_SERVER_AD_REQUESTS are 0. "
+                            "Fill Rate will be reported as N/A (not 100%).")
+
+            # Matched requests = total_responses_served (how many requests got an ad)
+            df["matched_requests"] = df["total_responses_served"] if "total_responses_served" in df.columns else 0
 
         # ── Ad Exchange match rate (computed column) ─────────────────────────
         # GAM's UI match rate = AdX impressions / Ad Server ad_requests * 100.
