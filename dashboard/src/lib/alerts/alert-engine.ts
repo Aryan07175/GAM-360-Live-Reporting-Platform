@@ -104,3 +104,4 @@ export function computeAlertSummary(alerts: Alert[]): AlertSummary {
     byCategory,
   };
 }
+
