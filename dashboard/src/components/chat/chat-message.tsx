@@ -87,7 +87,7 @@ function MarkdownContent({ content }: { content: string }) {
           return (
             <ul key={bIdx} className={cn("list-disc list-inside space-y-0.5", bIdx > 0 && "mt-2")}>
               {items.map((item, iIdx) => (
-                <li key={iIdx} className="leading-relaxed">
+                <li key={iIdx} className="leading-relaxed break-words [overflow-wrap:anywhere]">
                   {renderInline(item.replace(/^[\-\*]\s+/, ""), `${bIdx}-${iIdx}`)}
                 </li>
               ))}
@@ -97,7 +97,7 @@ function MarkdownContent({ content }: { content: string }) {
 
         // Plain paragraph: render each line, joining with <br> for single newlines
         return (
-          <p key={bIdx} className={cn("leading-relaxed", bIdx > 0 && "mt-2")}>
+          <p key={bIdx} className={cn("leading-relaxed break-words [overflow-wrap:anywhere]", bIdx > 0 && "mt-2")}>
             {lines.map((line, lIdx) => (
               <span key={lIdx}>
                 {renderInline(line, `${bIdx}-${lIdx}`)}
@@ -133,7 +133,7 @@ export function ChatMessage({ role, content, isStreaming, error }: ChatMessagePr
 
       <div
         className={cn(
-          "max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm",
+          "max-w-[85%] min-w-0 overflow-hidden rounded-2xl px-4 py-3 text-sm shadow-sm",
           isUser
             ? "bg-indigo-600 text-white rounded-tr-sm"
             : "bg-card border border-border rounded-tl-sm text-card-foreground"
@@ -145,7 +145,7 @@ export function ChatMessage({ role, content, isStreaming, error }: ChatMessagePr
             <span>{error}</span>
           </div>
         ) : (
-          <div className="leading-relaxed">
+          <div className="leading-relaxed break-words [overflow-wrap:anywhere]">
             <MarkdownContent content={content} />
             {isStreaming && (
               <span className="inline-flex items-center gap-1 ml-1 h-3">
