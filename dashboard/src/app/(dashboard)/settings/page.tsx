@@ -7,6 +7,28 @@ import { Settings, Server, Zap, Mail, Trash2, Plus, CheckCircle2, AlertCircle, S
 import { useLiveReport } from "@/contexts/DateContext";
 import { getRecipientsData, addRecipient, removeRecipient, updatePreferences } from "@/actions/recipients";
 
+const ToggleSwitch = ({ checked, onChange, label, desc }: any) => (
+  <div className="flex items-center justify-between">
+    <div className="space-y-0.5">
+      <p className="text-sm font-medium">{label}</p>
+      <p className="text-xs text-muted-foreground">{desc}</p>
+    </div>
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+        checked ? "bg-indigo-600" : "bg-zinc-700"
+      }`}
+    >
+      <span
+        className={`pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg ring-0 transition-transform ${
+          checked ? "translate-x-4" : "translate-x-0"
+        }`}
+      />
+    </button>
+  </div>
+);
+
 export default function SettingsPage() {
   const { lastFetchedAt, datePreset } = useLiveReport();
   
@@ -103,27 +125,7 @@ export default function SettingsPage() {
     }
   }
 
-  const ToggleSwitch = ({ checked, onChange, label, desc }: any) => (
-    <div className="flex items-center justify-between">
-      <div className="space-y-0.5">
-        <p className="text-sm font-medium">{label}</p>
-        <p className="text-xs text-muted-foreground">{desc}</p>
-      </div>
-      <button
-        type="button"
-        onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
-          checked ? "bg-indigo-600" : "bg-zinc-700"
-        }`}
-      >
-        <span
-          className={`pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg ring-0 transition-transform ${
-            checked ? "translate-x-4" : "translate-x-0"
-          }`}
-        />
-      </button>
-    </div>
-  );
+
 
   return (
     <div className="space-y-6">
