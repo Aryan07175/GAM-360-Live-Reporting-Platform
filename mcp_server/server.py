@@ -1145,13 +1145,17 @@ def _make_tool_executor(cached_df):
     """
     Return an ASYNC tool executor closure.
 
-    Handles two tools:
-    - query_gam_data: goes live to the GAM API (async, any date range)
-    - query_data:     aggregates the in-session cached DataFrame (sync wrapped)
+    Handles three tools:
+    - query_gam_data:       goes live to the GAM API (async, any date range)
+    - getWebsiteInventory:  full website-level inventory report from live GAM data
+    - query_data:           aggregates the in-session cached DataFrame (sync wrapped)
     """
     async def _execute(tool_name: str, input_dict: dict) -> dict:
         if tool_name == "query_gam_data":
             return await execute_query_gam_data(input_dict)
+
+        if tool_name == "getWebsiteInventory":
+            return await execute_website_inventory_chat(input_dict)
 
         if tool_name == "query_data":
             # Run sync function in a thread to keep event loop free
@@ -1364,6 +1368,118 @@ def compute_alerts(df: pd.DataFrame) -> list[dict]:
             alerts.append({"title": f"Extremely low eCPM (${ecpm:.2f}) in {app_name}", "severity": "warning", "metric": "eCPM", "value": f"${ecpm:.2f}"})
             
     return alerts
+
+
+def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict:
+    if df.empty:
+        return {
+            "period": f"{start} to {end}",
+            "websites": [],
+            "totals": {
+                "working": 0, "warning": 0, "critical": 0, "offline": 0, "total": 0,
+                "ad_requests": 0, "matched_requests": 0, "impressions": 0, "clicks": 0, "revenue": 0.0
+            }
+        }
+    
+    df_copy = df.copy()
+    df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
+    
+    ws = df_copy.groupby("website").agg({
+        "ad_server_ad_requests": "sum",
+        "ad_server_impressions": "sum",
+        "ad_server_clicks": "sum",
+        "ad_server_cpm_and_cpc_revenue": "sum",
+    }).reset_index()
+    
+    websites_list = []
+    counts = {"working": 0, "warning": 0, "critical": 0, "offline": 0, "total": 0}
+    
+    for _, row in ws.iterrows():
+        name = row["website"]
+        req = int(row["ad_server_ad_requests"])
+        imp = int(row["ad_server_impressions"])
+        clicks = int(row["ad_server_clicks"])
+        rev = float(row["ad_server_cpm_and_cpc_revenue"])
+        
+        ctr = (clicks / imp * 100) if imp > 0 else 0
+        fill_rate = (imp / req * 100) if req > 0 else 0
+        ecpm = (rev / imp * 1000) if imp > 0 else 0
+        
+        status = "Offline"
+        if imp > 1000:
+            status = "Working"
+        elif 1 <= imp <= 999:
+            status = "Warning"
+        elif imp == 0 and req > 0:
+            status = "Critical"
+        elif req == 0:
+            status = "Offline"
+        
+        if status == "Working": counts["working"] += 1
+        elif status == "Warning": counts["warning"] += 1
+        elif status == "Critical": counts["critical"] += 1
+        elif status == "Offline": counts["offline"] += 1
+        counts["total"] += 1
+        
+        import hashlib
+        website_id = hashlib.md5(name.encode('utf-8')).hexdigest()[:8]
+        
+        websites_list.append({
+            "id": website_id,
+            "name": name,
+            "status": status,
+            "ad_requests": req,
+            "matched_requests": imp,
+            "impressions": imp,
+            "clicks": clicks,
+            "ctr": ctr,
+            "fill_rate": fill_rate,
+            "ecpm": ecpm,
+            "revenue": rev,
+            "last_activity_time": str(end)
+        })
+    
+    websites_list = sorted(websites_list, key=lambda x: x["revenue"], reverse=True)
+    
+    return {
+        "period": f"{start} to {end}",
+        "websites": websites_list,
+        "totals": {
+            **counts,
+            "ad_requests": sum(w["ad_requests"] for w in websites_list),
+            "matched_requests": sum(w["matched_requests"] for w in websites_list),
+            "impressions": sum(w["impressions"] for w in websites_list),
+            "clicks": sum(w["clicks"] for w in websites_list),
+            "revenue": sum(w["revenue"] for w in websites_list),
+        }
+    }
+
+
+async def execute_website_inventory_chat(input_dict: dict) -> dict:
+    start_raw = input_dict.get("start_date", "").strip()
+    end_raw   = input_dict.get("end_date",   "").strip()
+    
+    today = date.today()
+    ytd_start = today.replace(month=1, day=1)
+    if not start_raw:
+        start_raw = ytd_start.isoformat()
+        end_raw   = today.isoformat()
+
+    try:
+        start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
+    except Exception as e:
+        return {"error": f"Invalid date format: {e}. Use YYYY-MM-DD."}
+
+    try:
+        # Note: We need AD_UNIT_NAME to extract the website domain, which is the default dimension
+        df = await gam.get_live_data_multi_day(
+            start_date, end_date, force_refresh=False, demand_channel="all"
+        )
+    except Exception as e:
+        log.error("[Chat:getWebsiteInventory] GAM fetch failed: %s", e)
+        return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
+
+    return _compute_website_inventory(df, start_date, end_date)
 
 
 def compute_executive_summary(df: pd.DataFrame, start: date, end: date) -> dict:
@@ -1798,6 +1914,18 @@ async def list_tools() -> list[types.Tool]:
             **DATE_SCHEMA,
             "properties": {**DATE_SCHEMA["properties"], "limit": {"type": "integer", "description": "Number of bottom websites (default 10)"}},
         }),
+        types.Tool(
+            name="getWebsiteInventory",
+            description=(
+                "Full live website inventory report from Google Ad Manager. "
+                "Returns every website with: ad requests, matched requests, impressions, clicks, "
+                "CTR, fill rate, eCPM, revenue, and health status (Working/Warning/Critical/Offline). "
+                "Health rules: Working = impressions > 1000; Warning = impressions 1-999; "
+                "Critical = impressions = 0 but requests > 0; Offline = requests = 0. "
+                "Also returns network totals and aggregated counts per health status."
+            ),
+            inputSchema=DATE_SCHEMA,
+        ),
         types.Tool(name="getImpressions", description="Total and per-app impression data.", inputSchema=DATE_SCHEMA),
         types.Tool(name="getClicks", description="Total and per-app click data.", inputSchema=DATE_SCHEMA),
         types.Tool(name="getCTR", description="Click-through rate analysis by app.", inputSchema=DATE_SCHEMA),
@@ -1971,6 +2099,9 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 result["websites"] = ws.to_dict(orient="records")
             else:
                 result["websites"] = []
+
+        elif name == "getWebsiteInventory":
+            result.update(_compute_website_inventory(df, start_date, end_date))
 
         elif name == "getImpressions":
             if not df.empty:

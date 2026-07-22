@@ -257,6 +257,37 @@ def get_query_gam_data_tool_spec() -> dict:
     }
 
 
+def get_website_inventory_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for the getWebsiteInventory tool."""
+    return {
+        "toolSpec": {
+            "name": "getWebsiteInventory",
+            "description": (
+                "Fetch a LIVE, complete website-level inventory report from Google Ad Manager. "
+                "ALWAYS use this tool when the user asks about website performance, active/inactive websites, "
+                "website health, top websites, low-performing websites, or websites not serving ads. "
+                "It automatically calculates health status (Working, Warning, Critical, Offline) based on live traffic data. "
+                "For ANY question involving websites, domains, or their status, call this tool first."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {
+                            "type": "string",
+                            "description": "Start date in YYYY-MM-DD format. Default is YTD if not specified."
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "End date in YYYY-MM-DD format (inclusive). Default is today if not specified."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 def get_query_data_tool_spec() -> dict:
     """Bedrock-compatible tool specification for the query_data tool (in-session aggregations)."""
     return {
@@ -545,7 +576,8 @@ async def stream_bedrock_response(
             "messages": msgs,
             "toolConfig": {
                 "tools": [
-                    get_query_gam_data_tool_spec(),   # PRIMARY: live GAM queries
+                    get_query_gam_data_tool_spec(),    # PRIMARY: live GAM queries
+                    get_website_inventory_tool_spec(), # WEBSITE INVENTORY: full website reports
                     get_query_data_tool_spec(),        # SECONDARY: in-session aggregations
                 ]
             },
