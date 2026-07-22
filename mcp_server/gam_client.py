@@ -58,13 +58,8 @@ COLUMNS = [
     "TOTAL_LINE_ITEM_LEVEL_CTR",
 
     # --- Total Network: request / fill / code metrics ---
-    # TOTAL_AD_REQUESTS is the true network-wide ad request count (includes
-    # both direct and programmatic). This is the CORRECT denominator for Fill Rate.
-    # IMPORTANT: always fetch this — do NOT substitute impressions as a proxy.
-    "TOTAL_AD_REQUESTS",
-    "TOTAL_RESPONSES_SERVED",
-    "TOTAL_FILL_RATE",
-    "TOTAL_CODE_SERVED_COUNT",
+    # Note: TOTAL_AD_REQUESTS cannot be combined with AD_UNIT_NAME.
+    # They are only fetched in separate_report mode (network-wide).
 
     # --- Total Network: inventory / opportunity metrics ---
     "TOTAL_INVENTORY_LEVEL_UNFILLED_IMPRESSIONS",  # unfilled impressions
@@ -357,7 +352,7 @@ class GAMClient:
             )
             # For programmatic mode: use TOTAL_AD_REQUESTS if available.
             # NEVER substitute impressions as a proxy — that forces fill rate to 100%.
-            has_total_req = df["total_ad_requests"].sum() > 0
+            has_total_req = "total_ad_requests" in df.columns and df["total_ad_requests"].sum() > 0
             if has_total_req:
                 df["canonical_ad_requests"] = df["total_ad_requests"]
                 log.info("[fill_rate/prog] Using TOTAL_AD_REQUESTS as denominator.")
@@ -377,8 +372,8 @@ class GAMClient:
             # 1. TOTAL_AD_REQUESTS — the true network-wide request count (preferred)
             # 2. AD_SERVER_AD_REQUESTS — direct-sold requests only (fallback)
             # 3. NEVER substitute impressions — that forces fill rate to 100%.
-            has_total_req = df["total_ad_requests"].sum() > 0
-            has_ad_server_req = df["ad_server_ad_requests"].sum() > 0
+            has_total_req = "total_ad_requests" in df.columns and df["total_ad_requests"].sum() > 0
+            has_ad_server_req = "ad_server_ad_requests" in df.columns and df["ad_server_ad_requests"].sum() > 0
             if has_total_req:
                 # Use canonical total requests from GAM
                 df["canonical_ad_requests"] = df["total_ad_requests"]
