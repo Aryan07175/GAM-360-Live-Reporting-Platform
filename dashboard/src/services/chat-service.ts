@@ -1,6 +1,6 @@
 import type { ChatMessage, ChatDateRange } from "@/types";
 
-const MCP_BASE_URL = process.env.NEXT_PUBLIC_MCP_SERVER_URL || process.env.NEXT_PUBLIC_MCP_URL || "https://gam-360-live-reporting-platform.onrender.com";
+const MCP_BASE_URL = process.env.NEXT_PUBLIC_MCP_SERVER_URL || process.env.MCP_SERVER_URL || "https://gam-360-live-reporting-platform.onrender.com";
 
 export type StreamEvent = 
   | { type: 'token'; content: string }
@@ -15,7 +15,9 @@ export async function* streamChat(
   signal?: AbortSignal
 ): AsyncGenerator<StreamEvent, void, unknown> {
   try {
-    const response = await fetch(`${MCP_BASE_URL}/api/chat`, {
+    const chatUrl = `${MCP_BASE_URL}/api/chat`;
+    console.log(`[Chat] → POST ${chatUrl}`);
+    const response = await fetch(chatUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -28,6 +30,8 @@ export async function* streamChat(
       }),
       signal,
     });
+
+    console.log(`[Chat] ← ${response.status} ${response.statusText}`);
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));

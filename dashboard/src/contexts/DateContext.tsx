@@ -310,21 +310,39 @@ export function LiveReportProvider({
       });
 
       // ── Backend health pre-check ────────────────────────────────────────────
-      // Ping /health first so users see a clear message if the backend is
-      // cold-starting (Render free plan) instead of a silent endless spinner.
+      // We call our OWN Next.js API proxy (/api/health) which forwards the
+      // request to Render server-side. This eliminates browser CORS failures
+      // entirely — the browser never contacts Render directly for health checks.
+      //
+      // IMPORTANT: Only block if backend is truly unreachable (504/502 or
+      // network fail). If /api/health returns 200, ALWAYS proceed — never show
+      // cold-start error when the server is running.
       const MCP_URL =
         process.env.NEXT_PUBLIC_MCP_SERVER_URL ||
         "https://gam-360-live-reporting-platform.onrender.com";
+
+      console.log(`[GAM360] Health check via proxy → /api/health (backend: ${MCP_URL})`);
+
       try {
-        const healthRes = await fetch(`${MCP_URL}/health`, {
+        const healthRes = await fetch("/api/health", {
           method: "GET",
           cache: "no-store",
-          signal: AbortSignal.timeout(8000), // 8s for cold start check
+          // The proxy itself has a 20s timeout; we give it 25s here as a safety net
+          signal: AbortSignal.timeout(25_000),
         });
+
+        console.log(`[GAM360] Health proxy responded: ${healthRes.status}`);
+
         if (healthRes.ok) {
+          // ✅ Backend is alive — parse and log the health body
           const health = await healthRes.json();
-          // Warn if credentials are not configured
-          if (health?.gam?.network_code === null || health?.gam?.credentials_file_present === false) {
+          console.log("[GAM360] Health body:", health);
+
+          // Warn about missing GAM credentials (backend runs but GAM calls will fail)
+          if (
+            health?.gam?.network_code === null ||
+            health?.gam?.credentials_file_present === false
+          ) {
             setError(
               "Backend is running but GAM credentials are not configured. " +
               "Set GAM_NETWORK_CODE and GAM_SERVICE_ACCOUNT_JSON in your Render environment."
@@ -332,32 +350,77 @@ export function LiveReportProvider({
             setIsLoading(false);
             return;
           }
-        }
-      } catch (healthErr: any) {
-        // Health check failed — backend is likely cold-starting or down
-        if (healthErr?.name === "TimeoutError" || healthErr?.message?.includes("timeout")) {
+          // ✅ Backend is healthy — fall through and fetch the report
+        } else if (healthRes.status === 504) {
+          // Our proxy timed out waiting for Render — classic cold start scenario
+          console.warn(`[GAM360] Proxy health timed out (504) — backend cold-starting`);
           setError(
             "Backend is starting up (cold start). This can take 30–60 seconds on the free plan. " +
             "Please wait and try again."
           );
-        } else {
+          setIsLoading(false);
+          setProgress({
+            total: 6,
+            completed: 0,
+            currentSection: "",
+            sections: defaultProgress.sections.map((s) => ({
+              ...s,
+              status: "error" as const,
+              error: "Backend cold-starting (timeout)",
+            })),
+          });
+          return;
+        } else if (healthRes.status === 502 || healthRes.status === 503) {
+          // Render returns 502/503 during cold start or deploy
+          console.warn(`[GAM360] Health returned ${healthRes.status} — backend unavailable`);
           setError(
-            "Cannot reach the backend server. Check that the Render service is running and " +
-            `NEXT_PUBLIC_MCP_SERVER_URL is set correctly (${MCP_URL}).`
+            `Backend returned ${healthRes.status} — service may be cold-starting or redeploying. ` +
+            "This can take 30–60 seconds on the free plan. Please wait and try again."
           );
+          setIsLoading(false);
+          setProgress({
+            total: 6,
+            completed: 0,
+            currentSection: "",
+            sections: defaultProgress.sections.map((s) => ({
+              ...s,
+              status: "error" as const,
+              error: "Backend unavailable",
+            })),
+          });
+          return;
+        } else {
+          // Any other non-OK status (500, 404, etc.) — log but do NOT block
+          console.warn(`[GAM360] Health returned unexpected status ${healthRes.status} — proceeding anyway`);
         }
-        setIsLoading(false);
-        setProgress({
-          total: 6,
-          completed: 0,
-          currentSection: "",
-          sections: defaultProgress.sections.map((s) => ({
-            ...s,
-            status: "error" as const,
-            error: "Backend unavailable",
-          })),
-        });
-        return;
+      } catch (healthErr: any) {
+        const errName: string = healthErr?.name || "";
+        const errMsg: string = healthErr?.message || "";
+        console.error("[GAM360] Health check proxy error:", errName, errMsg);
+
+        if (errName === "TimeoutError") {
+          // Our 25s client timeout fired — proxy + backend both unresponsive
+          setError(
+            "Backend is starting up (cold start). This can take 30–60 seconds on the free plan. " +
+            "Please wait and try again."
+          );
+          setIsLoading(false);
+          setProgress({
+            total: 6,
+            completed: 0,
+            currentSection: "",
+            sections: defaultProgress.sections.map((s) => ({
+              ...s,
+              status: "error" as const,
+              error: "Backend timeout",
+            })),
+          });
+          return;
+        } else {
+          // Any other error — log it but proceed with the report fetch anyway
+          // (the actual report fetch is server-side Vercel→Render and may still work)
+          console.warn("[GAM360] Health check error — proceeding with report fetch:", errMsg);
+        }
       }
 
       try {
@@ -400,14 +463,30 @@ export function LiveReportProvider({
           }));
         }
       } catch (err: any) {
-        const errMsg = err?.message || "Failed to fetch report from backend";
-        setError(errMsg);
+        const rawMsg: string = err?.message || "Failed to fetch report from backend";
+        let friendlyMsg = rawMsg;
+
+        // Classify error type for a better user message
+        if (rawMsg.includes("404")) {
+          friendlyMsg = "API endpoint not found (404). The backend route may have changed. Check /api/tool on the Render service.";
+        } else if (rawMsg.includes("401") || rawMsg.includes("403")) {
+          friendlyMsg = "Authentication error (401/403). Check your API credentials in Render environment variables.";
+        } else if (rawMsg.includes("500") || rawMsg.includes("502") || rawMsg.includes("503")) {
+          friendlyMsg = `Backend server error (${rawMsg.match(/\d{3}/)?.[0] || "5xx"}). Check Render logs for the traceback.`;
+        } else if (rawMsg.toLowerCase().includes("timeout") || rawMsg.toLowerCase().includes("timed out")) {
+          friendlyMsg = "The GAM report request timed out. The date range may be too large or the GAM API is slow. Try a shorter range.";
+        } else if (rawMsg.toLowerCase().includes("network") || rawMsg.toLowerCase().includes("fetch")) {
+          friendlyMsg = "Network error while fetching the report. Check your internet connection and Render service status.";
+        }
+
+        console.error("[GAM360] fetchFullReport error:", rawMsg);
+        setError(friendlyMsg);
         setProgress((prev) => ({
           ...prev,
           sections: prev.sections.map((s) => ({
             ...s,
             status: "error" as const,
-            error: errMsg,
+            error: friendlyMsg,
           })),
         }));
       }

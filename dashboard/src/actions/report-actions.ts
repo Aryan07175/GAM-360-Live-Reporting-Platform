@@ -327,12 +327,23 @@ export async function fetchFullReport(
   demandChannel: string = "all",
   forceRefresh: boolean = false
 ): Promise<LiveReportData | null> {
+  const MCP_URL =
+    process.env.NEXT_PUBLIC_MCP_SERVER_URL ||
+    process.env.MCP_SERVER_URL ||
+    "https://gam-360-live-reporting-platform.onrender.com";
+  console.log(`[fetchFullReport] Using backend: ${MCP_URL} | dates: ${startDate} → ${endDate} | channel: ${demandChannel}`);
+
   try {
     const res = await callMcpTool(
       "generateFullReport",
       baseArgs(startDate, endDate, startTime, endTime, demandChannel, forceRefresh)
     );
-    if (!res) return null;
+
+    console.log(`[fetchFullReport] Response received, status: ${res?.status}`);
+
+    if (!res) {
+      throw new Error("Backend returned an empty response. Check Render logs for errors.");
+    }
     if (res.status === "error") {
       throw new Error(res.error || "Unknown backend error");
     }

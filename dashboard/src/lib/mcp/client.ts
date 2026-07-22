@@ -4,9 +4,20 @@
  * Calls the Python MCP server (Render) for all GAM data.
  * Supports force_refresh, date ranges, abort controllers, and retry.
  * Never caches. Never stores. Always live.
+ *
+ * Priority order for backend URL:
+ *   1. NEXT_PUBLIC_MCP_SERVER_URL  (Vercel env var, browser + server)
+ *   2. MCP_SERVER_URL              (Vercel env var, server-only)
+ *   3. Hardcoded Render URL        (fallback)
  */
 
-const MCP_BASE_URL = process.env.NEXT_PUBLIC_MCP_SERVER_URL || process.env.MCP_SERVER_URL || "https://gam-360-live-reporting-platform.onrender.com";
+const MCP_BASE_URL =
+  process.env.NEXT_PUBLIC_MCP_SERVER_URL ||
+  process.env.MCP_SERVER_URL ||
+  "https://gam-360-live-reporting-platform.onrender.com";
+
+// Log the resolved URL once at module load time (visible in Vercel function logs)
+console.log(`[MCP Client] Backend URL resolved to: ${MCP_BASE_URL}`);
 
 export interface McpToolArgs {
   startDate?: string;
@@ -37,6 +48,8 @@ export async function callMcpTool(
     // Call the Python Starlette API on the MCP server (Render in production)
     const endpoint = `${MCP_BASE_URL}/api/tool`;
 
+    console.log(`[MCP] → POST ${endpoint} | tool: ${name}`);
+
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -45,13 +58,19 @@ export async function callMcpTool(
       cache: "no-store", // Never cache
     });
 
+    console.log(`[MCP] ← ${response.status} ${response.statusText} | tool: ${name}`);
+
     if (!response.ok) {
-      throw new Error(`MCP Error: ${response.status} ${response.statusText}`);
+      let bodyText = "";
+      try { bodyText = await response.text(); } catch {}
+      console.error(`[MCP] Error body for ${name}:`, bodyText);
+      throw new Error(`MCP Error: ${response.status} ${response.statusText}${bodyText ? ` — ${bodyText.slice(0, 200)}` : ""}`);
     }
 
     const parsed = await response.json();
 
     if (parsed.status === "error") {
+      console.error(`[MCP] Tool ${name} returned error:`, parsed.error);
       throw new Error(parsed.error || "Unknown MCP error");
     }
 
@@ -64,7 +83,7 @@ export async function callMcpTool(
     if (error.name === "AbortError") {
       throw new Error(`Request timed out after ${timeout / 1000}s`);
     }
-    console.error(`MCP tool ${name} failed:`, error);
+    console.error(`[MCP] Tool ${name} failed:`, error.message || error);
     throw error;
   } finally {
     clearTimeout(timer);

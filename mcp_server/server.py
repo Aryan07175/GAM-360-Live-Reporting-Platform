@@ -2152,6 +2152,9 @@ async def handle_api_tool(request):
         body = await request.json()
         tool_name = body.get("name", "")
         tool_args = body.get("arguments", {})
+        origin = request.headers.get("origin", "unknown")
+
+        log.info("[API] → POST /api/tool | tool=%s | origin=%s", tool_name, origin)
 
         results = await execute_tool_logic(tool_name, tool_args)
 
@@ -2159,6 +2162,9 @@ async def handle_api_tool(request):
             response_data = json.loads(results[0].text)
         else:
             response_data = {"error": "No result", "status": "error"}
+
+        status = response_data.get("status", "ok")
+        log.info("[API] ← /api/tool | tool=%s | status=%s", tool_name, status)
 
         return JSONResponse(sanitize_for_json(response_data), headers={
             "Access-Control-Allow-Origin": "*",
@@ -2315,6 +2321,8 @@ async def handle_health(request):
     Returns instantly without making any GAM or Bedrock calls.
     Used by Render's health check and the frontend keep-alive ping.
     """
+    origin = request.headers.get("origin", request.headers.get("host", "unknown"))
+    log.info("[HEALTH] GET /health | origin=%s", origin)
     uptime_s = int(time.time() - _server_start_time)
 
     # Check if GAM credentials file exists
@@ -2371,7 +2379,19 @@ starlette_app = Starlette(
     ],
     lifespan=lifespan,
     middleware=[
-        Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]),
+        Middleware(
+            CORSMiddleware,
+            # Allow all origins so the Next.js server-side actions (Vercel) and
+            # browser health checks can reach the backend without CORS errors.
+            # The Vercel domain is listed explicitly for clarity; "*" is the
+            # effective wildcard that covers everything.
+            allow_origins=[
+                "*",
+                "https://gam-360-live-reporting-platform.vercel.app",
+            ],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        ),
     ],
 )
 
