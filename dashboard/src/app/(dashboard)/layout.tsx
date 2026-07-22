@@ -3,6 +3,7 @@
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { LiveReportProvider } from "@/contexts/DateContext";
+import { AlertProvider } from "@/contexts/AlertContext";
 import { ChatDrawer } from "@/components/chat/chat-drawer";
 
 export default function DashboardLayout({
@@ -12,18 +13,21 @@ export default function DashboardLayout({
 }) {
   return (
     <LiveReportProvider>
-      <div className="flex h-screen overflow-hidden bg-background">
-        <Sidebar />
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <Header />
-          <main className="flex-1 overflow-y-auto bg-muted/20 p-6">
-            <div className="mx-auto max-w-7xl space-y-6">
-              {children}
-            </div>
-          </main>
+      {/* AlertProvider must be inside LiveReportProvider to consume its context */}
+      <AlertProvider>
+        <div className="flex h-screen overflow-hidden bg-background">
+          <Sidebar />
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Header />
+            <main className="flex-1 overflow-y-auto bg-muted/20 p-6">
+              <div className="mx-auto max-w-7xl space-y-6">
+                {children}
+              </div>
+            </main>
+          </div>
         </div>
-      </div>
-      <ChatDrawer />
+        <ChatDrawer />
+      </AlertProvider>
     </LiveReportProvider>
   );
 }

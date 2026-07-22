@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLiveReport } from "@/contexts/DateContext";
+import { useAlerts } from "@/contexts/AlertContext";
 import { OPEN_CHAT_EVENT } from "@/components/chat/chat-drawer";
 
 const navItems = [
@@ -34,6 +36,7 @@ const navItems = [
 export function Sidebar() {
   const pathname = usePathname();
   const { isLoading, lastFetchedAt } = useLiveReport();
+  const { totalCount, criticalCount } = useAlerts();
 
   const [now, setNow] = useState<number | null>(null);
 
@@ -100,8 +103,13 @@ export function Sidebar() {
                 )}
               />
               <span className="flex-1">{item.name}</span>
-              {item.name === "Alerts" && (
-                <span className="h-1.5 w-1.5 rounded-full bg-red-500 mr-1" />
+              {item.name === "Alerts" && totalCount > 0 && (
+                <span className={cn(
+                  "ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white min-w-[18px] text-center",
+                  criticalCount > 0 ? "bg-rose-500" : "bg-orange-500"
+                )}>
+                  {totalCount > 99 ? "99+" : totalCount}
+                </span>
               )}
             </Link>
           );
