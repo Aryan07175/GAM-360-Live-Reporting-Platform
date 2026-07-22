@@ -370,8 +370,24 @@ Format your answers using these strict structures:
 When reporting inventory or health:
 **📊 Website Inventory Summary**
 - **Total Websites**: [X]
-- **Working**: [X] | **Warning**: [X] | **Critical**: [X] | **Offline**: [X]
-[If any Critical/Offline, list them briefly]
+- **Active Websites**: [X]
+- **Inactive Websites**: [X]
+- **Working Websites**: [X]
+- **Warning Websites**: [X]
+- **Critical Websites**: [X]
+- **Offline Websites**: [X]
+
+**🏆 Top 10 Websites by Revenue**
+[List 1-10]
+
+**📉 Bottom 10 Websites by Revenue**
+[List 1-10]
+
+- **Total Revenue**: $[X.XX]
+- **Total Impressions**: [X]
+- **Total Ad Requests**: [X]
+- **Average Fill Rate**: [X.XX]%
+- **Average CTR**: [X.XX]%
 
 ### Performance Summary
 When reporting performance metrics:
@@ -1377,6 +1393,8 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
     ws = df_copy.groupby("website").agg({
         "ad_server_ad_requests": "sum",
         "ad_server_impressions": "sum",
+        "ad_server_clicks": "sum",
+        "ad_server_cpm_and_cpc_revenue": "sum",
     }).reset_index()
     
     websites_list = []
@@ -1386,6 +1404,9 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
         name = row["website"]
         req = int(row["ad_server_ad_requests"])
         imp = int(row["ad_server_impressions"])
+        clicks = int(row["ad_server_clicks"])
+        rev = float(row["ad_server_cpm_and_cpc_revenue"])
+        matched = imp # fallback if matched_requests not present
         
         status = "Offline"
         if imp > 1000:
@@ -1396,6 +1417,10 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
             status = "Critical"
         elif req == 0:
             status = "Offline"
+            
+        ctr = (clicks / imp * 100) if imp > 0 else 0.0
+        fill_rate = (matched / req * 100) if req > 0 else 0.0
+        ecpm = (rev / imp * 1000) if imp > 0 else 0.0
         
         website_id = hashlib.md5(name.encode('utf-8')).hexdigest()[:8]
         
@@ -1404,6 +1429,15 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
             "name": name,
             "domain": name,
             "status": status,
+            "active_status": "Active" if status != "Offline" else "Inactive",
+            "ad_requests": req,
+            "matched_requests": matched,
+            "impressions": imp,
+            "clicks": clicks,
+            "ctr": round(ctr, 4),
+            "fill_rate": round(fill_rate, 2),
+            "ecpm": round(ecpm, 6),
+            "revenue": round(rev, 6),
             "last_activity_time": str(end)
         })
     
