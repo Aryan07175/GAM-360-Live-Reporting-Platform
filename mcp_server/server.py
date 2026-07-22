@@ -140,8 +140,11 @@ def build_data_summary(df: pd.DataFrame, start: date, end: date) -> dict:
         a_rev = float(row["ad_server_cpm_and_cpc_revenue"])
         a_clicks = int(row["ad_server_clicks"])
         a_req = int(row["ad_server_ad_requests"])
+        fmt = _format_app_name(row["ad_unit_name"])
         all_apps.append({
-            "name": row["ad_unit_name"],
+            "name": fmt["app_name"],
+            "placement": fmt["placement"],
+            "raw_name": fmt["raw"],
             "revenue_usd": round(a_rev, 6),
             "impressions": a_imp,
             "clicks": a_clicks,
@@ -150,6 +153,7 @@ def build_data_summary(df: pd.DataFrame, start: date, end: date) -> dict:
             "ctr_pct": round((a_clicks / a_imp * 100), 4) if a_imp > 0 else 0.0,
             "fill_rate_pct": round((a_imp / a_req * 100), 2) if a_req > 0 else 0.0,
         })
+
 
     # Revenue trend
     revenue_trend = []
@@ -577,7 +581,77 @@ Write all responses at executive / Senior BI Analyst level.
 
 ---
 
+---
+
+## APP NAME FORMATTING RULES
+
+This dashboard is intended for executives and business users.
+**ALWAYS** format application names into clean, human-readable form before displaying.
+**NEVER** show raw Google Ad Manager inventory identifiers to users.
+
+### Raw GAM Names Contain (always strip these)
+- Leading numeric/network prefixes: `22997400926_`
+- Java package names: `com.xxx.yyy.zzz`, `org.xxx.yyy`, `net.xxx.yyy`
+- Placement suffixes attached directly: `_Native`, `_Banner3`, `_Native3`, `_Rewarded`
+
+### Step-by-Step Formatting
+
+**Step 1 — Strip leading numeric prefix**
+`22997400926_com.free.hdvideo...` → `com.free.hdvideo...`
+
+**Step 2 — Remove Java package prefix (com. / org. / net.)**
+`com.free.hdvideo.alldownloader.videoplayer.app` → `hdvideo alldownloader videoplayer app`
+
+**Step 3 — Infer a human-readable app name from the remaining words**
+Use the most meaningful words: `HD Video Downloader`
+Examples:
+- `com.free.hdvideo.alldownloader.videoplayer.app` → `HD Video Downloader`
+- `com.hd.fastdownload.video.player.quicksaver` → `Fast Download Video Player`
+- `com.smsapp.wealthy.messagesapp` → `Wealthy Messages`
+- `com.browser.fast.lite.explore` → `Fast Lite Browser`
+- If the name cannot be confidently inferred → display `Unknown Application`
+
+**Step 4 — Extract placement type and format it**
+- `_Native` → `Placement: Native`
+- `_Banner` → `Placement: Banner`
+- `_Banner3` → `Placement: Banner 3`
+- `_Native3` → `Placement: Native 3`
+- `_Rewarded` → `Placement: Rewarded`
+- `_Interstitial` → `Placement: Interstitial`
+
+**Step 5 — Title Case all remaining words**
+`video downloader` → `Video Downloader`
+
+### NEVER Display
+❌ `22997400926_com.free.hdvideo.alldownloader.videoplayer.app_Native`
+❌ `com.xxx.xxx.xxx`
+❌ `org.xxx.xxx`
+❌ Any raw Java package name
+
+### Single App Output Format
+```
+Application:
+HD Video Downloader
+
+Placement:
+Native
+```
+
+### Top-N Table Format
+Always use this table structure — never raw identifiers:
+
+| Rank | Application | Placement | Responses Served |
+|---|---|---|---|
+| 1 | HD Video Downloader | Native | 2,177,469 |
+| 2 | HD Video Downloader | Banner | 50,951 |
+| 3 | Wealthy Messages | Banner 4 | 15,266 |
+| 4 | Wealthy Messages | Banner 3 | 12,789 |
+| 5 | Fast Download Video Player | Native 3 | 11,983 |
+
+---
+
 ## VALIDATION AND ERROR HANDLING
+
 
 **CRITICAL**: Before sending a response, YOU MUST mathematically verify the consistency of these metrics:
 [Revenue, Requests, CTR, Fill Rate, eCPM]
@@ -1461,6 +1535,74 @@ def _extract_domain(ad_unit_name: str) -> str:
         parts = name.split("/")
         name = parts[-1] if len(parts) > 1 else parts[0]
     return name.strip()
+
+
+import re as _re
+
+# Known placement suffixes (order matters — longer first to avoid partial matches)
+_PLACEMENT_SUFFIXES = [
+    "Interstitial", "Rewarded", "Banner", "Native", "Splash",
+    "AppOpen", "MREC", "Leaderboard",
+]
+
+def _format_app_name(raw_name: str) -> dict:
+    """
+    Convert a raw GAM inventory name into a clean, human-readable format.
+
+    Input:  22997400926_com.free.hdvideo.alldownloader.videoplayer.app_Native
+    Output: {"app_name": "HD Video Downloader", "placement": "Native", "raw": <original>}
+
+    Rules:
+      1. Strip leading numeric network/publisher prefix  (e.g. 22997400926_)
+      2. Detect and extract trailing placement token     (e.g. _Native3 → "Native 3")
+      3. Strip Java package prefix                      (com. / org. / net.)
+      4. Convert dot-separated words to Title Case words
+      5. Remove common filler words that add no meaning
+      6. Collapse to a concise, readable app name
+    """
+    if not isinstance(raw_name, str) or not raw_name.strip():
+        return {"app_name": "Unknown Application", "placement": "", "raw": raw_name}
+
+    original = raw_name.strip()
+
+    # Step 1 — strip leading numeric prefix (e.g. "22997400926_")
+    name = _re.sub(r'^\d+_', '', original)
+
+    # Step 2 — extract trailing placement suffix (e.g. _Native3, _Banner, _Rewarded)
+    placement = ""
+    placement_pattern = _re.compile(
+        r'[_\-](' + '|'.join(_PLACEMENT_SUFFIXES) + r')(\d*)$',
+        _re.IGNORECASE
+    )
+    pm = placement_pattern.search(name)
+    if pm:
+        ptype = pm.group(1).capitalize()
+        pnum  = pm.group(2)
+        placement = f"{ptype} {pnum}".strip() if pnum else ptype
+        name = name[:pm.start()]
+
+    # Step 3 — strip Java package prefix (com. / org. / net.)
+    name = _re.sub(r'^(com|org|net|io|co)\.[a-z]+\.?', '', name, flags=_re.IGNORECASE)
+
+    # Step 4 — replace dots, underscores, hyphens with spaces
+    name = _re.sub(r'[._\-]+', ' ', name).strip()
+
+    # Step 5 — remove common filler tokens
+    _FILLER = {
+        'app', 'application', 'free', 'pro', 'lite', 'plus', 'new',
+        'official', 'mobile', 'android', 'apk', 'v2', 'v3',
+    }
+    words = [w for w in name.split() if w.lower() not in _FILLER]
+
+    # Step 6 — title-case and join
+    app_name = ' '.join(w.capitalize() for w in words).strip()
+
+    if not app_name:
+        app_name = "Unknown Application"
+
+    return {"app_name": app_name, "placement": placement, "raw": original}
+
+
 
 
 # ─── Date Resolution ─────────────────────────────────────────────────────────
