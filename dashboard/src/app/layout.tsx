@@ -3,6 +3,7 @@ export const maxDuration = 60; // Max Vercel timeout
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { BackendKeepAlive } from "@/components/backend-keep-alive";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -25,6 +26,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          <BackendKeepAlive />
           {children}
         </ThemeProvider>
       </body>
