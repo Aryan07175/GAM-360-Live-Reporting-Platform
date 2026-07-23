@@ -342,27 +342,32 @@ NEVER ask the user which API to use. Automatically choose the correct tool.
 
 ## INTELLIGENT TOOL ROUTING
 
+**CRITICAL DATE RULE FOR WEBSITE TOOLS**: ALWAYS pass explicit `start_date` and `end_date` parameters when calling any website tool. If the user does not specify a date, use yesterday as both start_date and end_date (e.g., `"start_date": "2026-07-22", "end_date": "2026-07-22"`). NEVER omit these parameters. Maximum range is 30 days.
+
 1. **`getWebsiteInventory`**:
    - **Use when**: User asks for basic website details, statuses, list of all websites, or general inventory.
    - **Supported Questions**: "List all websites", "What websites do we have?", "Show website statuses".
+   - **REQUIRED Parameters**: `start_date`, `end_date` (always pass both, default to yesterday if not specified).
 2. **`getWebsitePerformance`**:
    - **Use when**: User asks for performance metrics (Revenue, Impressions, eCPM, Fill Rate, etc.) for websites.
    - **Supported Questions**: "What is the revenue for cardekho.com?", "Show performance for all websites", "How did our websites perform yesterday?".
+   - **REQUIRED Parameters**: `start_date`, `end_date` (always pass both, default to yesterday if not specified).
 3. **`getWebsiteHealth`**:
    - **Use when**: User asks about website health, working/warning/critical/offline statuses, or websites needing attention.
    - **Supported Questions**: "Which websites are offline?", "Show website health", "Are any websites critical?".
+   - **REQUIRED Parameters**: `start_date`, `end_date` (always pass both, default to yesterday if not specified).
 4. **`getTopWebsites`**:
    - **Use when**: User asks for the best, top, or highest performing websites by any metric.
    - **Supported Questions**: "Top 5 websites by revenue", "Which website has the highest CTR?", "Best performing websites".
-   - **Parameters**: `metric`, `limit`.
+   - **REQUIRED Parameters**: `start_date`, `end_date`, `metric`, `limit`.
 5. **`getBottomWebsites`**:
    - **Use when**: User asks for the worst, lowest, or underperforming websites by any metric.
    - **Supported Questions**: "Bottom 3 websites by eCPM", "Lowest fill rate websites", "Worst performing websites".
-   - **Parameters**: `metric`, `limit`.
+   - **REQUIRED Parameters**: `start_date`, `end_date`, `metric`, `limit`.
 6. **`getWebsiteTrend`**:
    - **Use when**: User asks for data over time, trends, historical performance, daily/weekly/monthly breakdowns.
    - **Supported Questions**: "Show daily revenue trend for the past 7 days", "Weekly impressions trend", "Monthly eCPM trend".
-   - **Parameters**: `interval` (daily/weekly/monthly).
+   - **REQUIRED Parameters**: `start_date`, `end_date`, `interval` (daily/weekly/monthly). Max 30-day range.
 7. **`query_gam_data`** (Fallback):
    - **Use when**: Question is not about websites (e.g., ad units, child networks, overall network totals not covered by website tools).
 
@@ -2028,18 +2033,29 @@ def _make_tool_executor(cached_df):
         if tool_name in website_tools:
             start_raw = input_dict.get("start_date", "").strip()
             end_raw   = input_dict.get("end_date",   "").strip()
-            
+
             today = date.today()
-            ytd_start = today.replace(month=1, day=1)
+            yesterday = today - timedelta(days=1)
+
+            # Default: yesterday (single day) — avoids fetching months of data on free-tier
             if not start_raw:
-                start_raw = ytd_start.isoformat()
-                end_raw   = today.isoformat()
-        
+                start_raw = yesterday.isoformat()
+                end_raw   = yesterday.isoformat()
+            elif not end_raw:
+                end_raw = today.isoformat()
+
             try:
                 start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
             except Exception as e:
                 return {"error": f"Invalid date format: {e}. Use YYYY-MM-DD."}
-        
+
+            # Safety cap: never fetch more than 30 days at once (free-tier memory limit)
+            MAX_DAYS = 30
+            delta = (end_date - start_date).days
+            if delta > MAX_DAYS:
+                log.warning(f"[Chat:{tool_name}] Date range {delta} days exceeds cap, trimming to last {MAX_DAYS} days.")
+                start_date = end_date - timedelta(days=MAX_DAYS)
+
             try:
                 df = await gam.get_live_data_multi_day(
                     start_date, end_date, force_refresh=True, demand_channel="all"
@@ -2047,7 +2063,7 @@ def _make_tool_executor(cached_df):
             except Exception as e:
                 log.error(f"[Chat:{tool_name}] GAM fetch failed: {e}")
                 return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
-                
+
             if tool_name == "getWebsiteInventory":
                 return _compute_website_inventory(df, start_date, end_date)
             elif tool_name == "getWebsitePerformance":
