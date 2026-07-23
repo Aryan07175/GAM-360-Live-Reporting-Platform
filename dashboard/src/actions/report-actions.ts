@@ -63,14 +63,24 @@ export async function fetchExecutiveSummary(
     );
     if (!res || res.status === "error") return null;
 
-    const rev = Number(res.total_revenue_usd || 0);
-    const imp = Number(res.total_impressions || 0);
-    const clicks = Number(res.total_clicks || 0);
-    const ctr = Number(res.average_ctr || 0);
-    const fillRate = Number(res.average_fill_rate || 0);
-    const ecpm = Number(res.average_ecpm || 0);
-    const adRequests = Number(res.total_ad_requests || 0);
-    const appCount = Number(res.app_count || 0);
+    // Backend returns data nested under res.metrics — read from there.
+    // Key names also differ from what was previously expected:
+    //   avg_ecpm_usd  (not average_ecpm)
+    //   avg_ctr_pct   (not average_ctr)
+    //   fill_rate_pct (not average_fill_rate)
+    //   active_apps   (not app_count)
+    //   daily_active_users (field directly available from backend)
+    const m = res.metrics || res; // fallback to flat if backend shape changes
+
+    const rev        = Number(m.total_revenue_usd  ?? res.total_revenue_usd  ?? 0);
+    const imp        = Number(m.total_impressions   ?? res.total_impressions   ?? 0);
+    const clicks     = Number(m.total_clicks        ?? res.total_clicks        ?? 0);
+    const ctr        = Number(m.avg_ctr_pct         ?? res.average_ctr         ?? 0);
+    const fillRate   = Number(m.fill_rate_pct       ?? res.average_fill_rate   ?? 0);
+    const ecpm       = Number(m.avg_ecpm_usd        ?? res.average_ecpm        ?? 0);
+    const adRequests = Number(m.total_ad_requests   ?? res.total_ad_requests   ?? 0);
+    const appCount   = Number(m.active_apps         ?? res.app_count           ?? 0);
+    const dau        = Number(m.daily_active_users  ?? (adRequests > 0 ? Math.round(adRequests / 5) : 0));
 
     const summary: BISummaryKPI[] = [
       {
@@ -145,6 +155,15 @@ export async function fetchExecutiveSummary(
         direction: "flat",
         sparkline: [],
       },
+      {
+        label: "Daily Active Users",
+        value: dau,
+        formatted: fmtNum(dau),
+        previousValue: 0,
+        changePct: 0,
+        direction: "flat",
+        sparkline: [],
+      },
     ];
 
     return { summary, fetchedAt: res.fetched_at };
@@ -153,6 +172,7 @@ export async function fetchExecutiveSummary(
     return null;
   }
 }
+
 
 // ─── Revenue by Application ──────────────────────────────────────────────────
 
@@ -386,16 +406,24 @@ export async function fetchFullReport(
       startDate,
       endDate,
       fetchedAt: res.fetched_at || new Date().toISOString(),
-      summary: [
-        { label: "Total Revenue", value: summaryData.total_revenue_usd || 0, formatted: fmtUSD(summaryData.total_revenue_usd || 0), previousValue: 0, changePct: 0, direction: "flat", sparkline: [] },
-        { label: "Total Impressions", value: summaryData.total_impressions || 0, formatted: fmtNum(summaryData.total_impressions || 0), previousValue: 0, changePct: 0, direction: "flat", sparkline: [] },
-        { label: "Total Clicks", value: summaryData.total_clicks || 0, formatted: fmtNum(summaryData.total_clicks || 0), previousValue: 0, changePct: 0, direction: "flat", sparkline: [] },
-        { label: "Average eCPM", value: summaryData.average_ecpm || 0, formatted: fmtUSD(summaryData.average_ecpm || 0), previousValue: 0, changePct: 0, direction: "flat", sparkline: [] },
-        { label: "CTR", value: summaryData.average_ctr || 0, formatted: fmtPct(summaryData.average_ctr || 0), previousValue: 0, changePct: 0, direction: "flat", sparkline: [] },
-        { label: "Fill Rate", value: summaryData.average_fill_rate || 0, formatted: fmtPct(summaryData.average_fill_rate || 0), previousValue: 0, changePct: 0, direction: "flat", sparkline: [] },
-        { label: "Ad Requests", value: summaryData.total_ad_requests || 0, formatted: fmtNum(summaryData.total_ad_requests || 0), previousValue: 0, changePct: 0, direction: "flat", sparkline: [] },
-        { label: "Active Apps", value: summaryData.app_count || 0, formatted: (summaryData.app_count || 0).toString(), previousValue: 0, changePct: 0, direction: "flat", sparkline: [] },
-      ],
+      summary: (() => {
+        // generateFullReport returns summary = { period, metrics:{...}, revenue_trend, top_apps, all_apps }
+        // The KPIs live in summaryData.metrics — fall back to flat if shape changes.
+        const m = summaryData?.metrics || summaryData || {};
+        const adReq = Number(m.total_ad_requests ?? 0);
+        const dau   = Number(m.daily_active_users ?? (adReq > 0 ? Math.round(adReq / 5) : 0));
+        return [
+          { label: "Total Revenue",      value: Number(m.total_revenue_usd ?? 0), formatted: fmtUSD(Number(m.total_revenue_usd ?? 0)),   previousValue: 0, changePct: 0, direction: "flat" as const, sparkline: [] },
+          { label: "Total Impressions",  value: Number(m.total_impressions ?? 0), formatted: fmtNum(Number(m.total_impressions ?? 0)),    previousValue: 0, changePct: 0, direction: "flat" as const, sparkline: [] },
+          { label: "Total Clicks",       value: Number(m.total_clicks ?? 0),      formatted: fmtNum(Number(m.total_clicks ?? 0)),         previousValue: 0, changePct: 0, direction: "flat" as const, sparkline: [] },
+          { label: "Average eCPM",       value: Number(m.avg_ecpm_usd ?? 0),      formatted: fmtUSD(Number(m.avg_ecpm_usd ?? 0)),         previousValue: 0, changePct: 0, direction: "flat" as const, sparkline: [] },
+          { label: "CTR",                value: Number(m.avg_ctr_pct ?? 0),       formatted: fmtPct(Number(m.avg_ctr_pct ?? 0)),          previousValue: 0, changePct: 0, direction: "flat" as const, sparkline: [] },
+          { label: "Fill Rate",          value: Number(m.fill_rate_pct ?? 0),     formatted: fmtPct(Number(m.fill_rate_pct ?? 0)),        previousValue: 0, changePct: 0, direction: "flat" as const, sparkline: [] },
+          { label: "Ad Requests",        value: adReq,                            formatted: fmtNum(adReq),                               previousValue: 0, changePct: 0, direction: "flat" as const, sparkline: [] },
+          { label: "Active Apps",        value: Number(m.active_apps ?? 0),       formatted: String(Number(m.active_apps ?? 0)),          previousValue: 0, changePct: 0, direction: "flat" as const, sparkline: [] },
+          { label: "Daily Active Users", value: dau,                              formatted: fmtNum(dau),                                 previousValue: 0, changePct: 0, direction: "flat" as const, sparkline: [] },
+        ];
+      })(),
       apps: appsRaw.map(mapApp),
       topApps: topAppsRaw.map(mapApp),
       bottomApps: bottomAppsRaw.map(mapApp),

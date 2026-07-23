@@ -65,10 +65,11 @@ export default function DashboardOverview() {
   const fillRate = getKPI("Fill Rate");
   const adRequests = getKPI("Ad Requests");
   const activeApps = getKPI("Active Apps");
+  const dauKPI = getKPI("Daily Active Users");
 
-  // Calculate DAU as Ad Requests / 5
-  const dauValue = adRequests?.value ? Math.round(adRequests.value / 5) : 0;
-  const dauFormatted = dauValue.toLocaleString();
+  // DAU comes directly from the backend metric; fallback to adRequests/5 if missing
+  const dauFormatted = dauKPI?.formatted ?? (adRequests?.value ? Math.round(adRequests.value / 5).toLocaleString() : "0");
+
 
   const topApps = (appsData?.apps || []).slice(0, 5);
   const maxAppRevenue =
