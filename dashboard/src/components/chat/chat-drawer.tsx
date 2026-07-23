@@ -2,72 +2,19 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  MessageCircle,
-  X,
-  Zap,
-  Send,
-  RotateCcw,
-  BarChart2,
-  Globe,
-  TrendingUp,
-  AlertTriangle,
-} from "lucide-react";
+import { MessageCircle, X, Zap, Send, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChatMessage } from "./chat-message";
 import { streamChat } from "@/services/chat-service";
 import type { ChatMessage as ChatMessageType } from "@/types";
 import { useLiveReport } from "@/contexts/DateContext";
 
-// ─── Suggestion categories reflecting all active AI policies ─────────────────
-const SUGGESTION_GROUPS = [
-  {
-    label: "Quick Metrics",
-    icon: BarChart2,
-    color: "text-indigo-500",
-    items: [
-      "What is the fill rate?",
-      "CTR?",
-      "Total impressions yesterday",
-      "Revenue today",
-    ],
-  },
-  {
-    label: "Inventory Status",
-    icon: Globe,
-    color: "text-emerald-500",
-    items: [
-      "How many websites are active?",
-      "Which apps served ads yesterday?",
-      "List all configured websites and apps",
-      "Show full network inventory status",
-    ],
-  },
-  {
-    label: "Analysis",
-    icon: TrendingUp,
-    color: "text-violet-500",
-    items: [
-      "Summarize the report",
-      "Which app has the highest revenue?",
-      "Give insights on eCPM performance",
-      "Analyze top apps this month",
-    ],
-  },
-  {
-    label: "Ad Requests",
-    icon: AlertTriangle,
-    color: "text-amber-500",
-    items: [
-      "Are Ad Requests available in the report?",
-      "Why are Ad Requests showing zero?",
-      "Show responses served by app",
-    ],
-  },
+const SUGGESTIONS = [
+  "Which app has the highest revenue?",
+  "Why is Fill Rate 0.00% today?",
+  "Summarize today's Revenue Trend",
+  "Which app has the lowest eCPM?",
 ];
-
-// Flat list for the compact default chips (first item from each group)
-const DEFAULT_CHIPS = SUGGESTION_GROUPS.map((g) => g.items[0]);
 
 // Global event to open chat from sidebar
 export const OPEN_CHAT_EVENT = "open-gam-chat";
@@ -77,7 +24,6 @@ export function ChatDrawer() {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -93,7 +39,6 @@ export function ChatDrawer() {
       }
       setIsStreaming(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   // Listen for global open event
@@ -113,7 +58,6 @@ export function ChatDrawer() {
 
   const handleSend = async (text: string) => {
     if (!text.trim() || isStreaming) return;
-    setActiveGroup(null);
 
     const userMessage: ChatMessageType = {
       id: Date.now().toString(),
@@ -150,7 +94,7 @@ export function ChatDrawer() {
       );
 
       for await (const event of stream) {
-        if (event.type === "token") {
+        if (event.type === 'token') {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
@@ -158,7 +102,7 @@ export function ChatDrawer() {
                 : m
             )
           );
-        } else if (event.type === "error") {
+        } else if (event.type === 'error') {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
@@ -168,7 +112,7 @@ export function ChatDrawer() {
           );
         }
       }
-    } catch (_err) {
+    } catch (error) {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
@@ -179,26 +123,19 @@ export function ChatDrawer() {
     } finally {
       setIsStreaming(false);
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, isStreaming: false } : m
-        )
+        prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m))
       );
     }
   };
 
   const retryMessage = () => {
-    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const lastUser = [...messages].reverse().find(m => m.role === 'user');
     if (lastUser) {
       const newHistory = messages.slice(0, -2);
       setMessages(newHistory);
       handleSend(lastUser.content);
     }
   };
-
-  // Which suggestions to show — expanded group or default chips
-  const visibleGroup = activeGroup
-    ? SUGGESTION_GROUPS.find((g) => g.label === activeGroup)
-    : null;
 
   return (
     <>
@@ -239,7 +176,7 @@ export function ChatDrawer() {
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="w-full max-w-[440px] bg-background border-l shadow-2xl h-full flex flex-col"
+              className="w-full max-w-[420px] bg-background border-l shadow-2xl h-full flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
@@ -254,7 +191,7 @@ export function ChatDrawer() {
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                       <span className="text-[10px] text-muted-foreground font-medium">LIVE</span>
                       <span className="text-[10px] text-muted-foreground mx-1">•</span>
-                      <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+                      <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">
                         {startDate === endDate ? startDate : `${startDate} to ${endDate}`}
                       </span>
                     </div>
@@ -273,82 +210,24 @@ export function ChatDrawer() {
               {/* Messages Area */}
               <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-muted/10">
                 {messages.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center px-2">
+                  <div className="h-full flex flex-col items-center justify-center text-center px-4">
                     <div className="h-12 w-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center mb-4">
                       <MessageCircle className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
                     </div>
-                    <h3 className="text-base font-semibold mb-1">How can I help you?</h3>
-                    <p className="text-xs text-muted-foreground mb-5 max-w-[300px]">
-                      Ask a single metric for a quick answer, or say&nbsp;
-                      <span className="font-medium text-foreground">&quot;Summarize the report&quot;</span>
-                      &nbsp;for a full executive summary.
+                    <h3 className="text-base font-semibold mb-2">How can I help you?</h3>
+                    <p className="text-sm text-muted-foreground mb-6">
+                      Ask any question about your live GAM data for {startDate === endDate ? 'today' : 'the selected date range'}.
                     </p>
-
-                    {/* Category tabs */}
-                    <div className="flex flex-wrap justify-center gap-2 mb-4 w-full">
-                      {SUGGESTION_GROUPS.map((group) => {
-                        const Icon = group.icon;
-                        const isActive = activeGroup === group.label;
-                        return (
-                          <button
-                            key={group.label}
-                            onClick={() =>
-                              setActiveGroup(isActive ? null : group.label)
-                            }
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium transition-all ${
-                              isActive
-                                ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
-                                : "bg-card border-border text-muted-foreground hover:border-indigo-400/50 hover:text-foreground"
-                            }`}
-                          >
-                            <Icon className={`h-3 w-3 ${isActive ? "text-white" : group.color}`} />
-                            {group.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {/* Suggestion chips */}
                     <div className="flex flex-col w-full gap-2">
-                      <AnimatePresence mode="wait">
-                        {visibleGroup ? (
-                          <motion.div
-                            key={visibleGroup.label}
-                            initial={{ opacity: 0, y: 6 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -6 }}
-                            className="flex flex-col gap-2"
-                          >
-                            {visibleGroup.items.map((suggestion, i) => (
-                              <button
-                                key={i}
-                                onClick={() => handleSend(suggestion)}
-                                className="text-left px-4 py-2.5 rounded-lg border bg-card hover:bg-muted/50 hover:border-indigo-500/30 text-sm transition-all text-muted-foreground hover:text-foreground shadow-sm"
-                              >
-                                {suggestion}
-                              </button>
-                            ))}
-                          </motion.div>
-                        ) : (
-                          <motion.div
-                            key="default"
-                            initial={{ opacity: 0, y: 6 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -6 }}
-                            className="flex flex-col gap-2"
-                          >
-                            {DEFAULT_CHIPS.map((suggestion, i) => (
-                              <button
-                                key={i}
-                                onClick={() => handleSend(suggestion)}
-                                className="text-left px-4 py-2.5 rounded-lg border bg-card hover:bg-muted/50 hover:border-indigo-500/30 text-sm transition-all text-muted-foreground hover:text-foreground shadow-sm"
-                              >
-                                {suggestion}
-                              </button>
-                            ))}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
+                      {SUGGESTIONS.map((suggestion, i) => (
+                        <button
+                          key={i}
+                          onClick={() => handleSend(suggestion)}
+                          className="text-left px-4 py-2.5 rounded-lg border bg-card hover:bg-muted/50 hover:border-indigo-500/30 text-sm transition-all text-muted-foreground hover:text-foreground shadow-sm"
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 ) : (
@@ -364,9 +243,9 @@ export function ChatDrawer() {
                     ))}
                     {messages[messages.length - 1]?.error && (
                       <div className="flex justify-center">
-                        <Button
-                          variant="outline"
-                          size="sm"
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
                           onClick={retryMessage}
                           className="gap-2 text-xs h-8"
                         >
@@ -397,7 +276,7 @@ export function ChatDrawer() {
                         handleSend(input);
                       }
                     }}
-                    placeholder="Ask about metrics, inventory, or say 'Summarize the report'…"
+                    placeholder="Ask about your live data..."
                     className="flex-1 max-h-32 min-h-[40px] resize-none bg-transparent border-0 focus:ring-0 text-sm px-2 py-2.5 scrollbar-thin placeholder:text-muted-foreground"
                     disabled={isStreaming}
                     rows={1}
@@ -413,7 +292,7 @@ export function ChatDrawer() {
                 </form>
                 <div className="text-center mt-2">
                   <span className="text-[10px] text-muted-foreground">
-                    Single metric → concise answer &nbsp;·&nbsp; &quot;Summarize&quot; → full report
+                    Powered by live Google Ad Manager data — ask about any date range.
                   </span>
                 </div>
               </div>
