@@ -309,119 +309,84 @@ export function LiveReportProvider({
         })),
       });
 
-      // ── Backend health pre-check ────────────────────────────────────────────
-      // We call our OWN Next.js API proxy (/api/health) which forwards the
-      // request to Render server-side. This eliminates browser CORS failures
-      // entirely — the browser never contacts Render directly for health checks.
-      //
-      // IMPORTANT: Only block if backend is truly unreachable (504/502 or
-      // network fail). If /api/health returns 200, ALWAYS proceed — never show
-      // cold-start error when the server is running.
+      // ── Backend health pre-check with auto-retry ────────────────────────────
+      // Render free tier sleeps after inactivity. Cold starts take 30–90s.
+      // We retry the health check every 15s for up to 90s total before giving up.
       const MCP_URL =
         process.env.NEXT_PUBLIC_MCP_SERVER_URL ||
         "https://gam-360-live-reporting-platform.onrender.com";
 
-      console.log(`[GAM360] Health check via proxy → /api/health (backend: ${MCP_URL})`);
+      console.log(`[GAM360] Health check → /api/health (backend: ${MCP_URL})`);
 
-      try {
-        const healthRes = await fetch("/api/health", {
-          method: "GET",
-          cache: "no-store",
-          // The proxy itself has a 20s timeout; we give it 25s here as a safety net
-          signal: AbortSignal.timeout(25_000),
-        });
+      const MAX_HEALTH_RETRIES = 6;
+      const HEALTH_RETRY_DELAY_MS = 15_000; // 15s between retries
+      let backendAlive = false;
 
-        console.log(`[GAM360] Health proxy responded: ${healthRes.status}`);
+      for (let attempt = 1; attempt <= MAX_HEALTH_RETRIES; attempt++) {
+        try {
+          const healthRes = await fetch("/api/health", {
+            method: "GET",
+            cache: "no-store",
+            signal: AbortSignal.timeout(20_000),
+          });
 
-        if (healthRes.ok) {
-          // ✅ Backend is alive — parse and log the health body
-          const health = await healthRes.json();
-          console.log("[GAM360] Health body:", health);
+          console.log(`[GAM360] Health attempt ${attempt}/${MAX_HEALTH_RETRIES}: ${healthRes.status}`);
 
-          // Warn about missing GAM credentials (backend runs but GAM calls will fail)
-          if (
-            health?.gam?.network_code === null ||
-            health?.gam?.credentials_file_present === false
-          ) {
-            setError(
-              "Backend is running but GAM credentials are not configured. " +
-              "Set GAM_NETWORK_CODE and GAM_SERVICE_ACCOUNT_JSON in your Render environment."
-            );
-            setIsLoading(false);
-            return;
+          if (healthRes.ok) {
+            const health = await healthRes.json();
+            console.log("[GAM360] Backend alive:", health);
+
+            // Warn about missing credentials but don't retry
+            if (
+              health?.gam?.network_code === null ||
+              health?.gam?.credentials_file_present === false
+            ) {
+              setError(
+                "Backend is running but GAM credentials are not configured. " +
+                "Set GAM_NETWORK_CODE and GAM_SERVICE_ACCOUNT_JSON in your Render environment."
+              );
+              setIsLoading(false);
+              return;
+            }
+
+            backendAlive = true;
+            break; // ✅ Backend is healthy — exit retry loop
           }
-          // ✅ Backend is healthy — fall through and fetch the report
-        } else if (healthRes.status === 504) {
-          // Our proxy timed out waiting for Render — classic cold start scenario
-          console.warn(`[GAM360] Proxy health timed out (504) — backend cold-starting`);
-          setError(
-            "Backend is starting up (cold start). This can take 30–60 seconds on the free plan. " +
-            "Please wait and try again."
-          );
-          setIsLoading(false);
-          setProgress({
-            total: 6,
-            completed: 0,
-            currentSection: "",
-            sections: defaultProgress.sections.map((s) => ({
-              ...s,
-              status: "error" as const,
-              error: "Backend cold-starting (timeout)",
-            })),
-          });
-          return;
-        } else if (healthRes.status === 502 || healthRes.status === 503) {
-          // Render returns 502/503 during cold start or deploy
-          console.warn(`[GAM360] Health returned ${healthRes.status} — backend unavailable`);
-          setError(
-            `Backend returned ${healthRes.status} — service may be cold-starting or redeploying. ` +
-            "This can take 30–60 seconds on the free plan. Please wait and try again."
-          );
-          setIsLoading(false);
-          setProgress({
-            total: 6,
-            completed: 0,
-            currentSection: "",
-            sections: defaultProgress.sections.map((s) => ({
-              ...s,
-              status: "error" as const,
-              error: "Backend unavailable",
-            })),
-          });
-          return;
-        } else {
-          // Any other non-OK status (500, 404, etc.) — log but do NOT block
-          console.warn(`[GAM360] Health returned unexpected status ${healthRes.status} — proceeding anyway`);
-        }
-      } catch (healthErr: any) {
-        const errName: string = healthErr?.name || "";
-        const errMsg: string = healthErr?.message || "";
-        console.error("[GAM360] Health check proxy error:", errName, errMsg);
 
-        if (errName === "TimeoutError") {
-          // Our 25s client timeout fired — proxy + backend both unresponsive
-          setError(
-            "Backend is starting up (cold start). This can take 30–60 seconds on the free plan. " +
-            "Please wait and try again."
-          );
-          setIsLoading(false);
-          setProgress({
-            total: 6,
-            completed: 0,
-            currentSection: "",
-            sections: defaultProgress.sections.map((s) => ({
-              ...s,
-              status: "error" as const,
-              error: "Backend timeout",
-            })),
-          });
-          return;
-        } else {
-          // Any other error — log it but proceed with the report fetch anyway
-          // (the actual report fetch is server-side Vercel→Render and may still work)
-          console.warn("[GAM360] Health check error — proceeding with report fetch:", errMsg);
+          // 502/503/504 = cold-starting — retry
+          console.warn(`[GAM360] Backend not ready (${healthRes.status}), attempt ${attempt}/${MAX_HEALTH_RETRIES}`);
+
+        } catch (healthErr: any) {
+          const errName: string = healthErr?.name || "";
+          console.warn(`[GAM360] Health check error on attempt ${attempt}/${MAX_HEALTH_RETRIES}: ${errName}`);
+        }
+
+        if (attempt < MAX_HEALTH_RETRIES) {
+          // Wait before next retry
+          await new Promise((resolve) => setTimeout(resolve, HEALTH_RETRY_DELAY_MS));
         }
       }
+
+      if (!backendAlive) {
+        // All retries exhausted — show error
+        setError(
+          "Backend is unavailable after multiple retries. " +
+          "The Render service may be redeploying. Please try again in a minute."
+        );
+        setIsLoading(false);
+        setProgress({
+          total: 6,
+          completed: 0,
+          currentSection: "",
+          sections: defaultProgress.sections.map((s) => ({
+            ...s,
+            status: "error" as const,
+            error: "Backend unavailable",
+          })),
+        });
+        return;
+      }
+
 
       try {
         const result = await fetchFullReport(

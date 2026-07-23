@@ -24,7 +24,7 @@ export async function GET() {
     const res = await fetch(healthUrl, {
       method: "GET",
       cache: "no-store",
-      signal: AbortSignal.timeout(20_000), // 20s — server-side has more time
+      signal: AbortSignal.timeout(60_000), // 60s — covers full Render cold-start time
       headers: {
         "User-Agent": "GAM360-NextJS-Proxy/1.0",
       },
