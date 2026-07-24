@@ -51,10 +51,11 @@ This project is a complete end-to-end analytics pipeline that pulls raw data fro
 
 ## 🌐 Dashboard Features
 
-* **Ask GAM 360 (AI Chat):** A built-in AI assistant powered by **AWS Bedrock (Anthropic Claude Haiku 4.5)**. Ask questions about your live data in natural language — e.g. *"Which app has the highest revenue?"* or *"What is total revenue today?"*. Uses in-memory cache and strict tool calling to guarantee zero hallucinated numbers, and streams responses token-by-token.
+* **Website Intelligence Engine [NEW]:** Fully supports Website-level reporting alongside App-level reporting. Pulls 100% live website inventory data directly from Google Ad Manager without any database caching. Easily track website health, top performing domains, CTRs, and impressions.
+* **Ask GAM 360 (AI Chat):** A built-in, context-aware AI assistant powered by **AWS Bedrock (Anthropic Claude Haiku 4.5)**. Ask complex questions about your network in natural language — e.g., *"Which website has the highest revenue?"*, *"Are any websites critical?"*, or *"Show me the bottom 3 apps by eCPM"*. It uses strict tool-calling to fetch live GAM data, guaranteeing zero hallucinated numbers, and streams responses instantly.
 * **Real-Time BI Dashboard:** Generates comprehensive business intelligence reports dynamically using live data.
 * **Unified Revenue:** Combines Ad Server, AdSense, and Ad Exchange into a single consolidated view.
-* **18+ Live Analytics Tools:** Executive summaries, revenue by app, trends, top/bottom apps, impressions, clicks, CTR, eCPM, fill rate, and ad requests.
+* **18+ Live Analytics Tools:** Executive summaries, revenue by app/website, trends, top/bottom inventory, impressions, clicks, CTR, eCPM, fill rate, and ad requests.
 * **AI Anomaly Detection:** Compares current performance against historical averages to detect sudden drops or spikes in real-time.
 * **Email Notifications:** Integrated settings panel to manage recipients. Automatically sends instant alerts when anomalies are detected and dispatches a full Executive Report via Gmail every day.
 * **Interactive UI:** Custom date ranges (down to the hour), dark mode, and progressive loading skeletons.
