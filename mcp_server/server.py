@@ -2172,8 +2172,24 @@ def _make_tool_executor(cached_df):
                     extra_dims=["CHILD_NETWORK_CODE"],
                 )
             except Exception as e:
-                log.error("[Chat:getChildNetworkAnalytics] GAM fetch failed: %s", e)
-                return {"error": f"Failed to fetch child network data from Google Ad Manager: {e}"}
+                err_msg = str(e).lower()
+                # If the account doesn't have MCM, GAM throws a dimension error.
+                # Catch it and retry without the child network dimension so we can
+                # trigger the graceful fallback (showing top-level inventory segments).
+                if "dimension" in err_msg or "permission" in err_msg or "child" in err_msg or "illegal" in err_msg or "invalid" in err_msg:
+                    log.warning("[Chat:getChildNetworkAnalytics] MCM dimension failed, retrying without it: %s", e)
+                    try:
+                        df = await gam.get_live_data_multi_day(
+                            start_date, end_date,
+                            force_refresh=True,
+                            demand_channel="all",
+                        )
+                    except Exception as fallback_e:
+                        log.error("[Chat:getChildNetworkAnalytics] GAM fallback fetch failed: %s", fallback_e)
+                        return {"error": f"Failed to fetch fallback data from Google Ad Manager: {fallback_e}"}
+                else:
+                    log.error("[Chat:getChildNetworkAnalytics] GAM fetch failed: %s", e)
+                    return {"error": f"Failed to fetch child network data from Google Ad Manager: {e}"}
 
             result = compute_child_network_analytics(
                 df, start_date, end_date,
@@ -2223,8 +2239,23 @@ def _make_tool_executor(cached_df):
                     extra_dims=extra_dims,
                 )
             except Exception as e:
-                log.error("[Chat:getMatchRateAnalytics] GAM fetch failed: %s", e)
-                return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
+                err_msg = str(e).lower()
+                if extra_dims and ("dimension" in err_msg or "permission" in err_msg or "child" in err_msg or "illegal" in err_msg or "invalid" in err_msg):
+                    log.warning("[Chat:getMatchRateAnalytics] MCM dimension failed, retrying without it: %s", e)
+                    try:
+                        df = await gam.get_live_data_multi_day(
+                            start_date, end_date,
+                            force_refresh=True,
+                            demand_channel="all",
+                        )
+                        # Switch dimension to 'app' so we fallback gracefully instead of erroring
+                        dimension = "app"
+                    except Exception as fallback_e:
+                        log.error("[Chat:getMatchRateAnalytics] GAM fallback fetch failed: %s", fallback_e)
+                        return {"error": f"Failed to fetch data from Google Ad Manager: {fallback_e}"}
+                else:
+                    log.error("[Chat:getMatchRateAnalytics] GAM fetch failed: %s", e)
+                    return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
 
             result = compute_match_rate_analytics(
                 df, dimension, start_date, end_date,
