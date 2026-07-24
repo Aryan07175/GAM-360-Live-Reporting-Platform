@@ -89,6 +89,16 @@ from mcp_server.services.query_engine import (
     MAX_ROWS_TOP_N,
 )
 
+# Network Analytics Engine (additive — new features only)
+from mcp_server.services.network_analytics import (
+    compute_network_summary,
+    compute_child_network_analytics,
+    compute_match_rate_analytics,
+    compute_automatic_insights,
+    compute_anomalies_from_df,
+    compare_entities,
+)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("mcp_server")
 
@@ -1207,8 +1217,136 @@ using the same live Google Ad Manager reporting engine.
 
 ## Current Dashboard Context (Reference only — DO NOT use to answer questions, ALWAYS use tools)
 {summary_str}
-"""
 
+==================================================
+NETWORK CODE INTELLIGENCE  [NEW — ADDITIVE]
+==================================================
+
+When the user says any of:
+- "network 12345678"
+- "show network XXXXXXXX"
+- "network summary"
+- "network performance"
+- "network health"
+- "my network stats"
+- "overall network"
+
+→ ALWAYS call the `getNetworkSummary` tool.
+→ Display: Network Code, Period, Revenue, Impressions, Fill Rate, Match Rate, eCPM, CTR, Health Status, Anomalies, Insights.
+
+==================================================
+CHILD NETWORK (MCM) ANALYTICS  [NEW — ADDITIVE]
+==================================================
+
+When the user asks about:
+- "child networks"
+- "MCM networks"
+- "list all child networks"
+- "child network analytics"
+- "compare child networks"
+- "top child networks"
+- "lowest child networks"
+- "child network revenue"
+- "child network health"
+- "child networks with low fill rate"
+- "child networks needing optimization"
+
+→ ALWAYS call the `getChildNetworkAnalytics` tool.
+→ Pass `metric` based on what the user is sorting by (revenue, fill_rate, match_rate, etc.)
+→ Display: Per-child-network table with Revenue, Impressions, Fill Rate, Match Rate, eCPM, CTR, Health Status.
+→ Include the comparison summary (winner / lowest / average) at the end.
+→ Include anomaly alerts if present.
+
+==================================================
+MATCH RATE ANALYTICS  [NEW — ADDITIVE]
+==================================================
+
+Match Rate Definition: Matched Ad Requests ÷ Total Ad Requests × 100
+
+When the user asks about match rate by a dimension:
+- "match rate by app" → call `getMatchRateAnalytics` with dimension=app
+- "match rate by website" → call `getMatchRateAnalytics` with dimension=website
+- "match rate by child network" → call `getMatchRateAnalytics` with dimension=child_network
+- "apps with low match rate" → call `getMatchRateAnalytics` with dimension=app
+- "highest match rate website" → call `getMatchRateAnalytics` with dimension=website
+- "match rate below 60%" → call `getMatchRateAnalytics` with dimension=app
+
+When the user asks about network-wide match rate:
+→ Call `getNetworkSummary` (match_rate_pct is included).
+
+When the user asks about match rate for a specific app/website:
+→ Use existing `query_gam_data` with metric=match_rate and appropriate dimension + filter_name.
+
+Display match rate results as:
+| Rank | Name | Match Rate | Fill Rate | Ad Requests | Impressions | Revenue |
+
+==================================================
+NETWORK HEALTH SCORING  [NEW — ADDITIVE]
+==================================================
+
+Health statuses for networks and child networks:
+- 🟢 Excellent  — Score ≥ 85 (fill rate > 90%, match rate > 70%)
+- 🟢 Healthy    — Score ≥ 65 (fill rate > 70%, match rate > 50%)
+- 🟡 Warning    — Score ≥ 40 (fill rate 40–70%, match rate 30–50%)
+- 🔴 Critical   — Score ≥ 15 (fill rate < 40%, match rate < 30%)
+- ⚫ Offline    — Score < 15 or zero impressions + zero requests
+
+==================================================
+AUTOMATIC INSIGHTS  [NEW — ADDITIVE]
+==================================================
+
+After every Network Summary or Child Network report, include:
+
+**💪 Strengths**
+[Pre-computed by backend]
+
+**⚠️ Weaknesses**
+[Pre-computed by backend]
+
+**🚨 Risk Areas**
+[Pre-computed by backend]
+
+**🔧 Optimization Opportunities**
+[Pre-computed by backend]
+
+**💰 Revenue Opportunities**
+[Pre-computed by backend]
+
+==================================================
+ANOMALY DETECTION  [NEW — ADDITIVE]
+==================================================
+
+The backend will automatically include an `anomalies` list in the tool result
+when any of the following are detected:
+
+- Revenue = 0 but impressions > 0 → "zero_revenue" (Critical)
+- Impressions = 0 but requests > 1000 → "zero_fill" (Critical)
+- Fill rate < 20% → "low_fill_rate" (Warning)
+- Match rate < 20% → "low_match_rate" (Warning)
+- CTR > 15% → "ctr_spike" — possible invalid traffic (Warning)
+
+When `anomalies` is present in the tool result, ALWAYS surface them as:
+
+**⚠️ Anomalies Detected**
+- [anomaly message 1]
+- [anomaly message 2]
+
+==================================================
+TOOL ROUTING REFERENCE  [NEW — ADDITIVE]
+==================================================
+
+| User intent | Tool to call |
+|---|---|
+| Network summary / health | getNetworkSummary |
+| Child network breakdown | getChildNetworkAnalytics |
+| Match rate by dimension | getMatchRateAnalytics |
+| Revenue / impressions / fill rate by app | query_gam_data (existing) |
+| Website inventory / health | getWebsiteInventory (existing) |
+| In-session aggregation | query_data (existing) |
+
+CRITICAL: Never mix tools. If the user asks about child networks, use getChildNetworkAnalytics — not query_gam_data.
+
+"""
 
 # ─── Live GAM Query for Chat ─────────────────────────────────────────────────
 
@@ -1965,6 +2103,136 @@ def _make_tool_executor(cached_df):
                 input_dict.get("filters"),
                 int(input_dict.get("limit", 10)),
             )
+
+        # ── NEW TOOLS (additive) ─────────────────────────────────────────────────
+
+        if tool_name == "getNetworkSummary":
+            start_raw  = input_dict.get("start_date", "").strip()
+            end_raw    = input_dict.get("end_date",   "").strip()
+            inc_insights = input_dict.get("include_insights", True)
+
+            today = date.today()
+            if not start_raw:
+                start_raw = today.replace(month=1, day=1).isoformat()
+            if not end_raw:
+                end_raw = today.isoformat()
+
+            try:
+                start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
+            except Exception as e:
+                return {"error": f"Invalid date format: {e}"}
+
+            try:
+                df = await gam.get_live_data_multi_day(
+                    start_date, end_date, force_refresh=True, demand_channel="all"
+                )
+            except Exception as e:
+                log.error("[Chat:getNetworkSummary] GAM fetch failed: %s", e)
+                return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
+
+            summary = compute_network_summary(df, gam.network_code, start_date, end_date)
+
+            if inc_insights:
+                anomalies = compute_anomalies_from_df(df)
+                insights  = compute_automatic_insights(summary)
+                summary["anomalies"] = anomalies[:8]
+                summary["insights"]  = insights
+
+            log_payload_stats("getNetworkSummary", summary)
+            return guard_payload_size(summary, "revenue")
+
+        if tool_name == "getChildNetworkAnalytics":
+            start_raw = input_dict.get("start_date", "").strip()
+            end_raw   = input_dict.get("end_date",   "").strip()
+            metric    = input_dict.get("metric", "revenue")
+            limit     = min(int(input_dict.get("limit", 15)), 25)
+            filter_nc = input_dict.get("filter_network", "")
+
+            today = date.today()
+            if not start_raw:
+                start_raw = today.replace(month=1, day=1).isoformat()
+            if not end_raw:
+                end_raw = today.isoformat()
+
+            try:
+                start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
+            except Exception as e:
+                return {"error": f"Invalid date format: {e}"}
+
+            # Safety cap
+            MAX_DAYS = 30
+            if (end_date - start_date).days > MAX_DAYS:
+                start_date = end_date - timedelta(days=MAX_DAYS)
+
+            try:
+                df = await gam.get_live_data_multi_day(
+                    start_date, end_date,
+                    force_refresh=True,
+                    demand_channel="all",
+                    extra_dims=["CHILD_NETWORK_CODE"],
+                )
+            except Exception as e:
+                log.error("[Chat:getChildNetworkAnalytics] GAM fetch failed: %s", e)
+                return {"error": f"Failed to fetch child network data from Google Ad Manager: {e}"}
+
+            result = compute_child_network_analytics(
+                df, start_date, end_date,
+                metric=metric, limit=limit, filter_network=filter_nc,
+            )
+
+            # Add comparison if multiple child networks exist
+            cn_list = result.get("child_networks", [])
+            if len(cn_list) > 1:
+                comparison = compare_entities(cn_list, metric, "child_network")
+                result["comparison"] = {
+                    "metric": metric,
+                    "winner": comparison.get("winner", {}).get("child_network_code", "N/A"),
+                    "lowest": comparison.get("lowest", {}).get("child_network_code", "N/A"),
+                    "average": comparison.get("average"),
+                }
+
+            log_payload_stats("getChildNetworkAnalytics", result)
+            return guard_payload_size(result, metric)
+
+        if tool_name == "getMatchRateAnalytics":
+            start_raw   = input_dict.get("start_date", "").strip()
+            end_raw     = input_dict.get("end_date",   "").strip()
+            dimension   = input_dict.get("dimension", "app")
+            filter_name = input_dict.get("filter_name", "")
+            limit       = int(input_dict.get("limit", 15))
+
+            today = date.today()
+            if not start_raw:
+                start_raw = today.replace(month=1, day=1).isoformat()
+            if not end_raw:
+                end_raw = today.isoformat()
+
+            try:
+                start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
+            except Exception as e:
+                return {"error": f"Invalid date format: {e}"}
+
+            # For child_network dimension, add CHILD_NETWORK_CODE dim
+            extra_dims = ["CHILD_NETWORK_CODE"] if dimension == "child_network" else None
+
+            try:
+                df = await gam.get_live_data_multi_day(
+                    start_date, end_date,
+                    force_refresh=True,
+                    demand_channel="all",
+                    extra_dims=extra_dims,
+                )
+            except Exception as e:
+                log.error("[Chat:getMatchRateAnalytics] GAM fetch failed: %s", e)
+                return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
+
+            result = compute_match_rate_analytics(
+                df, dimension, start_date, end_date,
+                filter_name=filter_name, limit=limit,
+            )
+
+            log_payload_stats("getMatchRateAnalytics", result)
+            return guard_payload_size(result, "match_rate")
 
         return {"error": f"Unknown tool: {tool_name}"}
 

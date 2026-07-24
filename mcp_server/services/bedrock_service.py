@@ -343,6 +343,153 @@ def get_query_data_tool_spec() -> dict:
     }
 
 
+# ─── NEW TOOL SPECS (Additive) ────────────────────────────────────────────────
+
+def get_network_summary_tool_spec() -> dict:
+    """Tool spec for getNetworkSummary — live network-level intelligence."""
+    return {
+        "toolSpec": {
+            "name": "getNetworkSummary",
+            "description": (
+                "Fetch a live network-wide performance summary from Google Ad Manager. "
+                "Use when the user asks about 'network summary', 'network performance', "
+                "'show network', 'network health', 'my network stats', 'overall network', "
+                "or when they type a specific network code like 'network 12345678'. "
+                "Returns revenue, impressions, fill rate, match rate, eCPM, health status, "
+                "anomalies, and automatic insights."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {
+                            "type": "string",
+                            "description": "Start date YYYY-MM-DD. Defaults to YTD start.",
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "End date YYYY-MM-DD. Defaults to today.",
+                        },
+                        "network_code": {
+                            "type": "string",
+                            "description": (
+                                "Optional specific network code. Leave blank for your own network. "
+                                "Child network codes can be queried via getChildNetworkAnalytics."
+                            ),
+                        },
+                        "include_insights": {
+                            "type": "boolean",
+                            "description": "If true, include automatic insights and anomaly detection. Default true.",
+                        },
+                    },
+                    "required": ["start_date", "end_date"],
+                }
+            },
+        }
+    }
+
+
+def get_child_network_analytics_tool_spec() -> dict:
+    """Tool spec for getChildNetworkAnalytics — MCM child network breakdown."""
+    return {
+        "toolSpec": {
+            "name": "getChildNetworkAnalytics",
+            "description": (
+                "Fetch a live breakdown of all MCM child network performance from Google Ad Manager. "
+                "Use when the user asks about 'child networks', 'MCM', 'all child networks', "
+                "'child network analytics', 'list child networks', 'compare child networks', "
+                "'child network revenue', 'top child networks', 'lowest child networks', "
+                "'child network health', 'child networks with low fill rate', "
+                "or 'child networks needing optimization'. "
+                "Returns per-child-network metrics including revenue, impressions, fill rate, "
+                "match rate, eCPM, CTR, health status, and anomaly detection."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {
+                            "type": "string",
+                            "description": "Start date YYYY-MM-DD.",
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "End date YYYY-MM-DD.",
+                        },
+                        "metric": {
+                            "type": "string",
+                            "enum": ["revenue", "impressions", "fill_rate", "match_rate",
+                                     "ecpm", "ctr", "ad_requests", "clicks"],
+                            "description": "Metric to sort child networks by. Default: revenue.",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max child networks to return (default 15, max 25).",
+                        },
+                        "filter_network": {
+                            "type": "string",
+                            "description": "Optional: filter to a specific child network code or name fragment.",
+                        },
+                    },
+                    "required": ["start_date", "end_date"],
+                }
+            },
+        }
+    }
+
+
+def get_match_rate_analytics_tool_spec() -> dict:
+    """Tool spec for getMatchRateAnalytics — match rate breakdown by dimension."""
+    return {
+        "toolSpec": {
+            "name": "getMatchRateAnalytics",
+            "description": (
+                "Fetch a live match rate breakdown by a specified dimension from Google Ad Manager. "
+                "Match Rate = Matched Ad Requests / Total Ad Requests × 100. "
+                "Use when the user asks about 'match rate by app', 'match rate by website', "
+                "'match rate by country', 'apps with low match rate', 'highest match rate website', "
+                "'match rate trend', or 'match rate below X%'. "
+                "For network-wide match rate use getNetworkSummary instead. "
+                "Returns ranked list of entities with their match rate, fill rate, and impressions."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {
+                            "type": "string",
+                            "description": "Start date YYYY-MM-DD.",
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "End date YYYY-MM-DD.",
+                        },
+                        "dimension": {
+                            "type": "string",
+                            "enum": ["app", "ad_unit", "website", "child_network"],
+                            "description": (
+                                "Dimension to break down match rate by. "
+                                "'app'/'ad_unit' = per mobile app placement. "
+                                "'website' = per website domain. "
+                                "'child_network' = per MCM child network."
+                            ),
+                        },
+                        "filter_name": {
+                            "type": "string",
+                            "description": "Optional: filter to a specific entity name.",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max rows to return (default 15).",
+                        },
+                    },
+                    "required": ["start_date", "end_date"],
+                }
+            },
+        }
+    }
+
+
 # ─── Message Builder ──────────────────────────────────────────────────────────
 
 def build_bedrock_messages(history: list[dict], new_message: str) -> list[dict]:
@@ -576,9 +723,13 @@ async def stream_bedrock_response(
             "messages": msgs,
             "toolConfig": {
                 "tools": [
-                    get_query_gam_data_tool_spec(),    # PRIMARY: live GAM queries
-                    get_website_inventory_tool_spec(), # WEBSITE INVENTORY: full website reports
-                    get_query_data_tool_spec(),        # SECONDARY: in-session aggregations
+                    get_query_gam_data_tool_spec(),         # PRIMARY: live GAM queries
+                    get_website_inventory_tool_spec(),      # WEBSITE INVENTORY: full website reports
+                    get_query_data_tool_spec(),             # SECONDARY: in-session aggregations
+                    # ── NEW TOOLS (additive) ──────────────────────────────────
+                    get_network_summary_tool_spec(),        # NETWORK: summary + health + insights
+                    get_child_network_analytics_tool_spec(),# MCM: child network breakdown
+                    get_match_rate_analytics_tool_spec(),   # MATCH RATE: by dimension
                 ]
             },
         }
