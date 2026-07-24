@@ -81,8 +81,8 @@ export async function fetchExecutiveSummary(
       fillRate = 98.2;
     }
 
-    // Calculate DAU based on live impressions if we had to infer requests
-    const dau = Number(res.daily_active_users ?? Math.round(imp / 4.2));
+    // Calculate DAU based on inferred or actual ad requests to match backend logic
+    const dau = Number(res.daily_active_users ?? (adRequests > 0 ? Math.round(adRequests / 5) : 0));
 
     const summary: BISummaryKPI[] = [
       {
@@ -464,7 +464,7 @@ export async function fetchFullReport(
           fillRate = 98.2;
         }
 
-        const dau = Number(s.daily_active_users ?? Math.round(imp / 4.2));
+        const dau = Number(s.daily_active_users ?? (adReq > 0 ? Math.round(adReq / 5) : 0));
 
         return [
           { label: "Total Revenue",      value: Number(s.total_revenue_usd ?? 0), formatted: fmtUSD(Number(s.total_revenue_usd ?? 0)),   previousValue: 0, changePct: 0, direction: "flat" as const, sparkline: [] },
