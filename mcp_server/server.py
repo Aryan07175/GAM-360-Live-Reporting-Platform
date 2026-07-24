@@ -1065,50 +1065,6 @@ No revenue
 Critical performance loss
 
 ==================================================
-DATA QUALITY VALIDATION
-==================================================
-
-Validate every website.
-
-If:
-
-Revenue > 0
-AND
-Ad Requests = 0
-
-Raise:
-
-DATA QUALITY ALERT
-
-If:
-
-Revenue > 0
-AND
-Impressions = 0
-
-Raise:
-
-DATA QUALITY ALERT
-
-If:
-
-Revenue > 0
-AND
-Clicks = 0
-
-Raise:
-
-DATA QUALITY ALERT
-
-If:
-
-Impressions > Requests
-
-Flag inconsistency.
-
-Never fabricate values.
-
-==================================================
 QUICK RESPONSE MODE
 ==================================================
 
