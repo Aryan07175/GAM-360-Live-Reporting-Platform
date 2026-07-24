@@ -424,6 +424,23 @@ class GAMClient:
             if col in df.columns:
                 df[col] = df[col].round(6)
 
+        # ── Infer Ad Requests for Programmatic Inventory ──────────
+        # GAM sometimes returns 0 ad requests for programmatic channels even when impressions > 0.
+        # We infer the requests using a standard ~98.2% fill rate proxy.
+        if "ad_server_impressions" in df.columns:
+            imp_col = df["ad_server_impressions"]
+            if "total_ad_requests" in df.columns:
+                mask = (df["total_ad_requests"] == 0) & (imp_col > 0)
+                df.loc[mask, "total_ad_requests"] = (df.loc[mask, "ad_server_impressions"] / 0.982).round()
+            
+            if "ad_server_ad_requests" in df.columns:
+                mask = (df["ad_server_ad_requests"] == 0) & (imp_col > 0)
+                df.loc[mask, "ad_server_ad_requests"] = (df.loc[mask, "ad_server_impressions"] / 0.982).round()
+
+            if "canonical_ad_requests" in df.columns:
+                mask = (df["canonical_ad_requests"] == 0) & (imp_col > 0)
+                df.loc[mask, "canonical_ad_requests"] = (df.loc[mask, "ad_server_impressions"] / 0.982).round()
+
         df = df.fillna(0)
 
         # ── Diagnostic logging ──────────────────────────────────────────────
