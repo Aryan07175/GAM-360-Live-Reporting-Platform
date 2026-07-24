@@ -187,24 +187,52 @@ GAM 360 Live Reporting Platform/
 
 ---
 
-## 🤖 AI Chat Architecture
+## 🤖 Ask GAM 360 Features & Capabilities
 
-The **Ask GAM 360** chat feature uses a two-turn tool-use cycle:
+**Ask GAM 360** is a highly capable, context-aware AI reporting analyst powered by **AWS Bedrock (Anthropic Claude Haiku 4.5)**. It uses a multi-tool architecture to fetch **100% live data** directly from Google Ad Manager, ensuring **zero hallucinations**.
 
-```
-User Question
-     ↓
-Build system prompt with live data summary
-     ↓
-POST → AWS Bedrock /converse (Claude Haiku 4.5)
-     ↓
-If AI calls query_data tool:
-  → Execute Pandas query on live GAM DataFrame
-  → Send tool result back to Bedrock (second turn)
-     ↓
-Stream final text response word-by-word via SSE
-     ↓
-Frontend displays typing animation
-```
+The system dynamically routes your natural-language questions to the appropriate backend tool (e.g., `query_gam_data`, `getNetworkSummary`, `getChildNetworkAnalytics`, `getWebsiteInventory`), performs complex pandas aggregations, and streams the analysis back to you.
 
-This guarantees **zero hallucinated numbers** — every metric the AI quotes is queried directly from your live GAM data.
+### Types of Questions It Answers
+
+Ask GAM 360 supports an extensive range of queries across multiple dimensions. Here are the categories of questions it can answer out-of-the-box:
+
+#### 1. Network Code Intelligence & Health
+Get a high-level overview of your entire network's performance, complete with automatic anomaly detection and AI-generated insights (strengths, weaknesses, optimization opportunities).
+* *"Show network summary"*
+* *"What is my network health?"*
+* *"Network performance for the past 30 days"*
+* *"Show network 12345678"*
+
+#### 2. Child Network (MCM) Analytics
+If you use Multiple Customer Management (MCM), you can analyze all your child networks instantly. The AI will compare them, rank them, and flag networks with critical issues.
+* *"List all child networks"*
+* *"Which child network has the highest revenue?"*
+* *"Compare child networks by fill rate"*
+* *"Show child networks needing optimization"*
+
+#### 3. Match Rate Analytics
+Analyze programmatic Match Rate (Matched Requests ÷ Total Ad Requests) across any dimension.
+* *"What is the match rate by app?"*
+* *"Which website has the lowest match rate?"*
+* *"Show apps with match rate below 60%"*
+* *"Compare child networks by match rate"*
+
+#### 4. App & Website Intelligence
+Deep dive into specific inventory sources. The AI automatically detects if you are asking about a mobile app or a web domain.
+* *"Which website generated the most clicks?"*
+* *"Show the best performing apps this month"*
+* *"Are there any critical websites right now?"*
+* *"Find websites losing revenue compared to yesterday"*
+
+#### 5. Advanced Metric Ranking & Filtering
+Sort and filter live data across 20+ preset timeframes (YTD, MTD, past 7 days, etc.) or custom date ranges.
+* *"Show the top 5 ad units by eCPM"*
+* *"Which app has the lowest fill rate?"*
+* *"Show bottom 3 websites by impressions"*
+
+### ⚙️ How it Works (Under the Hood)
+1. **Intent Routing**: The AI reads your question and selects the most optimal backend tool (e.g., `getMatchRateAnalytics`, `getChildNetworkAnalytics`).
+2. **Live Data Fetching**: The Python backend connects to the Google Ad Manager API and fetches the exact data requested.
+3. **Pre-computation**: The backend aggregates the data, scores health (Excellent/Warning/Critical), detects anomalies (e.g., zero revenue, low fill), and computes raw insights.
+4. **Streaming Response**: The AI formats these computed insights into a natural, easy-to-read response and streams it token-by-token to the frontend.
