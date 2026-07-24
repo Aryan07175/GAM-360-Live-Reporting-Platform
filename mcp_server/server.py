@@ -3638,7 +3638,8 @@ async def lifespan(app):
 starlette_app = Starlette(
     debug=os.getenv("DEBUG", "false").lower() == "true",
     routes=[
-        Route("/health", endpoint=handle_health, methods=["GET"]),
+        Route("/", endpoint=handle_health, methods=["GET", "HEAD"]),
+        Route("/health", endpoint=handle_health, methods=["GET", "HEAD"]),
         Route("/sse", endpoint=handle_sse),
         Route("/messages/", endpoint=handle_messages, methods=["POST"]),
         Route("/api/tool", endpoint=handle_api_tool, methods=["POST", "OPTIONS"]),
