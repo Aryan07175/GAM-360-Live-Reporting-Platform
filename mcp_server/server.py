@@ -77,6 +77,18 @@ try:
 except ImportError:
     HAS_BEDROCK = False
 
+# Query Engine — analytics-first layer to keep Bedrock payloads small
+from mcp_server.services.query_engine import (
+    slim_rows,
+    slim_website_rows,
+    guard_payload_size,
+    compress_system_prompt,
+    log_payload_stats,
+    estimate_tokens,
+    MAX_ROWS_DEFAULT,
+    MAX_ROWS_TOP_N,
+)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("mcp_server")
 
@@ -1744,7 +1756,11 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
                     break
         if sort_col and sort_col in grouped.columns:
             grouped = grouped.sort_values(sort_col, ascending=False)
-        result["rows"] = sanitize_for_json(grouped.head(50).to_dict(orient="records"))
+        # ── Query Engine: slim rows to only metric-relevant columns ──────────
+        # Cap at MAX_ROWS_DEFAULT (15) — the LLM never needs 50 rows.
+        # slim_rows drops all columns the LLM doesn't need for this metric.
+        raw_rows = sanitize_for_json(grouped.head(MAX_ROWS_DEFAULT).to_dict(orient="records"))
+        result["rows"] = slim_rows(raw_rows, metric, max_rows=MAX_ROWS_DEFAULT)
 
     # ── Dimension breakdown ───────────────────────────────────────────────────
 
@@ -1853,6 +1869,12 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
             result["note"] = "country_name column not present in this report."
 
     # dimension="none": rows stays empty — totals only
+
+    # ── Query Engine: enforce payload size budget ────────────────────────────
+    # This is the final safety net — if rows are still too large, trim further.
+    result = guard_payload_size(result, metric)
+    log_payload_stats(f"query_gam_data/{dimension}/{metric}", result)
+
     log.info(
         "[Chat:query_gam_data] Done — %s to %s | %s=%s | %d rows",
         start_date, end_date, metric, scalar_total, len(result["rows"]),
@@ -2009,10 +2031,19 @@ async def handle_chat(request):
         # ── Build system prompt (includes today's date reference table) ────────
         system_prompt = build_chat_system_prompt(compact_summary)
 
-        # ── Build Bedrock message list (history + new message) ─────────────────
-        bedrock_messages = build_bedrock_messages(history, message)
+        # ── Query Engine: compress system prompt if it's too large ────────────
+        system_prompt = compress_system_prompt(system_prompt)
+        sys_tokens = estimate_tokens(system_prompt)
+        log.info("[Chat] system_prompt_tokens=%d", sys_tokens)
 
-        log.info("[Chat] session=%s message=%.80s...", cache_key, message)
+        # ── Build Bedrock message list — cap history at last 8 turns ──────────
+        # Each turn = 1 user + 1 assistant message. Keeping only 8 prevents
+        # long conversations from bloating the prompt context.
+        trimmed_history = history[-16:]  # 16 items = 8 turns (user+assistant each)
+        bedrock_messages = build_bedrock_messages(trimmed_history, message)
+
+        log.info("[Chat] session=%s history_turns=%d message=%.80s...",
+                 cache_key, len(trimmed_history) // 2, message)
 
         # ── Stream via the Bedrock service ────────────────────────────────────
         return StreamingResponse(
@@ -2273,11 +2304,19 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
     
     if not websites_list:
         return {"result": "No websites were returned by Google Ad Manager."}
-    
-    return {
+
+    # ── Query Engine: slim website rows ───────────────────────────────────
+    # Sort by revenue desc and cap at 15 before sending to LLM
+    websites_list.sort(key=lambda w: w.get("revenue", 0), reverse=True)
+    slimmed = slim_website_rows(websites_list, "revenue", max_rows=MAX_ROWS_DEFAULT)
+
+    result_payload = {
         "period": f"{start} to {end}",
-        "websites": websites_list,
+        "total_websites": len(websites_list),
+        "active_websites": sum(1 for w in websites_list if w["status"] != "Offline"),
+        "top_websites": slimmed,
     }
+    return guard_payload_size(result_payload, "revenue")
 
 
 def _compute_website_performance(df: pd.DataFrame, start: date, end: date) -> dict:
@@ -2320,10 +2359,14 @@ def _compute_website_performance(df: pd.DataFrame, start: date, end: date) -> di
             "revenue": round(rev, 6)
         })
     
-    return {
+    sorted_perf = sorted(websites_perf, key=lambda x: x["revenue"], reverse=True)
+    slimmed = slim_website_rows(sorted_perf, "revenue", max_rows=MAX_ROWS_DEFAULT)
+    result_payload = {
         "period": f"{start} to {end}",
-        "performance": sorted(websites_perf, key=lambda x: x["revenue"], reverse=True)
+        "total_websites": len(sorted_perf),
+        "performance": slimmed,
     }
+    return guard_payload_size(result_payload, "revenue")
 
 
 def _compute_website_health(df: pd.DataFrame, start: date, end: date) -> dict:
@@ -2382,13 +2425,15 @@ def _compute_top_websites(df: pd.DataFrame, start: date, end: date, metric: str 
     elif metric_key in ["ecpm"]: metric_key = "ecpm"
     else: metric_key = "revenue" # Default
     
-    sorted_websites = sorted(perf["performance"], key=lambda x: x.get(metric_key, 0), reverse=True)
-    
-    return {
+    sorted_websites = sorted(perf.get("performance", []), key=lambda x: x.get(metric_key, 0), reverse=True)
+    slimmed = slim_website_rows(sorted_websites[:limit], metric_key, max_rows=MAX_ROWS_TOP_N)
+    result_payload = {
         "period": f"{start} to {end}",
         "metric": metric_key,
-        "websites": sorted_websites[:limit]
+        "ranking": "top",
+        "websites": slimmed,
     }
+    return guard_payload_size(result_payload, metric_key)
 
 
 def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: str = "revenue", limit: int = 10) -> dict:
@@ -2407,13 +2452,15 @@ def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: s
     elif metric_key in ["ecpm"]: metric_key = "ecpm"
     else: metric_key = "revenue"
     
-    sorted_websites = sorted(perf["performance"], key=lambda x: x.get(metric_key, 0), reverse=False)
-    
-    return {
+    sorted_websites = sorted(perf.get("performance", []), key=lambda x: x.get(metric_key, 0), reverse=False)
+    slimmed = slim_website_rows(sorted_websites[:limit], metric_key, max_rows=MAX_ROWS_TOP_N)
+    result_payload = {
         "period": f"{start} to {end}",
         "metric": metric_key,
-        "websites": sorted_websites[:limit]
+        "ranking": "bottom",
+        "websites": slimmed,
     }
+    return guard_payload_size(result_payload, metric_key)
 
 
 def _compute_website_trend(df: pd.DataFrame, start: date, end: date, interval: str = "daily") -> dict:
