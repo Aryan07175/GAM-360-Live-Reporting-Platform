@@ -260,12 +260,36 @@ def compute_child_network_analytics(
         (c for c in ["child_network_code", "network_code"] if c in df.columns),
         None,
     )
+
+    # ── Fallback: no MCM child network column present ─────────────────────────
+    # This network is not an MCM parent (or has no registered child networks).
+    # Fall back gracefully: group by top-level ad unit name and return as
+    # "inventory segments" — giving a useful answer instead of an error.
+    is_fallback = False
     if cn_col is None:
-        return {
-            "period": f"{start} to {end}",
-            "error": "Child network dimension not present in report. "
-                     "Use dimension='child_network' in query_gam_data.",
-        }
+        if "ad_unit_name" not in df.columns:
+            return {
+                "period": f"{start} to {end}",
+                "mcm_available": False,
+                "note": (
+                    "This GAM 360 account does not have MCM child networks. "
+                    "Showing top-level inventory breakdown instead."
+                ),
+                "segments": [],
+            }
+        is_fallback = True
+        # Extract top-level segment from ad_unit_name (first path component)
+        df = df.copy()
+        def _top_level(name):
+            if not isinstance(name, str):
+                return str(name)
+            # Strip leading network prefix (e.g. "22997400926_")
+            parts = name.split("_", 1)
+            name = parts[-1] if len(parts) > 1 and parts[0].isdigit() else name
+            # Return the first path component
+            return name.split("/")[0].strip()
+        df["_segment"] = df["ad_unit_name"].apply(_top_level)
+        cn_col = "_segment"
 
     agg_cols = {}
     for col in [
@@ -326,8 +350,10 @@ def compute_child_network_analytics(
             "ad_requests": req,
         })
 
+        # Use 'name' key in fallback mode (top-level ad unit), 'child_network_code' for MCM
+        entry_key = "name" if is_fallback else "child_network_code"
         networks.append({
-            "child_network_code": code,
+            entry_key: code,
             "revenue_usd": round(rev, 2),
             "impressions": imp,
             "clicks": clk,
@@ -357,20 +383,36 @@ def compute_child_network_analytics(
 
     total_networks = len(networks)
     top_n = networks[:limit]
-
-    # Compute anomalies across all child networks
+    # Compute anomalies
     anomalies = []
+    entry_key = "name" if is_fallback else "child_network_code"
     for n in networks:
-        anomalies.extend(_detect_entity_anomalies(n, label=f"Child network {n['child_network_code']}"))
+        label = f"Segment {n.get(entry_key, '?')}" if is_fallback else f"Child network {n.get(entry_key, '?')}"
+        anomalies.extend(_detect_entity_anomalies(n, label=label))
 
-    result = {
-        "period": f"{start} to {end}",
-        "total_child_networks": total_networks,
-        "metric_sorted_by": sort_key,
-        "child_networks": top_n,
-    }
+    if is_fallback:
+        result = {
+            "period": f"{start} to {end}",
+            "mcm_available": False,
+            "note": (
+                "This GAM 360 account does not have MCM child networks configured. "
+                "Showing top-level inventory segments instead (grouped by ad unit root)."
+            ),
+            "total_segments": total_networks,
+            "metric_sorted_by": sort_key,
+            "segments": top_n,
+        }
+    else:
+        result = {
+            "period": f"{start} to {end}",
+            "mcm_available": True,
+            "total_child_networks": total_networks,
+            "metric_sorted_by": sort_key,
+            "child_networks": top_n,
+        }
+
     if anomalies:
-        result["anomalies"] = anomalies[:10]  # cap at 10 for token budget
+        result["anomalies"] = anomalies[:10]
 
     return result
 
