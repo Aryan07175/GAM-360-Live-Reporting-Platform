@@ -3575,6 +3575,57 @@ async def list_tools() -> list[types.Tool]:
                 }
             }
         ),
+        # ── PHASE 6: YIELD & PROGRAMMATIC TOOLS ───────────────────────────
+        types.Tool(
+            name="getYieldGroups",
+            description="Fetch Open Bidding and Mediation Yield Groups from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Optional search string to filter yield groups by name."},
+                    "type_filter": {"type": "string", "description": "Optional integration type filter ('OPEN_BIDDING' or 'MEDIATION')."},
+                    "format_filter": {"type": "string", "description": "Optional inventory format filter ('BANNER', 'INTERSTITIAL', 'NATIVE', 'VIDEO', 'REWARDED')."},
+                    "limit": {"type": "integer", "description": "Maximum number of yield groups to return (default 50)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getPricingRules",
+            description="Fetch Unified Pricing Rules and Ad Rules from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Optional search string to filter pricing rules by name."},
+                    "status_filter": {"type": "string", "description": "Optional status filter ('ACTIVE' or 'INACTIVE')."},
+                    "limit": {"type": "integer", "description": "Maximum number of pricing rules to return (default 50)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getProgrammaticDeals",
+            description="Fetch Programmatic Guaranteed, Preferred Deals, and Private Auctions from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Optional search string to filter programmatic deals by name."},
+                    "deal_type": {"type": "string", "description": "Optional deal type filter ('PREFERRED_DEAL', 'PRIVATE_AUCTION', 'PROGRAMMATIC_GUARANTEED', 'STANDARD', 'SPONSORSHIP')."},
+                    "status_filter": {"type": "string", "description": "Optional status filter ('APPROVED', 'DRAFT', 'FINALIZED', 'RESERVED')."},
+                    "limit": {"type": "integer", "description": "Maximum number of deals to return (default 50)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getYieldAnalytics",
+            description="Analyze Monetization and Yield across Demand Channels, Open Bidding Yield Groups, or Programmatic Channels.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                    "breakdown": {"type": "string", "description": "Dimension to break down by ('demand_channel', 'yield_group', or 'programmatic_channel', default 'demand_channel')."}
+                }
+            }
+        ),
     ]
 
 
@@ -3689,6 +3740,41 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 e_date,
                 int(arguments.get("limit", 20)),
                 arguments.get("metric", "revenue")
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getYieldGroups":
+            res = await asyncio.to_thread(
+                gam.get_yield_groups,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+                arguments.get("type_filter"),
+                arguments.get("format_filter")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "yield_groups": res}, indent=2))]
+        if name == "getPricingRules":
+            res = await asyncio.to_thread(
+                gam.get_pricing_rules,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+                arguments.get("status_filter")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "pricing_rules": res}, indent=2))]
+        if name == "getProgrammaticDeals":
+            res = await asyncio.to_thread(
+                gam.get_programmatic_deals,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+                arguments.get("deal_type"),
+                arguments.get("status_filter")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "deals": res}, indent=2))]
+        if name == "getYieldAnalytics":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(
+                gam.get_yield_analytics,
+                s_date,
+                e_date,
+                arguments.get("breakdown", "demand_channel")
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 

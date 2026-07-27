@@ -741,6 +741,142 @@ def get_advertiser_rankings_tool_spec() -> dict:
     }
 
 
+def get_yield_groups_tool_spec() -> dict:
+    """Bedrock tool spec for getYieldGroups."""
+    return {
+        "toolSpec": {
+            "name": "getYieldGroups",
+            "description": (
+                "Fetch Open Bidding and Mediation Yield Groups from Google Ad Manager. "
+                "Use this tool when the user asks about Open Bidding, yield groups, mediation, third-party demand partners, or yield integration status."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter yield groups by name."
+                        },
+                        "type_filter": {
+                            "type": "string",
+                            "description": "Optional integration type filter ('OPEN_BIDDING' or 'MEDIATION')."
+                        },
+                        "format_filter": {
+                            "type": "string",
+                            "description": "Optional inventory format filter ('BANNER', 'INTERSTITIAL', 'NATIVE', 'VIDEO', 'REWARDED')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of yield groups to return (default 50)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_pricing_rules_tool_spec() -> dict:
+    """Bedrock tool spec for getPricingRules."""
+    return {
+        "toolSpec": {
+            "name": "getPricingRules",
+            "description": (
+                "Fetch Unified Pricing Rules and Ad Rules from Google Ad Manager. "
+                "Use this tool when the user asks about floor prices, target CPMs, unified pricing rules, frequency caps, or ad rules."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter pricing rules by name."
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Optional status filter ('ACTIVE' or 'INACTIVE')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of pricing rules to return (default 50)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_programmatic_deals_tool_spec() -> dict:
+    """Bedrock tool spec for getProgrammaticDeals."""
+    return {
+        "toolSpec": {
+            "name": "getProgrammaticDeals",
+            "description": (
+                "Fetch Programmatic Guaranteed, Preferred Deals, and Private Auctions from Google Ad Manager. "
+                "Use this tool when the user asks about programmatic deals, PG deals, preferred deals, private marketplace (PMP), programmatic buyers, or contracted impressions."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter programmatic deals by name."
+                        },
+                        "deal_type": {
+                            "type": "string",
+                            "description": "Optional deal type filter ('PREFERRED_DEAL', 'PRIVATE_AUCTION', 'PROGRAMMATIC_GUARANTEED', 'STANDARD', 'SPONSORSHIP')."
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Optional status filter ('APPROVED', 'DRAFT', 'FINALIZED', 'RESERVED')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of deals to return (default 50)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_yield_analytics_tool_spec() -> dict:
+    """Bedrock tool spec for getYieldAnalytics."""
+    return {
+        "toolSpec": {
+            "name": "getYieldAnalytics",
+            "description": (
+                "Analyze Monetization and Yield across Demand Channels, Open Bidding Yield Groups, or Programmatic Channels. "
+                "Use this tool when the user asks to compare Ad Exchange vs Open Bidding vs AdSense, demand channel performance, yield partner revenue, or programmatic auction breakdown."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {
+                            "type": "string",
+                            "description": "Start date in YYYY-MM-DD format."
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "End date in YYYY-MM-DD format."
+                        },
+                        "breakdown": {
+                            "type": "string",
+                            "description": "Dimension to break down by ('demand_channel', 'yield_group', or 'programmatic_channel', default 'demand_channel')."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 def get_query_data_tool_spec() -> dict:
     """Bedrock-compatible tool specification for the query_data tool (in-session aggregations)."""
     return {
@@ -1300,6 +1436,11 @@ async def stream_bedrock_response(
                     get_contacts_tool_spec(),
                     get_advertiser_analytics_tool_spec(),
                     get_advertiser_rankings_tool_spec(),
+                    # ── PHASE 6: YIELD & PROGRAMMATIC TOOLS ───────────────────
+                    get_yield_groups_tool_spec(),
+                    get_pricing_rules_tool_spec(),
+                    get_programmatic_deals_tool_spec(),
+                    get_yield_analytics_tool_spec(),
                     get_query_data_tool_spec(),             # SECONDARY: in-session aggregations
                     # ── NEW TOOLS (additive) ──────────────────────────────────
                     get_network_summary_tool_spec(),        # NETWORK: summary + health + insights
