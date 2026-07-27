@@ -724,3 +724,154 @@ class GAMClient:
                 "reportable_type": str(getattr(k, "reportableType", "")),
             })
         return results
+
+    # ── Phase 3: Enterprise Campaign & Delivery Intelligence Methods ─────────
+    @staticmethod
+    def _format_gam_dt(dt: Any) -> str:
+        if not dt or not hasattr(dt, "date") or not getattr(dt, "date", None):
+            return "Unlimited / None"
+        d = dt.date
+        return f"{getattr(d, 'year', 0):04d}-{getattr(d, 'month', 0):02d}-{getattr(d, 'day', 0):02d} {getattr(dt, 'hour', 0):02d}:{getattr(dt, 'minute', 0):02d} ({getattr(dt, 'timeZoneId', '')})"
+
+    def get_orders(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        status_filter: str = None,
+        advertiser_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch Orders from OrderService."""
+        ord_service = self.client.GetService("OrderService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = []
+        if status_filter:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", status_filter.upper())
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if advertiser_id:
+            conditions.append("advertiserId = :adv_id")
+            sb.WithBindVariable("adv_id", int(advertiser_id))
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = ord_service.getOrdersByStatement(sb.ToStatement())
+        results = []
+        for o in getattr(res, "results", []):
+            budget_obj = getattr(o, "totalBudget", None)
+            budget_amt = getattr(budget_obj, "microAmount", 0) / 1000000.0 if budget_obj else 0.0
+            currency = getattr(budget_obj, "currencyCode", "USD") if budget_obj else getattr(o, "currencyCode", "USD")
+            results.append({
+                "id": str(getattr(o, "id", "")),
+                "name": str(getattr(o, "name", "")),
+                "advertiser_id": str(getattr(o, "advertiserId", "")),
+                "status": str(getattr(o, "status", "")),
+                "total_budget": f"{budget_amt:.2f} {currency}",
+                "impressions_delivered": int(getattr(o, "totalImpressionsDelivered", None) or 0),
+                "clicks_delivered": int(getattr(o, "totalClicksDelivered", None) or 0),
+                "viewable_impressions_delivered": int(getattr(o, "totalViewableImpressionsDelivered", None) or 0),
+                "start_date_time": self._format_gam_dt(getattr(o, "startDateTime", None)),
+                "end_date_time": self._format_gam_dt(getattr(o, "endDateTime", None)),
+                "is_programmatic": bool(getattr(o, "isProgrammatic", False)),
+            })
+        return results
+
+    def get_line_items(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        order_id: str = None,
+        status_filter: str = None,
+        type_filter: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch Line Items from LineItemService."""
+        li_service = self.client.GetService("LineItemService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = []
+        if status_filter:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", status_filter.upper())
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if order_id:
+            conditions.append("orderId = :oid")
+            sb.WithBindVariable("oid", int(order_id))
+        if type_filter:
+            conditions.append("lineItemType = :ltype")
+            sb.WithBindVariable("ltype", type_filter.upper())
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = li_service.getLineItemsByStatement(sb.ToStatement())
+        results = []
+        for li in getattr(res, "results", []):
+            stats_obj = getattr(li, "stats", None)
+            cpu_obj = getattr(li, "costPerUnit", None)
+            cpu_amt = getattr(cpu_obj, "microAmount", 0) / 1000000.0 if cpu_obj else 0.0
+            currency = getattr(cpu_obj, "currencyCode", "USD") if cpu_obj else "USD"
+            budget_obj = getattr(li, "budget", None)
+            budget_amt = getattr(budget_obj, "microAmount", 0) / 1000000.0 if budget_obj else 0.0
+            results.append({
+                "id": str(getattr(li, "id", "")),
+                "name": str(getattr(li, "name", "")),
+                "order_id": str(getattr(li, "orderId", "")),
+                "order_name": str(getattr(li, "orderName", "")),
+                "status": str(getattr(li, "status", "")),
+                "line_item_type": str(getattr(li, "lineItemType", "")),
+                "priority": int(getattr(li, "priority", None) or 0),
+                "cost_type": str(getattr(li, "costType", "")),
+                "rate": f"{cpu_amt:.2f} {currency}",
+                "budget": f"{budget_amt:.2f} {currency}",
+                "contracted_units_bought": int(getattr(li, "contractedUnitsBought", None) or 0),
+                "impressions_delivered": int(getattr(stats_obj, "impressionsDelivered", None) or 0) if stats_obj else 0,
+                "clicks_delivered": int(getattr(stats_obj, "clicksDelivered", None) or 0) if stats_obj else 0,
+                "video_completions_delivered": int(getattr(stats_obj, "videoCompletionsDelivered", None) or 0) if stats_obj else 0,
+                "viewable_impressions_delivered": int(getattr(stats_obj, "viewableImpressionsDelivered", None) or 0) if stats_obj else 0,
+                "start_date_time": self._format_gam_dt(getattr(li, "startDateTime", None)),
+                "end_date_time": self._format_gam_dt(getattr(li, "endDateTime", None)),
+            })
+        return results
+
+    def get_delivery_progress(
+        self,
+        limit: int = 50,
+        order_id: str = None,
+        status_filter: str = "DELIVERING"
+    ) -> List[Dict[str, Any]]:
+        """Compute Delivery Progress and Pacing Diagnostics for Line Items."""
+        line_items = self.get_line_items(limit=limit, order_id=order_id, status_filter=status_filter)
+        diagnostics = []
+        for li in line_items:
+            contracted = li["contracted_units_bought"]
+            delivered = li["impressions_delivered"]
+            ltype = li["line_item_type"]
+            if contracted > 0:
+                delivery_pct = round((delivered / contracted) * 100.0, 2)
+                if delivery_pct < 85.0:
+                    pacing_status = "Under Pacing (< 85% of goal delivered)"
+                elif delivery_pct > 110.0:
+                    pacing_status = "Over Pacing (> 110% of goal delivered)"
+                else:
+                    pacing_status = "On Track (Optimal Pacing)"
+            else:
+                delivery_pct = 100.0 if delivered > 0 else 0.0
+                pacing_status = f"Programmatic / Share of Voice ({ltype} — no absolute unit cap)"
+            
+            diagnostics.append({
+                "line_item_id": li["id"],
+                "line_item_name": li["name"],
+                "order_name": li["order_name"],
+                "status": li["status"],
+                "type": ltype,
+                "priority": li["priority"],
+                "rate": li["rate"],
+                "contracted_units": contracted,
+                "delivered_impressions": delivered,
+                "delivered_clicks": li["clicks_delivered"],
+                "delivery_completion_pct": f"{delivery_pct}%",
+                "pacing_status": pacing_status,
+                "flight_end": li["end_date_time"]
+            })
+        return diagnostics

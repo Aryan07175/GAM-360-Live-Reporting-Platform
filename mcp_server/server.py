@@ -3450,6 +3450,45 @@ async def list_tools() -> list[types.Tool]:
                 }
             }
         ),
+        types.Tool(
+            name="getOrders",
+            description="Fetch LIVE Google Ad Manager Orders and Campaign budgets.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter orders by name."},
+                    "status_filter": {"type": "string", "description": "Filter by status (e.g., APPROVED, DRAFT, PAUSED)."},
+                    "advertiser_id": {"type": "string", "description": "Filter by Advertiser ID."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getLineItems",
+            description="Fetch LIVE Google Ad Manager Line Items, priority tiers, and cost configurations.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter line items by name."},
+                    "order_id": {"type": "string", "description": "Filter by Order ID."},
+                    "status_filter": {"type": "string", "description": "Filter by status (e.g., DELIVERING, PAUSED)."},
+                    "type_filter": {"type": "string", "description": "Filter by type (e.g., SPONSORSHIP, STANDARD, HOUSE, BULK)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getDeliveryProgress",
+            description="Fetch LIVE Campaign Delivery Progress and Pacing Diagnostics.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string", "description": "Filter diagnostics by Order ID."},
+                    "status_filter": {"type": "string", "description": "Status filter (default DELIVERING)."},
+                    "limit": {"type": "integer", "description": "Max results (default 50)."}
+                }
+            }
+        ),
     ]
 
 
@@ -3480,6 +3519,33 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 arguments.get("active_only", True)
             )
             return [types.TextContent(type="text", text=json.dumps({"count": len(res), "custom_targeting_keys": res}, indent=2))]
+        if name == "getOrders":
+            res = await asyncio.to_thread(
+                gam.get_orders,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("status_filter"),
+                arguments.get("advertiser_id")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "orders": res}, indent=2))]
+        if name == "getLineItems":
+            res = await asyncio.to_thread(
+                gam.get_line_items,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("order_id"),
+                arguments.get("status_filter"),
+                arguments.get("type_filter")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "line_items": res}, indent=2))]
+        if name == "getDeliveryProgress":
+            res = await asyncio.to_thread(
+                gam.get_delivery_progress,
+                int(arguments.get("limit", 50)),
+                arguments.get("order_id"),
+                arguments.get("status_filter", "DELIVERING")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "delivery_diagnostics": res}, indent=2))]
 
         start_date, end_date, start_hour, end_hour = _resolve_dates(arguments)
         force_refresh = arguments.get("force_refresh", False)

@@ -401,6 +401,114 @@ def get_custom_targeting_tool_spec() -> dict:
     }
 
 
+def get_orders_tool_spec() -> dict:
+    """Bedrock tool spec for getOrders."""
+    return {
+        "toolSpec": {
+            "name": "getOrders",
+            "description": (
+                "Fetch LIVE Google Ad Manager Orders and Campaign budgets. "
+                "Use this tool when the user asks about orders, campaign budgets, active campaigns, or order status."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter orders by name."
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Optional status filter (e.g., APPROVED, DRAFT, PAUSED, CANCELED, COMPLETED)."
+                        },
+                        "advertiser_id": {
+                            "type": "string",
+                            "description": "Optional Advertiser ID to filter orders."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of orders to return (default 100)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_line_items_tool_spec() -> dict:
+    """Bedrock tool spec for getLineItems."""
+    return {
+        "toolSpec": {
+            "name": "getLineItems",
+            "description": (
+                "Fetch LIVE Google Ad Manager Line Items, priority tiers, and cost configurations. "
+                "Use this tool when the user asks about line items, sponsorship deals, standard campaigns, house ads, price priority, bulk line items, or line item priority tiers."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter line items by name."
+                        },
+                        "order_id": {
+                            "type": "string",
+                            "description": "Optional Order ID to filter line items."
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Optional status filter (e.g., DELIVERING, PAUSED, READY, COMPLETED)."
+                        },
+                        "type_filter": {
+                            "type": "string",
+                            "description": "Optional line item type filter (e.g., SPONSORSHIP, STANDARD, HOUSE, PRICE_PRIORITY, BULK, NETWORK, AD_EXCHANGE)."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of line items to return (default 100)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_delivery_progress_tool_spec() -> dict:
+    """Bedrock tool spec for getDeliveryProgress."""
+    return {
+        "toolSpec": {
+            "name": "getDeliveryProgress",
+            "description": (
+                "Fetch LIVE Campaign Delivery Progress and Pacing Diagnostics. "
+                "Use this tool when the user asks about campaign pacing, under-delivering campaigns, delivery completion percentage, or whether campaigns are on track to meet their goals."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "order_id": {
+                            "type": "string",
+                            "description": "Optional Order ID to filter diagnostics."
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Status filter (default 'DELIVERING')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of diagnostics to return (default 50)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 def get_query_data_tool_spec() -> dict:
     """Bedrock-compatible tool specification for the query_data tool (in-session aggregations)."""
     return {
@@ -943,6 +1051,14 @@ async def stream_bedrock_response(
                     get_website_performance_tool_spec(),    # WEBSITE PERFORMANCE: metrics breakdown
                     get_website_health_tool_spec(),         # WEBSITE HEALTH: working vs critical
                     get_website_trend_tool_spec(),          # WEBSITE TREND: daily/weekly historical
+                    # ── PHASE 2: INVENTORY TOOLS ──────────────────────────────
+                    get_ad_unit_hierarchy_tool_spec(),
+                    get_placements_tool_spec(),
+                    get_custom_targeting_tool_spec(),
+                    # ── PHASE 3: CAMPAIGN TOOLS ───────────────────────────────
+                    get_orders_tool_spec(),
+                    get_line_items_tool_spec(),
+                    get_delivery_progress_tool_spec(),
                     get_query_data_tool_spec(),             # SECONDARY: in-session aggregations
                     # ── NEW TOOLS (additive) ──────────────────────────────────
                     get_network_summary_tool_spec(),        # NETWORK: summary + health + insights
