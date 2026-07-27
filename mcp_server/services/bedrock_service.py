@@ -109,7 +109,10 @@ def get_query_gam_data_tool_spec() -> dict:
                             "enum": [
                                 "none", "app", "ad_unit", "ad_unit_top",
                                 "website", "child_network",
-                                "advertiser", "advertiser_classified", "country"
+                                "advertiser", "advertiser_classified", "country",
+                                "placement", "device", "browser", "operating_system",
+                                "company", "order", "line_item", "creative", "yield_group",
+                                "date", "hour", "week", "month"
                             ],
                             "description": (
                                 "How to break down the result. "
@@ -121,6 +124,10 @@ def get_query_gam_data_tool_spec() -> dict:
                                 "'advertiser' = breakdown by advertiser name (uses separate report, no ad-unit split). "
                                 "'advertiser_classified' = breakdown by classified advertiser. "
                                 "'country' = breakdown by country name (uses separate report, no ad-unit split). "
+                                "'placement' = breakdown by placement name. "
+                                "'device'/'browser'/'operating_system' = tech/device breakdown. "
+                                "'company'/'order'/'line_item'/'creative'/'yield_group' = campaign/inventory entity breakdown. "
+                                "'date'/'hour'/'week'/'month' = time-series breakdown. "
                                 "Use 'advertiser' when user says 'by advertiser'. "
                                 "Use 'country' when user says 'by country'. "
                                 "Use 'ad_unit_top' when user says 'top-level ad units'."
@@ -164,6 +171,11 @@ def get_query_gam_data_tool_spec() -> dict:
                                 "total_active_view_viewable_impressions_rate",    # % viewable
                                 "total_active_view_average_viewable_time",        # avg viewable time (sec)
                                 "total_active_view_revenue",
+                                # --- Phase 1 Metrics ---
+                                "estimated_revenue", "gross_revenue", "net_revenue",
+                                "cpm", "cpc", "rpm", "viewability", "active_view",
+                                "unfilled_requests", "matched_requests",
+                                "video_metrics", "historical_trends",
                                 # --- BETA / UI-only metrics (returned as 'not available') ---
                                 "total_muted_impressions",
                                 "total_mute_eligible_impressions",
@@ -280,6 +292,107 @@ def get_website_inventory_tool_spec() -> dict:
                         "end_date": {
                             "type": "string",
                             "description": "End date in YYYY-MM-DD format (inclusive). Default is today if not specified."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_ad_unit_hierarchy_tool_spec() -> dict:
+    """Bedrock tool spec for getAdUnitHierarchy."""
+    return {
+        "toolSpec": {
+            "name": "getAdUnitHierarchy",
+            "description": (
+                "Fetch LIVE Google Ad Manager Ad Unit hierarchy and configuration. "
+                "Use this tool when the user asks about ad units, ad unit sizes, active/inactive ad units, "
+                "or parent/child ad unit relationships. Returns exact codes, sizes, status, and IDs."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter ad units by name (case-insensitive)."
+                        },
+                        "parent_id": {
+                            "type": "string",
+                            "description": "Optional parent Ad Unit ID to fetch only child ad units under that parent."
+                        },
+                        "active_only": {
+                            "type": "boolean",
+                            "description": "Whether to return only ACTIVE ad units (true by default). Set false to include INACTIVE or ARCHIVED."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of ad units to return (default 100, max 500)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_placements_tool_spec() -> dict:
+    """Bedrock tool spec for getPlacements."""
+    return {
+        "toolSpec": {
+            "name": "getPlacements",
+            "description": (
+                "Fetch LIVE Google Ad Manager Placements and their associated ad unit IDs. "
+                "Use this tool when the user asks about placements, ad unit groupings, or placement configurations."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter placements by name."
+                        },
+                        "active_only": {
+                            "type": "boolean",
+                            "description": "Whether to return only ACTIVE placements (true by default)."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of placements to return (default 100, max 500)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_custom_targeting_tool_spec() -> dict:
+    """Bedrock tool spec for getCustomTargeting."""
+    return {
+        "toolSpec": {
+            "name": "getCustomTargeting",
+            "description": (
+                "Fetch LIVE Google Ad Manager Custom Targeting Keys (predefined vs freeform keys and custom dimensions). "
+                "Use this tool when the user asks about key-value targeting, targeting keys, or custom dimensions."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter custom targeting keys by name."
+                        },
+                        "active_only": {
+                            "type": "boolean",
+                            "description": "Whether to return only ACTIVE keys (true by default)."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of keys to return (default 100, max 500)."
                         }
                     }
                 }

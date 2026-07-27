@@ -1495,6 +1495,13 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         if gam_dim_name in DIMENSIONS_NEED_SEPARATE_REPORT:
             separate_report = True
 
+    if metric in ("viewability", "active_view", "video_metrics", "gross_revenue", "total_revenue",
+                  "total_active_view_eligible_impressions", "total_active_view_measurable_impressions",
+                  "total_active_view_viewable_impressions", "total_active_view_measurable_impressions_rate",
+                  "total_active_view_viewable_impressions_rate", "total_active_view_average_viewable_time",
+                  "total_active_view_revenue", "drop_off_rate"):
+        separate_report = True
+
     log.info(
         "[Chat:query_gam_data] Fetching LIVE — %s to %s | dim=%s metric=%s channel=%s "
         "filter=%r extra_dims=%s separate=%s",
@@ -1577,6 +1584,19 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         "total_active_view_viewable_impressions_rate":     "total_active_view_viewable_impressions_rate",
         "total_active_view_average_viewable_time":         "total_active_view_average_viewable_time",
         "total_active_view_revenue":                       "total_active_view_revenue",
+        # --- Phase 1 Metrics ---
+        "estimated_revenue":                               "ad_server_cpm_and_cpc_revenue",
+        "gross_revenue":                                   "total_line_item_level_all_revenue",
+        "net_revenue":                                     "ad_server_cpm_and_cpc_revenue",
+        "cpm":                                             "cpm",
+        "cpc":                                             "cpc",
+        "rpm":                                             "rpm",
+        "viewability":                                     "total_active_view_viewable_impressions_rate",
+        "active_view":                                     "total_active_view_viewable_impressions",
+        "unfilled_requests":                               "unfilled_requests",
+        "matched_requests":                                "matched_requests",
+        "video_metrics":                                   "dropoff_rate",
+        "historical_trends":                               "ad_server_cpm_and_cpc_revenue",
     }
 
     # ── Compute network-wide totals ───────────────────────────────────────────
@@ -1703,6 +1723,20 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         "total_active_view_viewable_impressions_rate":     round(av_view_rate, 4),
         "total_active_view_average_viewable_time":         round(av_view_time, 4),
         "total_active_view_revenue":                       round(av_revenue, 6),
+        # --- Phase 1 Metrics ---
+        "estimated_revenue":                               round(total_rev, 6),
+        "gross_revenue":                                   round(total_all_rev, 6),
+        "net_revenue":                                     round(total_rev, 6),
+        "cpm":                                             round((total_rev / total_imp * 1000), 6) if total_imp > 0 else 0.0,
+        "cpc":                                             round((total_rev / total_clk), 6) if total_clk > 0 else 0.0,
+        "rpm":                                             round((total_rev / best_req * 1000), 6) if best_req > 0 else 0.0,
+        "viewability":                                     round(av_view_rate, 4),
+        "active_view":                                     av_viewable,
+        "unfilled_requests":                               true_unmatch,
+        "matched_requests":                                true_resp,
+        "invalid_traffic":                                 0.0,
+        "video_metrics":                                   round(dropoff, 4),
+        "historical_trends":                               round(total_rev, 6),
     }
     scalar_total = metric_total_map.get(metric, round(total_rev, 6))
 
@@ -1799,6 +1833,16 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         "total_av_viewable_rate_pct":           round(av_view_rate, 4),
         "total_av_average_viewable_time_sec":   round(av_view_time, 4),
         "total_av_revenue_usd":                 round(av_revenue, 6),
+        # Phase 1 Financial & Performance derived metrics
+        "cpm":                           round((total_rev / total_imp * 1000), 6) if total_imp > 0 else 0.0,
+        "cpc":                           round((total_rev / total_clk), 6) if total_clk > 0 else 0.0,
+        "rpm":                           round((total_rev / best_req * 1000), 6) if best_req > 0 else 0.0,
+        "estimated_revenue_usd":         round(total_rev, 6),
+        "gross_revenue_usd":             round(total_all_rev, 6),
+        "net_revenue_usd":               round(total_rev, 6),
+        "viewability_pct":               round(av_view_rate, 4),
+        "active_view_impressions":       av_viewable,
+        "video_dropoff_pct":             round(dropoff, 4),
         # Primary metric
         "primary_metric":                metric,
         "primary_total":                 scalar_total,
@@ -1859,16 +1903,34 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
             g["adx_match_rate_pct"] = (
                 g["adx_impressions"] / g[req_c] * 100
             ).where(g[req_c] > 0, 0).round(4)
+        if rev_c and clk_c:
+            g["cpc_usd"] = (g[rev_c] / g[clk_c]).where(g[clk_c] > 0, 0).round(6)
+        if rev_c and req_c:
+            g["rpm_usd"] = (g[rev_c] / g[req_c] * 1000).where(g[req_c] > 0, 0).round(6)
+        if "total_active_view_viewable_impressions_rate" in g.columns:
+            g["viewability_pct"] = g["total_active_view_viewable_impressions_rate"].round(4)
+        if "dropoff_rate" in g.columns:
+            g["video_dropoff_pct"] = g["dropoff_rate"].round(4)
+        if req_c and matched_c:
+            g["unfilled_requests"] = (g[req_c] - g[matched_c]).clip(lower=0)
         return g
 
     # Aggregation columns — different for separate-report mode
     if separate_report:
         AGG_COLS = {c: "sum" for c in [
             "total_line_item_level_cpm_and_cpc_revenue",
+            "total_line_item_level_all_revenue",
             "total_line_item_level_impressions",
             "total_line_item_level_clicks",
             "total_ad_requests", "total_responses_served", "total_fill_rate",
+            "total_active_view_eligible_impressions",
+            "total_active_view_measurable_impressions",
+            "total_active_view_viewable_impressions",
+            "total_active_view_revenue",
         ] if c in df.columns}
+        for mean_col in ["total_active_view_measurable_impressions_rate", "total_active_view_viewable_impressions_rate", "total_active_view_average_viewable_time", "dropoff_rate"]:
+            if mean_col in df.columns:
+                AGG_COLS[mean_col] = "mean"
     else:
         AGG_COLS = {
             "ad_server_cpm_and_cpc_revenue": "sum",
@@ -1884,9 +1946,16 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
             "ad_exchange_line_item_level_ctr", "ad_exchange_line_item_level_average_ecpm",
             "total_ad_requests", "total_responses_served",
             "programmatic_match_rate", "programmatic_responses_served",
+            "total_line_item_level_all_revenue",
+            "total_active_view_eligible_impressions", "total_active_view_measurable_impressions",
+            "total_active_view_viewable_impressions", "total_active_view_revenue",
+            "cpm", "cpc", "rpm", "estimated_revenue", "gross_revenue", "net_revenue", "unfilled_requests",
         ]:
             if extra_c in df.columns:
                 AGG_COLS[extra_c] = "sum"
+        for mean_c in ["total_active_view_measurable_impressions_rate", "total_active_view_viewable_impressions_rate", "total_active_view_average_viewable_time", "dropoff_rate", "viewability_rate"]:
+            if mean_c in df.columns:
+                AGG_COLS[mean_c] = "mean"
 
     def _sort_and_store(grouped: pd.DataFrame):
         sort_col = METRIC_COL.get(metric)
@@ -2010,6 +2079,35 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
         else:
             result["note"] = "country_name column not present in this report."
 
+    elif dimension in ("placement", "device", "browser", "operating_system", "company", "order", "line_item", "creative", "yield_group", "date", "hour", "week", "month"):
+        dim_col_map = {
+            "placement": "placement_name",
+            "device": "device_category_name",
+            "browser": "browser_name",
+            "operating_system": "operating_system_name",
+            "company": "company_name",
+            "order": "order_name",
+            "line_item": "line_item_name",
+            "creative": "creative_name",
+            "yield_group": "yield_group_name",
+            "date": "date",
+            "hour": "hour",
+            "week": "week",
+            "month": "month_and_year",
+        }
+        group_col = dim_col_map.get(dimension)
+        if group_col and group_col in df.columns:
+            grouped = df.groupby(group_col).agg(AGG_COLS).reset_index()
+            grouped = grouped.rename(columns={group_col: "name"})
+            if filter_name:
+                mask = grouped["name"].astype(str).str.lower().str.contains(filter_name.lower(), na=False)
+                if mask.any():
+                    grouped = grouped[mask]
+            grouped = _add_derived_cols(grouped)
+            _sort_and_store(grouped)
+        else:
+            result["note"] = f"Column for dimension '{dimension}' ({group_col}) not present in this report."
+
     # dimension="none": rows stays empty — totals only
 
     # ── Query Engine: enforce payload size budget ────────────────────────────
@@ -2038,6 +2136,32 @@ def _make_tool_executor(cached_df):
     async def _execute(tool_name: str, input_dict: dict) -> dict:
         if tool_name == "query_gam_data":
             return await execute_query_gam_data(input_dict)
+
+        if tool_name == "getAdUnitHierarchy":
+            res = await asyncio.to_thread(
+                gam.get_ad_units,
+                int(input_dict.get("limit", 100)),
+                input_dict.get("name_filter"),
+                input_dict.get("parent_id"),
+                input_dict.get("active_only", True)
+            )
+            return {"count": len(res), "ad_units": res}
+        if tool_name == "getPlacements":
+            res = await asyncio.to_thread(
+                gam.get_placements,
+                int(input_dict.get("limit", 100)),
+                input_dict.get("name_filter"),
+                input_dict.get("active_only", True)
+            )
+            return {"count": len(res), "placements": res}
+        if tool_name == "getCustomTargeting":
+            res = await asyncio.to_thread(
+                gam.get_custom_targeting_keys,
+                int(input_dict.get("limit", 100)),
+                input_dict.get("name_filter"),
+                input_dict.get("active_only", True)
+            )
+            return {"count": len(res), "custom_targeting_keys": res}
 
         website_tools = [
             "getWebsiteInventory", "getWebsitePerformance", "getWebsiteHealth",
@@ -3289,11 +3413,74 @@ async def list_tools() -> list[types.Tool]:
         }),
         types.Tool(name="getRecommendations", description="AI-generated recommendations based on live data analysis.", inputSchema=DATE_SCHEMA),
         types.Tool(name="generateFullReport", description="Complete analytics report with all sections in one response.", inputSchema=DATE_SCHEMA),
+        types.Tool(
+            name="getAdUnitHierarchy",
+            description="Fetch Ad Unit hierarchy, codes, sizes, status, and IDs from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter ad units by name."},
+                    "parent_id": {"type": "string", "description": "Filter by parent Ad Unit ID."},
+                    "active_only": {"type": "boolean", "description": "Return only active ad units (default true)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getPlacements",
+            description="Fetch Placements and targeted Ad Unit IDs from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter placements by name."},
+                    "active_only": {"type": "boolean", "description": "Return only active placements (default true)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getCustomTargeting",
+            description="Fetch Custom Targeting Keys and Custom Dimensions from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter custom targeting keys by name."},
+                    "active_only": {"type": "boolean", "description": "Return only active keys (default true)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
     ]
 
 
 async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextContent]:
     try:
+        if name == "getAdUnitHierarchy":
+            res = await asyncio.to_thread(
+                gam.get_ad_units,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("parent_id"),
+                arguments.get("active_only", True)
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "ad_units": res}, indent=2))]
+        if name == "getPlacements":
+            res = await asyncio.to_thread(
+                gam.get_placements,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("active_only", True)
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "placements": res}, indent=2))]
+        if name == "getCustomTargeting":
+            res = await asyncio.to_thread(
+                gam.get_custom_targeting_keys,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("active_only", True)
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "custom_targeting_keys": res}, indent=2))]
+
         start_date, end_date, start_hour, end_hour = _resolve_dates(arguments)
         force_refresh = arguments.get("force_refresh", False)
         demand_channel = arguments.get("demand_channel", "all")

@@ -82,11 +82,30 @@ DIMENSION_MAP = {
     "advertiser":             "ADVERTISER_NAME",           # requires separate report
     "advertiser_classified":  "CLASSIFIED_ADVERTISER_NAME",# requires separate report
     "country":                "COUNTRY_NAME",              # requires separate report
+    "placement":              "PLACEMENT_NAME",            # requires separate report
+    "device":                 "DEVICE_CATEGORY_NAME",      # requires separate report
+    "browser":                "BROWSER_NAME",              # requires separate report
+    "operating_system":       "OPERATING_SYSTEM_NAME",     # requires separate report
+    "company":                "COMPANY_NAME",              # requires separate report
+    "order":                  "ORDER_NAME",                # requires separate report
+    "line_item":              "LINE_ITEM_NAME",            # requires separate report
+    "creative":               "CREATIVE_NAME",             # requires separate report
+    "yield_group":            "YIELD_GROUP_NAME",          # requires separate report
+    "date":                   "DATE",                      # requires separate report (no ad unit split)
+    "hour":                   "HOUR",                      # requires separate report (no ad unit split)
+    "week":                   "WEEK",                      # requires separate report (no ad unit split)
+    "month":                  "MONTH_AND_YEAR",            # requires separate report (no ad unit split)
 }
 
 # Dimensions that CANNOT be combined with AD_UNIT_NAME / AD_UNIT_ID in one report.
 # For these, run_report() will use DATE + dimension only (no ad-unit breakdown).
-DIMENSIONS_NEED_SEPARATE_REPORT = {"ADVERTISER_NAME", "CLASSIFIED_ADVERTISER_NAME", "COUNTRY_NAME"}
+DIMENSIONS_NEED_SEPARATE_REPORT = {
+    "ADVERTISER_NAME", "CLASSIFIED_ADVERTISER_NAME", "COUNTRY_NAME",
+    "PLACEMENT_NAME", "DEVICE_CATEGORY_NAME", "BROWSER_NAME",
+    "OPERATING_SYSTEM_NAME", "COMPANY_NAME", "ORDER_NAME",
+    "LINE_ITEM_NAME", "CREATIVE_NAME", "YIELD_GROUP_NAME",
+    "DATE", "HOUR", "WEEK", "MONTH_AND_YEAR",
+}
 
 # Canonical list of all metric columns we may receive in the CSV
 ALL_CHANNEL_COLS = [
@@ -253,11 +272,20 @@ class GAMClient:
                 "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
                 "TOTAL_LINE_ITEM_LEVEL_CLICKS",
                 "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
+                "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",
                 "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
                 "TOTAL_LINE_ITEM_LEVEL_CTR",
                 "TOTAL_AD_REQUESTS",
                 "TOTAL_RESPONSES_SERVED",
                 "TOTAL_FILL_RATE",
+                "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
+                "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
+                "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
+                "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE",
+                "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE",
+                "TOTAL_ACTIVE_VIEW_AVERAGE_VIEWABLE_TIME",
+                "TOTAL_ACTIVE_VIEW_REVENUE",
+                "DROPOFF_RATE",
             ]
         else:
             if extra_dims or omit_ad_units:
@@ -445,6 +473,21 @@ class GAMClient:
                 mask = (df["canonical_ad_requests"] == 0) & (imp_col > 0)
                 df.loc[mask, "canonical_ad_requests"] = (df.loc[mask, "ad_server_impressions"] / 0.982).round()
 
+        # ── Compute Phase 1 Derived Metrics ──────────────────────────────────
+        imp_series = df["ad_server_impressions"] if "ad_server_impressions" in df.columns else df.get("total_line_item_level_impressions", pd.Series(0, index=df.index))
+        rev_series = df["ad_server_cpm_and_cpc_revenue"] if "ad_server_cpm_and_cpc_revenue" in df.columns else df.get("total_line_item_level_cpm_and_cpc_revenue", pd.Series(0.0, index=df.index))
+        clk_series = df["ad_server_clicks"] if "ad_server_clicks" in df.columns else df.get("total_line_item_level_clicks", pd.Series(0, index=df.index))
+        req_series = df["canonical_ad_requests"] if "canonical_ad_requests" in df.columns else df.get("total_ad_requests", pd.Series(0, index=df.index))
+
+        df["cpm"] = (rev_series / imp_series * 1000).where(imp_series > 0, 0.0).round(6)
+        df["cpc"] = (rev_series / clk_series).where(clk_series > 0, 0.0).round(6)
+        df["rpm"] = (rev_series / req_series * 1000).where(req_series > 0, 0.0).round(6)
+        df["estimated_revenue"] = rev_series.round(6)
+        df["gross_revenue"] = df.get("total_line_item_level_all_revenue", rev_series).round(6)
+        df["net_revenue"] = rev_series.round(6)
+        df["unfilled_requests"] = (req_series - df.get("matched_requests", pd.Series(0, index=df.index))).clip(lower=0)
+        df["viewability_rate"] = df.get("total_active_view_viewable_impressions_rate", pd.Series(0.0, index=df.index)).round(4)
+
         df = df.fillna(0)
 
         # ── Diagnostic logging ──────────────────────────────────────────────
@@ -578,3 +621,106 @@ class GAMClient:
             log.info(f"Combined {len(dfs)} chunks: {len(df)} total rows")
 
         return df
+
+    # ── Phase 2: Enterprise Inventory Intelligence Methods ───────────────────
+    def get_ad_units(
+        self,
+        limit: int = 500,
+        name_filter: str = None,
+        parent_id: str = None,
+        active_only: bool = True
+    ) -> List[Dict[str, Any]]:
+        """Fetch Ad Units from InventoryService."""
+        inv_service = self.client.GetService("InventoryService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = []
+        if active_only:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", "ACTIVE")
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if parent_id:
+            conditions.append("parentId = :pid")
+            sb.WithBindVariable("pid", str(parent_id))
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = inv_service.getAdUnitsByStatement(sb.ToStatement())
+        results = []
+        for au in getattr(res, "results", []):
+            sizes = [f"{getattr(s, 'size', {}).width}x{getattr(s, 'size', {}).height}" for s in getattr(au, "adUnitSizes", []) if getattr(s, "size", None)]
+            results.append({
+                "id": str(getattr(au, "id", "")),
+                "name": str(getattr(au, "name", "")),
+                "ad_unit_code": str(getattr(au, "adUnitCode", "")),
+                "parent_id": str(getattr(au, "parentId", "")) if getattr(au, "parentId", None) else None,
+                "status": str(getattr(au, "status", "")),
+                "target_window": str(getattr(au, "targetWindow", "")),
+                "sizes": sizes,
+                "has_children": bool(getattr(au, "hasChildren", False)),
+            })
+        return results
+
+    def get_placements(
+        self,
+        limit: int = 500,
+        name_filter: str = None,
+        active_only: bool = True
+    ) -> List[Dict[str, Any]]:
+        """Fetch Placements from PlacementService."""
+        place_service = self.client.GetService("PlacementService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = []
+        if active_only:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", "ACTIVE")
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = place_service.getPlacementsByStatement(sb.ToStatement())
+        results = []
+        for pl in getattr(res, "results", []):
+            results.append({
+                "id": str(getattr(pl, "id", "")),
+                "name": str(getattr(pl, "name", "")),
+                "description": str(getattr(pl, "description", "")) if getattr(pl, "description", None) else "",
+                "status": str(getattr(pl, "status", "")),
+                "targeted_ad_unit_ids": [str(x) for x in getattr(pl, "targetedAdUnitIds", [])],
+            })
+        return results
+
+    def get_custom_targeting_keys(
+        self,
+        limit: int = 500,
+        name_filter: str = None,
+        active_only: bool = True
+    ) -> List[Dict[str, Any]]:
+        """Fetch Custom Targeting Keys from CustomTargetingService."""
+        ct_service = self.client.GetService("CustomTargetingService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = []
+        if active_only:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", "ACTIVE")
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = ct_service.getCustomTargetingKeysByStatement(sb.ToStatement())
+        results = []
+        for k in getattr(res, "results", []):
+            results.append({
+                "id": str(getattr(k, "id", "")),
+                "name": str(getattr(k, "name", "")),
+                "display_name": str(getattr(k, "displayName", "")) if getattr(k, "displayName", None) else str(getattr(k, "name", "")),
+                "type": str(getattr(k, "type", "")),
+                "status": str(getattr(k, "status", "")),
+                "reportable_type": str(getattr(k, "reportableType", "")),
+            })
+        return results

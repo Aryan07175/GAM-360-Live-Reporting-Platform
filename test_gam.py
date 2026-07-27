@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from mcp_server.gam_client import GAMClient
 
 async def main():
-    os.environ["GAM_CREDENTIALS_PATH"] = "/Users/aryan/Desktop/GAM-360-Live-Reporting-Platform/GAM-360-Live-Reporting-Platform/mcp_server/config/googleads.yaml"
+    os.environ["GAM_CREDENTIALS_PATH"] = "/Users/aryan/Desktop/GAM-360-Live-Reporting-Platform/GAM-360-Live-Reporting-Platform/config/googleads.yaml"
     client = GAMClient()
     start = date(2026, 7, 21)
     end = date(2026, 7, 21)
