@@ -8,8 +8,8 @@ This roadmap tracks the 12 phases for transforming Ask GAM 360 into a complete c
 | Phase | Title | Status |
 | :--- | :--- | :--- |
 | Phase 0 | Foundation & AI Intelligence | ✅ Completed |
-| Phase 1 | Reporting Intelligence | 🔄 In Progress / Pending |
-| Phase 2 | Inventory | ⏳ Pending |
+| Phase 1 | Reporting Intelligence | ✅ Completed |
+| Phase 2 | Inventory | ✅ Completed |
 | Phase 3 | Campaigns | ⏳ Pending |
 | Phase 4 | Creatives | ⏳ Pending |
 | Phase 5 | Advertisers | ⏳ Pending |
