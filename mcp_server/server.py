@@ -2612,13 +2612,23 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
     # ── Query Engine: slim website rows ───────────────────────────────────
     # Sort by revenue desc and cap at 15 before sending to LLM
     websites_list.sort(key=lambda w: w.get("revenue", 0), reverse=True)
-    slimmed = slim_website_rows(websites_list, "revenue", max_rows=MAX_ROWS_DEFAULT)
+    top_rev = slim_website_rows(websites_list, "revenue", max_rows=15)
+
+    websites_list.sort(key=lambda w: w.get("impressions", 0), reverse=True)
+    top_imp = slim_website_rows(websites_list, "impressions", max_rows=10)
+
+    active_sites = [w for w in websites_list if w.get("impressions", 0) > 0]
+    active_sites.sort(key=lambda w: w.get("impressions", 0))
+    low_imp = slim_website_rows(active_sites, "impressions", max_rows=10)
 
     result_payload = {
         "period": f"{start} to {end}",
         "total_websites": len(websites_list),
         "active_websites": sum(1 for w in websites_list if w["status"] != "Offline"),
-        "top_websites": slimmed,
+        "top_websites": top_rev,
+        "top_websites_by_revenue": top_rev,
+        "top_websites_by_impressions": top_imp,
+        "lowest_impression_websites": low_imp,
     }
     return guard_payload_size(result_payload, "revenue")
 
