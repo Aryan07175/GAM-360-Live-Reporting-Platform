@@ -4,7 +4,7 @@ A Next.js executive BI reporting dashboard that fetches ad revenue analytics **i
 
 **Zero database. Zero cache. Zero ETL. 100% live.**
 
-📖 **Documentation:** [Live Documentation](https://YOUR_GITHUB_USERNAME.github.io/GAM-360-Live-Reporting-Platform/)
+📖 **Documentation:** [Live Documentation](https://Aryan07175.github.io/GAM-360-Live-Reporting-Platform/)
 
 ---
 
