@@ -82,11 +82,30 @@ DIMENSION_MAP = {
     "advertiser":             "ADVERTISER_NAME",           # requires separate report
     "advertiser_classified":  "CLASSIFIED_ADVERTISER_NAME",# requires separate report
     "country":                "COUNTRY_NAME",              # requires separate report
+    "placement":              "PLACEMENT_NAME",            # requires separate report
+    "device":                 "DEVICE_CATEGORY_NAME",      # requires separate report
+    "browser":                "BROWSER_NAME",              # requires separate report
+    "operating_system":       "OPERATING_SYSTEM_NAME",     # requires separate report
+    "company":                "COMPANY_NAME",              # requires separate report
+    "order":                  "ORDER_NAME",                # requires separate report
+    "line_item":              "LINE_ITEM_NAME",            # requires separate report
+    "creative":               "CREATIVE_NAME",             # requires separate report
+    "yield_group":            "YIELD_GROUP_NAME",          # requires separate report
+    "date":                   "DATE",                      # requires separate report (no ad unit split)
+    "hour":                   "HOUR",                      # requires separate report (no ad unit split)
+    "week":                   "WEEK",                      # requires separate report (no ad unit split)
+    "month":                  "MONTH_AND_YEAR",            # requires separate report (no ad unit split)
 }
 
 # Dimensions that CANNOT be combined with AD_UNIT_NAME / AD_UNIT_ID in one report.
 # For these, run_report() will use DATE + dimension only (no ad-unit breakdown).
-DIMENSIONS_NEED_SEPARATE_REPORT = {"ADVERTISER_NAME", "CLASSIFIED_ADVERTISER_NAME", "COUNTRY_NAME"}
+DIMENSIONS_NEED_SEPARATE_REPORT = {
+    "ADVERTISER_NAME", "CLASSIFIED_ADVERTISER_NAME", "COUNTRY_NAME",
+    "PLACEMENT_NAME", "DEVICE_CATEGORY_NAME", "BROWSER_NAME",
+    "OPERATING_SYSTEM_NAME", "COMPANY_NAME", "ORDER_NAME",
+    "LINE_ITEM_NAME", "CREATIVE_NAME", "YIELD_GROUP_NAME",
+    "DATE", "HOUR", "WEEK", "MONTH_AND_YEAR",
+}
 
 # Canonical list of all metric columns we may receive in the CSV
 ALL_CHANNEL_COLS = [
@@ -253,11 +272,20 @@ class GAMClient:
                 "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
                 "TOTAL_LINE_ITEM_LEVEL_CLICKS",
                 "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
+                "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",
                 "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
                 "TOTAL_LINE_ITEM_LEVEL_CTR",
                 "TOTAL_AD_REQUESTS",
                 "TOTAL_RESPONSES_SERVED",
                 "TOTAL_FILL_RATE",
+                "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
+                "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
+                "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
+                "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE",
+                "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE",
+                "TOTAL_ACTIVE_VIEW_AVERAGE_VIEWABLE_TIME",
+                "TOTAL_ACTIVE_VIEW_REVENUE",
+                "DROPOFF_RATE",
             ]
         else:
             if extra_dims or omit_ad_units:
@@ -444,6 +472,21 @@ class GAMClient:
             if "canonical_ad_requests" in df.columns:
                 mask = (df["canonical_ad_requests"] == 0) & (imp_col > 0)
                 df.loc[mask, "canonical_ad_requests"] = (df.loc[mask, "ad_server_impressions"] / 0.982).round()
+
+        # ── Compute Phase 1 Derived Metrics ──────────────────────────────────
+        imp_series = df["ad_server_impressions"] if "ad_server_impressions" in df.columns else df.get("total_line_item_level_impressions", pd.Series(0, index=df.index))
+        rev_series = df["ad_server_cpm_and_cpc_revenue"] if "ad_server_cpm_and_cpc_revenue" in df.columns else df.get("total_line_item_level_cpm_and_cpc_revenue", pd.Series(0.0, index=df.index))
+        clk_series = df["ad_server_clicks"] if "ad_server_clicks" in df.columns else df.get("total_line_item_level_clicks", pd.Series(0, index=df.index))
+        req_series = df["canonical_ad_requests"] if "canonical_ad_requests" in df.columns else df.get("total_ad_requests", pd.Series(0, index=df.index))
+
+        df["cpm"] = (rev_series / imp_series * 1000).where(imp_series > 0, 0.0).round(6)
+        df["cpc"] = (rev_series / clk_series).where(clk_series > 0, 0.0).round(6)
+        df["rpm"] = (rev_series / req_series * 1000).where(req_series > 0, 0.0).round(6)
+        df["estimated_revenue"] = rev_series.round(6)
+        df["gross_revenue"] = df.get("total_line_item_level_all_revenue", rev_series).round(6)
+        df["net_revenue"] = rev_series.round(6)
+        df["unfilled_requests"] = (req_series - df.get("matched_requests", pd.Series(0, index=df.index))).clip(lower=0)
+        df["viewability_rate"] = df.get("total_active_view_viewable_impressions_rate", pd.Series(0.0, index=df.index)).round(4)
 
         df = df.fillna(0)
 

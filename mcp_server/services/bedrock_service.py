@@ -109,7 +109,10 @@ def get_query_gam_data_tool_spec() -> dict:
                             "enum": [
                                 "none", "app", "ad_unit", "ad_unit_top",
                                 "website", "child_network",
-                                "advertiser", "advertiser_classified", "country"
+                                "advertiser", "advertiser_classified", "country",
+                                "placement", "device", "browser", "operating_system",
+                                "company", "order", "line_item", "creative", "yield_group",
+                                "date", "hour", "week", "month"
                             ],
                             "description": (
                                 "How to break down the result. "
@@ -121,6 +124,10 @@ def get_query_gam_data_tool_spec() -> dict:
                                 "'advertiser' = breakdown by advertiser name (uses separate report, no ad-unit split). "
                                 "'advertiser_classified' = breakdown by classified advertiser. "
                                 "'country' = breakdown by country name (uses separate report, no ad-unit split). "
+                                "'placement' = breakdown by placement name. "
+                                "'device'/'browser'/'operating_system' = tech/device breakdown. "
+                                "'company'/'order'/'line_item'/'creative'/'yield_group' = campaign/inventory entity breakdown. "
+                                "'date'/'hour'/'week'/'month' = time-series breakdown. "
                                 "Use 'advertiser' when user says 'by advertiser'. "
                                 "Use 'country' when user says 'by country'. "
                                 "Use 'ad_unit_top' when user says 'top-level ad units'."
@@ -164,6 +171,11 @@ def get_query_gam_data_tool_spec() -> dict:
                                 "total_active_view_viewable_impressions_rate",    # % viewable
                                 "total_active_view_average_viewable_time",        # avg viewable time (sec)
                                 "total_active_view_revenue",
+                                # --- Phase 1 Metrics ---
+                                "estimated_revenue", "gross_revenue", "net_revenue",
+                                "cpm", "cpc", "rpm", "viewability", "active_view",
+                                "unfilled_requests", "matched_requests",
+                                "video_metrics", "historical_trends",
                                 # --- BETA / UI-only metrics (returned as 'not available') ---
                                 "total_muted_impressions",
                                 "total_mute_eligible_impressions",
