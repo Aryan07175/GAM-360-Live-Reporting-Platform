@@ -509,6 +509,110 @@ def get_delivery_progress_tool_spec() -> dict:
     }
 
 
+def get_creatives_tool_spec() -> dict:
+    """Bedrock tool spec for getCreatives."""
+    return {
+        "toolSpec": {
+            "name": "getCreatives",
+            "description": (
+                "Fetch live Google Ad Manager Creatives and asset details. "
+                "Use this tool when the user asks about creatives, ad sizes, image ads, HTML5 ads, video VAST creatives, native ads, ad exchange backfill creatives, or snippet code."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter creatives by name."
+                        },
+                        "advertiser_id": {
+                            "type": "string",
+                            "description": "Optional Advertiser ID to filter creatives."
+                        },
+                        "type_filter": {
+                            "type": "string",
+                            "description": "Optional creative type filter (e.g., ImageCreative, Html5Creative, VideoCreative, NativeCreative, AdExchangeCreative)."
+                        },
+                        "size_filter": {
+                            "type": "string",
+                            "description": "Optional size filter (e.g., '300x250', '728x90', '1920x1080')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of creatives to return (default 100)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_creative_templates_tool_spec() -> dict:
+    """Bedrock tool spec for getCreativeTemplates."""
+    return {
+        "toolSpec": {
+            "name": "getCreativeTemplates",
+            "description": (
+                "Fetch Google Ad Manager Creative Templates (SYSTEM vs CUSTOM templates). "
+                "Use this tool when the user asks about creative templates, custom variables, or native/interstitial template eligibility."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter templates by name."
+                        },
+                        "type_filter": {
+                            "type": "string",
+                            "description": "Optional template type filter ('SYSTEM' or 'CUSTOM')."
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Optional status filter ('ACTIVE' or 'INACTIVE')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of templates to return (default 50)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_creative_diagnostics_tool_spec() -> dict:
+    """Bedrock tool spec for getCreativeDiagnostics."""
+    return {
+        "toolSpec": {
+            "name": "getCreativeDiagnostics",
+            "description": (
+                "Fetch Creative Inventory Diagnostics, analyzing creative format distribution, top sizes, and health checks. "
+                "Use this tool when the user asks for an audit of creatives, creative type breakdown, missing preview URLs, or creative inventory health."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "advertiser_id": {
+                            "type": "string",
+                            "description": "Optional Advertiser ID to filter creative diagnostics."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of creatives to analyze (default 100)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 def get_query_data_tool_spec() -> dict:
     """Bedrock-compatible tool specification for the query_data tool (in-session aggregations)."""
     return {
@@ -1059,6 +1163,10 @@ async def stream_bedrock_response(
                     get_orders_tool_spec(),
                     get_line_items_tool_spec(),
                     get_delivery_progress_tool_spec(),
+                    # ── PHASE 4: CREATIVE TOOLS ───────────────────────────────
+                    get_creatives_tool_spec(),
+                    get_creative_templates_tool_spec(),
+                    get_creative_diagnostics_tool_spec(),
                     get_query_data_tool_spec(),             # SECONDARY: in-session aggregations
                     # ── NEW TOOLS (additive) ──────────────────────────────────
                     get_network_summary_tool_spec(),        # NETWORK: summary + health + insights

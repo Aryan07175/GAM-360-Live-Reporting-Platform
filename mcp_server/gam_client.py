@@ -250,6 +250,9 @@ class GAMClient:
 
         day_count = (end - start).days + 1
 
+        if extra_dims and any(d in DIMENSIONS_NEED_SEPARATE_REPORT for d in extra_dims):
+            separate_report = True
+
         if separate_report or omit_ad_units:
             # No ad-unit breakdown — DATE + specified dimensions only
             report_dims = ["DATE"]
@@ -267,26 +270,45 @@ class GAMClient:
 
         # Columns: for separate-report mode, only request total-network columns
         # (ad-unit-level columns like AD_SERVER_AD_REQUESTS conflict with non-unit dims).
-        if separate_report:
-            report_cols = [
-                "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
-                "TOTAL_LINE_ITEM_LEVEL_CLICKS",
-                "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
-                "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",
-                "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
-                "TOTAL_LINE_ITEM_LEVEL_CTR",
-                "TOTAL_AD_REQUESTS",
-                "TOTAL_RESPONSES_SERVED",
-                "TOTAL_FILL_RATE",
-                "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
-                "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
-                "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
-                "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE",
-                "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE",
-                "TOTAL_ACTIVE_VIEW_AVERAGE_VIEWABLE_TIME",
-                "TOTAL_ACTIVE_VIEW_REVENUE",
-                "DROPOFF_RATE",
-            ]
+        entity_dims = {"CREATIVE_NAME", "CREATIVE_ID", "LINE_ITEM_NAME", "LINE_ITEM_ID", "ORDER_NAME", "ORDER_ID", "COMPANY_NAME", "COMPANY_ID", "YIELD_GROUP_NAME", "YIELD_GROUP_ID"}
+        if separate_report or any(d in entity_dims for d in report_dims):
+            if any(d in entity_dims for d in report_dims):
+                report_cols = [
+                    "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
+                    "TOTAL_LINE_ITEM_LEVEL_CLICKS",
+                    "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
+                    "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",
+                    "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
+                    "TOTAL_LINE_ITEM_LEVEL_CTR",
+                    "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
+                    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
+                    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
+                    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE",
+                    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE",
+                    "TOTAL_ACTIVE_VIEW_AVERAGE_VIEWABLE_TIME",
+                    "TOTAL_ACTIVE_VIEW_REVENUE",
+                    "DROPOFF_RATE",
+                ]
+            else:
+                report_cols = [
+                    "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
+                    "TOTAL_LINE_ITEM_LEVEL_CLICKS",
+                    "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
+                    "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",
+                    "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
+                    "TOTAL_LINE_ITEM_LEVEL_CTR",
+                    "TOTAL_AD_REQUESTS",
+                    "TOTAL_RESPONSES_SERVED",
+                    "TOTAL_FILL_RATE",
+                    "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
+                    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
+                    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
+                    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE",
+                    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE",
+                    "TOTAL_ACTIVE_VIEW_AVERAGE_VIEWABLE_TIME",
+                    "TOTAL_ACTIVE_VIEW_REVENUE",
+                    "DROPOFF_RATE",
+                ]
         else:
             if extra_dims or omit_ad_units:
                 report_cols = [c for c in COLUMNS if not c.startswith("TOTAL_INVENTORY_")]
@@ -875,3 +897,152 @@ class GAMClient:
                 "flight_end": li["end_date_time"]
             })
         return diagnostics
+
+    # ── PHASE 4: CREATIVE INTELLIGENCE ─────────────────────────────────────────
+
+    def get_creatives(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        advertiser_id: str = None,
+        type_filter: str = None,
+        size_filter: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch live Google Ad Manager Creatives via CreativeService."""
+        creative_service = self.client.GetService("CreativeService", version=API_VERSION)
+        statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
+
+        conditions = []
+        if name_filter:
+            conditions.append(f"name LIKE '%{name_filter}%'")
+        if advertiser_id:
+            conditions.append(f"advertiserId = {int(advertiser_id)}")
+        
+        if conditions:
+            statement_builder.Where(" AND ".join(conditions))
+        statement_builder.Limit(limit)
+
+        log.info(f"Request made: Service: \"CreativeService\" Method: \"getCreativesByStatement\" URL: \"https://ads.google.com/apis/ads/publisher/{API_VERSION}/CreativeService\"")
+        response = creative_service.getCreativesByStatement(statement_builder.ToStatement())
+
+        results = []
+        for c in getattr(response, "results", []) or []:
+            c_type = c.__class__.__name__
+            if type_filter and type_filter.lower() not in c_type.lower():
+                continue
+
+            size_obj = getattr(c, "size", None)
+            if size_obj:
+                w = getattr(size_obj, "width", 0)
+                h = getattr(size_obj, "height", 0)
+                size_str = f"{w}x{h}"
+            else:
+                size_str = "Dynamic / Non-standard"
+
+            if size_filter and size_filter.lower() not in size_str.lower():
+                continue
+
+            snippet = getattr(c, "codeSnippet", None) or getattr(c, "snippet", None) or getattr(c, "vastXmlUrl", None) or ""
+            if len(snippet) > 120:
+                snippet_preview = snippet[:117] + "..."
+            else:
+                snippet_preview = snippet
+
+            results.append({
+                "id": str(getattr(c, "id", "")),
+                "name": str(getattr(c, "name", "")),
+                "advertiser_id": str(getattr(c, "advertiserId", "")),
+                "creative_type": c_type,
+                "size": size_str,
+                "preview_url": str(getattr(c, "previewUrl", "")),
+                "snippet_preview": str(snippet_preview),
+                "is_native_eligible": bool(getattr(c, "isNativeEligible", False)),
+                "is_interstitial": bool(getattr(c, "isInterstitial", False))
+            })
+            if len(results) >= limit:
+                break
+        return results
+
+    def get_creative_templates(
+        self,
+        limit: int = 50,
+        name_filter: str = None,
+        type_filter: str = None,
+        status_filter: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch Google Ad Manager Creative Templates via CreativeTemplateService."""
+        template_service = self.client.GetService("CreativeTemplateService", version=API_VERSION)
+        statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
+
+        conditions = []
+        if name_filter:
+            conditions.append(f"name LIKE '%{name_filter}%'")
+        if type_filter:
+            conditions.append(f"type = '{type_filter.upper()}'")
+        if status_filter:
+            conditions.append(f"status = '{status_filter.upper()}'")
+        
+        if conditions:
+            statement_builder.Where(" AND ".join(conditions))
+        statement_builder.Limit(limit)
+
+        log.info(f"Request made: Service: \"CreativeTemplateService\" Method: \"getCreativeTemplatesByStatement\" URL: \"https://ads.google.com/apis/ads/publisher/{API_VERSION}/CreativeTemplateService\"")
+        response = template_service.getCreativeTemplatesByStatement(statement_builder.ToStatement())
+
+        results = []
+        for ct in getattr(response, "results", []) or []:
+            vars_list = getattr(ct, "variables", []) or []
+            var_names = [str(getattr(v, "label", getattr(v, "uniqueName", ""))) for v in vars_list]
+            results.append({
+                "id": str(getattr(ct, "id", "")),
+                "name": str(getattr(ct, "name", "")),
+                "type": str(getattr(ct, "type", "")),
+                "status": str(getattr(ct, "status", "")),
+                "description": str(getattr(ct, "description", "")),
+                "variable_count": len(var_names),
+                "variables": var_names,
+                "is_native_eligible": bool(getattr(ct, "isNativeEligible", False)),
+                "is_interstitial": bool(getattr(ct, "isInterstitial", False))
+            })
+        return results
+
+    def get_creative_diagnostics(
+        self,
+        limit: int = 100,
+        advertiser_id: str = None
+    ) -> Dict[str, Any]:
+        """Compute Live Creative Inventory Health and Format Distribution Diagnostics."""
+        creatives = self.get_creatives(limit=limit, advertiser_id=advertiser_id)
+        type_counts = {}
+        size_counts = {}
+        missing_previews = 0
+        native_eligible_count = 0
+        interstitial_count = 0
+
+        for c in creatives:
+            ctype = c["creative_type"]
+            type_counts[ctype] = type_counts.get(ctype, 0) + 1
+
+            csize = c["size"]
+            size_counts[csize] = size_counts.get(csize, 0) + 1
+
+            if not c.get("preview_url"):
+                missing_previews += 1
+            if c.get("is_native_eligible"):
+                native_eligible_count += 1
+            if c.get("is_interstitial"):
+                interstitial_count += 1
+
+        top_sizes = sorted(size_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        return {
+            "total_analyzed": len(creatives),
+            "type_distribution": type_counts,
+            "top_sizes": dict(top_sizes),
+            "health_metrics": {
+                "missing_preview_url_count": missing_previews,
+                "native_eligible_count": native_eligible_count,
+                "interstitial_count": interstitial_count
+            },
+            "sample_creatives": creatives[:10]
+        }

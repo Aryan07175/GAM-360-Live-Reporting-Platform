@@ -3489,6 +3489,44 @@ async def list_tools() -> list[types.Tool]:
                 }
             }
         ),
+        types.Tool(
+            name="getCreatives",
+            description="Fetch live Google Ad Manager Creatives and asset details.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter creatives by name."},
+                    "advertiser_id": {"type": "string", "description": "Filter by Advertiser ID."},
+                    "type_filter": {"type": "string", "description": "Filter by type (e.g., ImageCreative, VideoCreative)."},
+                    "size_filter": {"type": "string", "description": "Filter by size (e.g., 300x250)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getCreativeTemplates",
+            description="Fetch Google Ad Manager Creative Templates.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter templates by name."},
+                    "type_filter": {"type": "string", "description": "Filter by type (SYSTEM or CUSTOM)."},
+                    "status_filter": {"type": "string", "description": "Filter by status (ACTIVE or INACTIVE)."},
+                    "limit": {"type": "integer", "description": "Max results (default 50)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getCreativeDiagnostics",
+            description="Fetch Creative Inventory Diagnostics, analyzing creative format distribution and health checks.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "advertiser_id": {"type": "string", "description": "Filter diagnostics by Advertiser ID."},
+                    "limit": {"type": "integer", "description": "Max creatives to analyze (default 100)."}
+                }
+            }
+        ),
     ]
 
 
@@ -3546,6 +3584,32 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 arguments.get("status_filter", "DELIVERING")
             )
             return [types.TextContent(type="text", text=json.dumps({"count": len(res), "delivery_diagnostics": res}, indent=2))]
+        if name == "getCreatives":
+            res = await asyncio.to_thread(
+                gam.get_creatives,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("advertiser_id"),
+                arguments.get("type_filter"),
+                arguments.get("size_filter")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "creatives": res}, indent=2))]
+        if name == "getCreativeTemplates":
+            res = await asyncio.to_thread(
+                gam.get_creative_templates,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+                arguments.get("type_filter"),
+                arguments.get("status_filter")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "templates": res}, indent=2))]
+        if name == "getCreativeDiagnostics":
+            res = await asyncio.to_thread(
+                gam.get_creative_diagnostics,
+                int(arguments.get("limit", 100)),
+                arguments.get("advertiser_id")
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 
         start_date, end_date, start_hour, end_hour = _resolve_dates(arguments)
         force_refresh = arguments.get("force_refresh", False)
