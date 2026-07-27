@@ -2137,6 +2137,32 @@ def _make_tool_executor(cached_df):
         if tool_name == "query_gam_data":
             return await execute_query_gam_data(input_dict)
 
+        if tool_name == "getAdUnitHierarchy":
+            res = await asyncio.to_thread(
+                gam.get_ad_units,
+                int(input_dict.get("limit", 100)),
+                input_dict.get("name_filter"),
+                input_dict.get("parent_id"),
+                input_dict.get("active_only", True)
+            )
+            return {"count": len(res), "ad_units": res}
+        if tool_name == "getPlacements":
+            res = await asyncio.to_thread(
+                gam.get_placements,
+                int(input_dict.get("limit", 100)),
+                input_dict.get("name_filter"),
+                input_dict.get("active_only", True)
+            )
+            return {"count": len(res), "placements": res}
+        if tool_name == "getCustomTargeting":
+            res = await asyncio.to_thread(
+                gam.get_custom_targeting_keys,
+                int(input_dict.get("limit", 100)),
+                input_dict.get("name_filter"),
+                input_dict.get("active_only", True)
+            )
+            return {"count": len(res), "custom_targeting_keys": res}
+
         website_tools = [
             "getWebsiteInventory", "getWebsitePerformance", "getWebsiteHealth",
             "getTopWebsites", "getBottomWebsites", "getWebsiteTrend"
@@ -3387,11 +3413,74 @@ async def list_tools() -> list[types.Tool]:
         }),
         types.Tool(name="getRecommendations", description="AI-generated recommendations based on live data analysis.", inputSchema=DATE_SCHEMA),
         types.Tool(name="generateFullReport", description="Complete analytics report with all sections in one response.", inputSchema=DATE_SCHEMA),
+        types.Tool(
+            name="getAdUnitHierarchy",
+            description="Fetch Ad Unit hierarchy, codes, sizes, status, and IDs from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter ad units by name."},
+                    "parent_id": {"type": "string", "description": "Filter by parent Ad Unit ID."},
+                    "active_only": {"type": "boolean", "description": "Return only active ad units (default true)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getPlacements",
+            description="Fetch Placements and targeted Ad Unit IDs from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter placements by name."},
+                    "active_only": {"type": "boolean", "description": "Return only active placements (default true)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getCustomTargeting",
+            description="Fetch Custom Targeting Keys and Custom Dimensions from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter custom targeting keys by name."},
+                    "active_only": {"type": "boolean", "description": "Return only active keys (default true)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
     ]
 
 
 async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextContent]:
     try:
+        if name == "getAdUnitHierarchy":
+            res = await asyncio.to_thread(
+                gam.get_ad_units,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("parent_id"),
+                arguments.get("active_only", True)
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "ad_units": res}, indent=2))]
+        if name == "getPlacements":
+            res = await asyncio.to_thread(
+                gam.get_placements,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("active_only", True)
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "placements": res}, indent=2))]
+        if name == "getCustomTargeting":
+            res = await asyncio.to_thread(
+                gam.get_custom_targeting_keys,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("active_only", True)
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "custom_targeting_keys": res}, indent=2))]
+
         start_date, end_date, start_hour, end_hour = _resolve_dates(arguments)
         force_refresh = arguments.get("force_refresh", False)
         demand_channel = arguments.get("demand_channel", "all")

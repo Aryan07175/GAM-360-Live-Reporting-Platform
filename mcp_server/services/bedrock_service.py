@@ -300,6 +300,107 @@ def get_website_inventory_tool_spec() -> dict:
     }
 
 
+def get_ad_unit_hierarchy_tool_spec() -> dict:
+    """Bedrock tool spec for getAdUnitHierarchy."""
+    return {
+        "toolSpec": {
+            "name": "getAdUnitHierarchy",
+            "description": (
+                "Fetch LIVE Google Ad Manager Ad Unit hierarchy and configuration. "
+                "Use this tool when the user asks about ad units, ad unit sizes, active/inactive ad units, "
+                "or parent/child ad unit relationships. Returns exact codes, sizes, status, and IDs."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter ad units by name (case-insensitive)."
+                        },
+                        "parent_id": {
+                            "type": "string",
+                            "description": "Optional parent Ad Unit ID to fetch only child ad units under that parent."
+                        },
+                        "active_only": {
+                            "type": "boolean",
+                            "description": "Whether to return only ACTIVE ad units (true by default). Set false to include INACTIVE or ARCHIVED."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of ad units to return (default 100, max 500)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_placements_tool_spec() -> dict:
+    """Bedrock tool spec for getPlacements."""
+    return {
+        "toolSpec": {
+            "name": "getPlacements",
+            "description": (
+                "Fetch LIVE Google Ad Manager Placements and their associated ad unit IDs. "
+                "Use this tool when the user asks about placements, ad unit groupings, or placement configurations."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter placements by name."
+                        },
+                        "active_only": {
+                            "type": "boolean",
+                            "description": "Whether to return only ACTIVE placements (true by default)."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of placements to return (default 100, max 500)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_custom_targeting_tool_spec() -> dict:
+    """Bedrock tool spec for getCustomTargeting."""
+    return {
+        "toolSpec": {
+            "name": "getCustomTargeting",
+            "description": (
+                "Fetch LIVE Google Ad Manager Custom Targeting Keys (predefined vs freeform keys and custom dimensions). "
+                "Use this tool when the user asks about key-value targeting, targeting keys, or custom dimensions."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter custom targeting keys by name."
+                        },
+                        "active_only": {
+                            "type": "boolean",
+                            "description": "Whether to return only ACTIVE keys (true by default)."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of keys to return (default 100, max 500)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 def get_query_data_tool_spec() -> dict:
     """Bedrock-compatible tool specification for the query_data tool (in-session aggregations)."""
     return {

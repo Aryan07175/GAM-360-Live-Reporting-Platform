@@ -621,3 +621,106 @@ class GAMClient:
             log.info(f"Combined {len(dfs)} chunks: {len(df)} total rows")
 
         return df
+
+    # ── Phase 2: Enterprise Inventory Intelligence Methods ───────────────────
+    def get_ad_units(
+        self,
+        limit: int = 500,
+        name_filter: str = None,
+        parent_id: str = None,
+        active_only: bool = True
+    ) -> List[Dict[str, Any]]:
+        """Fetch Ad Units from InventoryService."""
+        inv_service = self.client.GetService("InventoryService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = []
+        if active_only:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", "ACTIVE")
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if parent_id:
+            conditions.append("parentId = :pid")
+            sb.WithBindVariable("pid", str(parent_id))
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = inv_service.getAdUnitsByStatement(sb.ToStatement())
+        results = []
+        for au in getattr(res, "results", []):
+            sizes = [f"{getattr(s, 'size', {}).width}x{getattr(s, 'size', {}).height}" for s in getattr(au, "adUnitSizes", []) if getattr(s, "size", None)]
+            results.append({
+                "id": str(getattr(au, "id", "")),
+                "name": str(getattr(au, "name", "")),
+                "ad_unit_code": str(getattr(au, "adUnitCode", "")),
+                "parent_id": str(getattr(au, "parentId", "")) if getattr(au, "parentId", None) else None,
+                "status": str(getattr(au, "status", "")),
+                "target_window": str(getattr(au, "targetWindow", "")),
+                "sizes": sizes,
+                "has_children": bool(getattr(au, "hasChildren", False)),
+            })
+        return results
+
+    def get_placements(
+        self,
+        limit: int = 500,
+        name_filter: str = None,
+        active_only: bool = True
+    ) -> List[Dict[str, Any]]:
+        """Fetch Placements from PlacementService."""
+        place_service = self.client.GetService("PlacementService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = []
+        if active_only:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", "ACTIVE")
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = place_service.getPlacementsByStatement(sb.ToStatement())
+        results = []
+        for pl in getattr(res, "results", []):
+            results.append({
+                "id": str(getattr(pl, "id", "")),
+                "name": str(getattr(pl, "name", "")),
+                "description": str(getattr(pl, "description", "")) if getattr(pl, "description", None) else "",
+                "status": str(getattr(pl, "status", "")),
+                "targeted_ad_unit_ids": [str(x) for x in getattr(pl, "targetedAdUnitIds", [])],
+            })
+        return results
+
+    def get_custom_targeting_keys(
+        self,
+        limit: int = 500,
+        name_filter: str = None,
+        active_only: bool = True
+    ) -> List[Dict[str, Any]]:
+        """Fetch Custom Targeting Keys from CustomTargetingService."""
+        ct_service = self.client.GetService("CustomTargetingService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = []
+        if active_only:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", "ACTIVE")
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = ct_service.getCustomTargetingKeysByStatement(sb.ToStatement())
+        results = []
+        for k in getattr(res, "results", []):
+            results.append({
+                "id": str(getattr(k, "id", "")),
+                "name": str(getattr(k, "name", "")),
+                "display_name": str(getattr(k, "displayName", "")) if getattr(k, "displayName", None) else str(getattr(k, "name", "")),
+                "type": str(getattr(k, "type", "")),
+                "status": str(getattr(k, "status", "")),
+                "reportable_type": str(getattr(k, "reportableType", "")),
+            })
+        return results
