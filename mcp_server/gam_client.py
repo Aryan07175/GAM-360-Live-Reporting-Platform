@@ -250,6 +250,9 @@ class GAMClient:
 
         day_count = (end - start).days + 1
 
+        if extra_dims and any(d in DIMENSIONS_NEED_SEPARATE_REPORT for d in extra_dims):
+            separate_report = True
+
         if separate_report or omit_ad_units:
             # No ad-unit breakdown — DATE + specified dimensions only
             report_dims = ["DATE"]
@@ -265,9 +268,10 @@ class GAMClient:
                 if dim not in report_dims:
                     report_dims.append(dim)
 
-        # Columns: for separate-report mode, only request total-network columns
-        # (ad-unit-level columns like AD_SERVER_AD_REQUESTS conflict with non-unit dims).
-        if separate_report:
+        # Columns: for separate-report mode or when non-inventory entity dimensions are requested,
+        # only request line-item-level metrics (ad-request metrics like TOTAL_AD_REQUESTS conflict with entity dims).
+        non_inventory_dims = [d for d in report_dims if d not in {"DATE", "HOUR", "WEEK", "MONTH_AND_YEAR", "AD_UNIT_NAME", "AD_UNIT_ID"}]
+        if separate_report or non_inventory_dims:
             report_cols = [
                 "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
                 "TOTAL_LINE_ITEM_LEVEL_CLICKS",
@@ -275,9 +279,6 @@ class GAMClient:
                 "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",
                 "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
                 "TOTAL_LINE_ITEM_LEVEL_CTR",
-                "TOTAL_AD_REQUESTS",
-                "TOTAL_RESPONSES_SERVED",
-                "TOTAL_FILL_RATE",
                 "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
                 "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
                 "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
@@ -724,3 +725,502 @@ class GAMClient:
                 "reportable_type": str(getattr(k, "reportableType", "")),
             })
         return results
+
+    # ── Phase 3: Enterprise Campaign & Delivery Intelligence Methods ─────────
+    @staticmethod
+    def _format_gam_dt(dt: Any) -> str:
+        if not dt or not hasattr(dt, "date") or not getattr(dt, "date", None):
+            return "Unlimited / None"
+        d = dt.date
+        return f"{getattr(d, 'year', 0):04d}-{getattr(d, 'month', 0):02d}-{getattr(d, 'day', 0):02d} {getattr(dt, 'hour', 0):02d}:{getattr(dt, 'minute', 0):02d} ({getattr(dt, 'timeZoneId', '')})"
+
+    def get_orders(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        status_filter: str = None,
+        advertiser_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch Orders from OrderService."""
+        ord_service = self.client.GetService("OrderService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = []
+        if status_filter:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", status_filter.upper())
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if advertiser_id:
+            conditions.append("advertiserId = :adv_id")
+            sb.WithBindVariable("adv_id", int(advertiser_id))
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = ord_service.getOrdersByStatement(sb.ToStatement())
+        results = []
+        for o in getattr(res, "results", []):
+            budget_obj = getattr(o, "totalBudget", None)
+            budget_amt = getattr(budget_obj, "microAmount", 0) / 1000000.0 if budget_obj else 0.0
+            currency = getattr(budget_obj, "currencyCode", "USD") if budget_obj else getattr(o, "currencyCode", "USD")
+            results.append({
+                "id": str(getattr(o, "id", "")),
+                "name": str(getattr(o, "name", "")),
+                "advertiser_id": str(getattr(o, "advertiserId", "")),
+                "status": str(getattr(o, "status", "")),
+                "total_budget": f"{budget_amt:.2f} {currency}",
+                "impressions_delivered": int(getattr(o, "totalImpressionsDelivered", None) or 0),
+                "clicks_delivered": int(getattr(o, "totalClicksDelivered", None) or 0),
+                "viewable_impressions_delivered": int(getattr(o, "totalViewableImpressionsDelivered", None) or 0),
+                "start_date_time": self._format_gam_dt(getattr(o, "startDateTime", None)),
+                "end_date_time": self._format_gam_dt(getattr(o, "endDateTime", None)),
+                "is_programmatic": bool(getattr(o, "isProgrammatic", False)),
+            })
+        return results
+
+    def get_line_items(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        order_id: str = None,
+        status_filter: str = None,
+        type_filter: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch Line Items from LineItemService."""
+        li_service = self.client.GetService("LineItemService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = []
+        if status_filter:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", status_filter.upper())
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if order_id:
+            conditions.append("orderId = :oid")
+            sb.WithBindVariable("oid", int(order_id))
+        if type_filter:
+            conditions.append("lineItemType = :ltype")
+            sb.WithBindVariable("ltype", type_filter.upper())
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = li_service.getLineItemsByStatement(sb.ToStatement())
+        results = []
+        for li in getattr(res, "results", []):
+            stats_obj = getattr(li, "stats", None)
+            cpu_obj = getattr(li, "costPerUnit", None)
+            cpu_amt = getattr(cpu_obj, "microAmount", 0) / 1000000.0 if cpu_obj else 0.0
+            currency = getattr(cpu_obj, "currencyCode", "USD") if cpu_obj else "USD"
+            budget_obj = getattr(li, "budget", None)
+            budget_amt = getattr(budget_obj, "microAmount", 0) / 1000000.0 if budget_obj else 0.0
+            results.append({
+                "id": str(getattr(li, "id", "")),
+                "name": str(getattr(li, "name", "")),
+                "order_id": str(getattr(li, "orderId", "")),
+                "order_name": str(getattr(li, "orderName", "")),
+                "status": str(getattr(li, "status", "")),
+                "line_item_type": str(getattr(li, "lineItemType", "")),
+                "priority": int(getattr(li, "priority", None) or 0),
+                "cost_type": str(getattr(li, "costType", "")),
+                "rate": f"{cpu_amt:.2f} {currency}",
+                "budget": f"{budget_amt:.2f} {currency}",
+                "contracted_units_bought": int(getattr(li, "contractedUnitsBought", None) or 0),
+                "impressions_delivered": int(getattr(stats_obj, "impressionsDelivered", None) or 0) if stats_obj else 0,
+                "clicks_delivered": int(getattr(stats_obj, "clicksDelivered", None) or 0) if stats_obj else 0,
+                "video_completions_delivered": int(getattr(stats_obj, "videoCompletionsDelivered", None) or 0) if stats_obj else 0,
+                "viewable_impressions_delivered": int(getattr(stats_obj, "viewableImpressionsDelivered", None) or 0) if stats_obj else 0,
+                "start_date_time": self._format_gam_dt(getattr(li, "startDateTime", None)),
+                "end_date_time": self._format_gam_dt(getattr(li, "endDateTime", None)),
+            })
+        return results
+
+    def get_delivery_progress(
+        self,
+        limit: int = 50,
+        order_id: str = None,
+        status_filter: str = "DELIVERING"
+    ) -> List[Dict[str, Any]]:
+        """Compute Delivery Progress and Pacing Diagnostics for Line Items."""
+        line_items = self.get_line_items(limit=limit, order_id=order_id, status_filter=status_filter)
+        diagnostics = []
+        for li in line_items:
+            contracted = li["contracted_units_bought"]
+            delivered = li["impressions_delivered"]
+            ltype = li["line_item_type"]
+            if contracted > 0:
+                delivery_pct = round((delivered / contracted) * 100.0, 2)
+                if delivery_pct < 85.0:
+                    pacing_status = "Under Pacing (< 85% of goal delivered)"
+                elif delivery_pct > 110.0:
+                    pacing_status = "Over Pacing (> 110% of goal delivered)"
+                else:
+                    pacing_status = "On Track (Optimal Pacing)"
+            else:
+                delivery_pct = 100.0 if delivered > 0 else 0.0
+                pacing_status = f"Programmatic / Share of Voice ({ltype} — no absolute unit cap)"
+            
+            diagnostics.append({
+                "line_item_id": li["id"],
+                "line_item_name": li["name"],
+                "order_name": li["order_name"],
+                "status": li["status"],
+                "type": ltype,
+                "priority": li["priority"],
+                "rate": li["rate"],
+                "contracted_units": contracted,
+                "delivered_impressions": delivered,
+                "delivered_clicks": li["clicks_delivered"],
+                "delivery_completion_pct": f"{delivery_pct}%",
+                "pacing_status": pacing_status,
+                "flight_end": li["end_date_time"]
+            })
+        return diagnostics
+
+    # ── PHASE 4: CREATIVE INTELLIGENCE ─────────────────────────────────────────
+
+    def get_creatives(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        advertiser_id: str = None,
+        type_filter: str = None,
+        size_filter: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch live Google Ad Manager Creatives via CreativeService."""
+        creative_service = self.client.GetService("CreativeService", version=API_VERSION)
+        statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
+
+        conditions = []
+        if name_filter:
+            conditions.append(f"name LIKE '%{name_filter}%'")
+        if advertiser_id:
+            conditions.append(f"advertiserId = {int(advertiser_id)}")
+        
+        if conditions:
+            statement_builder.Where(" AND ".join(conditions))
+        statement_builder.Limit(limit)
+
+        log.info(f"Request made: Service: \"CreativeService\" Method: \"getCreativesByStatement\" URL: \"https://ads.google.com/apis/ads/publisher/{API_VERSION}/CreativeService\"")
+        response = creative_service.getCreativesByStatement(statement_builder.ToStatement())
+
+        results = []
+        for c in getattr(response, "results", []) or []:
+            c_type = c.__class__.__name__
+            if type_filter and type_filter.lower() not in c_type.lower():
+                continue
+
+            size_obj = getattr(c, "size", None)
+            if size_obj:
+                w = getattr(size_obj, "width", 0)
+                h = getattr(size_obj, "height", 0)
+                size_str = f"{w}x{h}"
+            else:
+                size_str = "Dynamic / Non-standard"
+
+            if size_filter and size_filter.lower() not in size_str.lower():
+                continue
+
+            snippet = getattr(c, "codeSnippet", None) or getattr(c, "snippet", None) or getattr(c, "vastXmlUrl", None) or ""
+            if len(snippet) > 120:
+                snippet_preview = snippet[:117] + "..."
+            else:
+                snippet_preview = snippet
+
+            results.append({
+                "id": str(getattr(c, "id", "")),
+                "name": str(getattr(c, "name", "")),
+                "advertiser_id": str(getattr(c, "advertiserId", "")),
+                "creative_type": c_type,
+                "size": size_str,
+                "preview_url": str(getattr(c, "previewUrl", "")),
+                "snippet_preview": str(snippet_preview),
+                "is_native_eligible": bool(getattr(c, "isNativeEligible", False)),
+                "is_interstitial": bool(getattr(c, "isInterstitial", False))
+            })
+            if len(results) >= limit:
+                break
+        return results
+
+    def get_creative_templates(
+        self,
+        limit: int = 50,
+        name_filter: str = None,
+        type_filter: str = None,
+        status_filter: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch Google Ad Manager Creative Templates via CreativeTemplateService."""
+        template_service = self.client.GetService("CreativeTemplateService", version=API_VERSION)
+        statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
+
+        conditions = []
+        if name_filter:
+            conditions.append(f"name LIKE '%{name_filter}%'")
+        if type_filter:
+            conditions.append(f"type = '{type_filter.upper()}'")
+        if status_filter:
+            conditions.append(f"status = '{status_filter.upper()}'")
+        
+        if conditions:
+            statement_builder.Where(" AND ".join(conditions))
+        statement_builder.Limit(limit)
+
+        log.info(f"Request made: Service: \"CreativeTemplateService\" Method: \"getCreativeTemplatesByStatement\" URL: \"https://ads.google.com/apis/ads/publisher/{API_VERSION}/CreativeTemplateService\"")
+        response = template_service.getCreativeTemplatesByStatement(statement_builder.ToStatement())
+
+        results = []
+        for ct in getattr(response, "results", []) or []:
+            vars_list = getattr(ct, "variables", []) or []
+            var_names = [str(getattr(v, "label", getattr(v, "uniqueName", ""))) for v in vars_list]
+            results.append({
+                "id": str(getattr(ct, "id", "")),
+                "name": str(getattr(ct, "name", "")),
+                "type": str(getattr(ct, "type", "")),
+                "status": str(getattr(ct, "status", "")),
+                "description": str(getattr(ct, "description", "")),
+                "variable_count": len(var_names),
+                "variables": var_names,
+                "is_native_eligible": bool(getattr(ct, "isNativeEligible", False)),
+                "is_interstitial": bool(getattr(ct, "isInterstitial", False))
+            })
+        return results
+
+    def get_creative_diagnostics(
+        self,
+        limit: int = 100,
+        advertiser_id: str = None
+    ) -> Dict[str, Any]:
+        """Compute Live Creative Inventory Health and Format Distribution Diagnostics."""
+        creatives = self.get_creatives(limit=limit, advertiser_id=advertiser_id)
+        type_counts = {}
+        size_counts = {}
+        missing_previews = 0
+        native_eligible_count = 0
+        interstitial_count = 0
+
+        for c in creatives:
+            ctype = c["creative_type"]
+            type_counts[ctype] = type_counts.get(ctype, 0) + 1
+
+            csize = c["size"]
+            size_counts[csize] = size_counts.get(csize, 0) + 1
+
+            if not c.get("preview_url"):
+                missing_previews += 1
+            if c.get("is_native_eligible"):
+                native_eligible_count += 1
+            if c.get("is_interstitial"):
+                interstitial_count += 1
+
+        top_sizes = sorted(size_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        return {
+            "total_analyzed": len(creatives),
+            "type_distribution": type_counts,
+            "top_sizes": dict(top_sizes),
+            "health_metrics": {
+                "missing_preview_url_count": missing_previews,
+                "native_eligible_count": native_eligible_count,
+                "interstitial_count": interstitial_count
+            },
+            "sample_creatives": creatives[:10]
+        }
+
+    # ── PHASE 5: ADVERTISER & COMMERCIAL INTELLIGENCE ──────────────────────────
+
+    def get_companies(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        type_filter: str = None,
+        credit_status_filter: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch live Google Ad Manager Companies (Advertisers, Agencies, Ad Networks, Child Publishers)."""
+        company_service = self.client.GetService("CompanyService", version=API_VERSION)
+        statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
+
+        conditions = []
+        if name_filter:
+            conditions.append(f"name LIKE '%{name_filter}%'")
+        if type_filter:
+            conditions.append(f"type = '{type_filter.upper()}'")
+        if credit_status_filter:
+            conditions.append(f"creditStatus = '{credit_status_filter.upper()}'")
+        
+        if conditions:
+            statement_builder.Where(" AND ".join(conditions))
+        statement_builder.Limit(limit)
+
+        log.info(f"Request made: Service: \"CompanyService\" Method: \"getCompaniesByStatement\" URL: \"https://ads.google.com/apis/ads/publisher/{API_VERSION}/CompanyService\"")
+        response = company_service.getCompaniesByStatement(statement_builder.ToStatement())
+
+        results = []
+        for c in getattr(response, "results", []) or []:
+            results.append({
+                "id": str(getattr(c, "id", "")),
+                "name": str(getattr(c, "name", "")),
+                "type": str(getattr(c, "type", "")),
+                "credit_status": str(getattr(c, "creditStatus", "")),
+                "email": str(getattr(c, "email", "")),
+                "primary_phone": str(getattr(c, "primaryPhone", "")),
+                "external_id": str(getattr(c, "externalId", "")),
+                "primary_contact_id": str(getattr(c, "primaryContactId", "")),
+                "comment": str(getattr(c, "comment", ""))
+            })
+        return results
+
+    def get_contacts(
+        self,
+        limit: int = 50,
+        name_filter: str = None,
+        company_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch Google Ad Manager Commercial Contacts via ContactService."""
+        contact_service = self.client.GetService("ContactService", version=API_VERSION)
+        statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
+
+        conditions = []
+        if name_filter:
+            conditions.append(f"name LIKE '%{name_filter}%'")
+        if company_id:
+            conditions.append(f"companyId = {int(company_id)}")
+        
+        if conditions:
+            statement_builder.Where(" AND ".join(conditions))
+        statement_builder.Limit(limit)
+
+        log.info(f"Request made: Service: \"ContactService\" Method: \"getContactsByStatement\" URL: \"https://ads.google.com/apis/ads/publisher/{API_VERSION}/ContactService\"")
+        response = contact_service.getContactsByStatement(statement_builder.ToStatement())
+
+        results = []
+        for ct in getattr(response, "results", []) or []:
+            results.append({
+                "id": str(getattr(ct, "id", "")),
+                "name": str(getattr(ct, "name", "")),
+                "email": str(getattr(ct, "email", "")),
+                "title": str(getattr(ct, "title", "")),
+                "work_phone": str(getattr(ct, "workPhone", "")),
+                "cell_phone": str(getattr(ct, "cellPhone", "")),
+                "company_id": str(getattr(ct, "companyId", "")),
+                "status": str(getattr(ct, "status", ""))
+            })
+        return results
+
+    def get_advertiser_analytics(
+        self,
+        limit: int = 200
+    ) -> Dict[str, Any]:
+        """Compute Commercial Customer Portfolio Analytics across Advertisers and Agencies."""
+        companies = self.get_companies(limit=limit)
+        type_counts = {}
+        credit_counts = {}
+        missing_contacts = 0
+        with_external_id = 0
+
+        for c in companies:
+            ctype = c["type"]
+            type_counts[ctype] = type_counts.get(ctype, 0) + 1
+
+            credit = c["credit_status"] or "UNKNOWN"
+            credit_counts[credit] = credit_counts.get(credit, 0) + 1
+
+            if not c.get("primary_contact_id") or c.get("primary_contact_id") == "0":
+                missing_contacts += 1
+            if c.get("external_id"):
+                with_external_id += 1
+
+        return {
+            "total_companies_sampled": len(companies),
+            "company_types": type_counts,
+            "credit_status_breakdown": credit_counts,
+            "portfolio_health": {
+                "missing_primary_contact_count": missing_contacts,
+                "crm_external_id_mapped_count": with_external_id
+            },
+            "sample_companies": companies[:10]
+        }
+
+    def get_advertiser_rankings(
+        self,
+        start_date: datetime.date,
+        end_date: datetime.date,
+        limit: int = 20,
+        metric: str = "revenue"
+    ) -> Dict[str, Any]:
+        """Rank Advertisers across the network by live Revenue or Impressions."""
+        # Use run_report synchronously via thread in async or directly here
+        df = self.get_live_data_sync(start_date, end_date, extra_dims=["ADVERTISER_NAME"], separate_report=True)
+        if df.empty or "advertiser_name" not in df.columns:
+            return {"date_range": f"{start_date} to {end_date}", "rankings": [], "total_network_revenue": 0.0}
+
+        # Aggregate across dates per advertiser
+        agg_cols = {}
+        if "total_line_item_level_all_revenue" in df.columns:
+            agg_cols["total_line_item_level_all_revenue"] = "sum"
+        if "total_line_item_level_impressions" in df.columns:
+            agg_cols["total_line_item_level_impressions"] = "sum"
+        if "total_line_item_level_clicks" in df.columns:
+            agg_cols["total_line_item_level_clicks"] = "sum"
+
+        grouped = df.groupby("advertiser_name", as_index=False).agg(agg_cols)
+        
+        total_rev = grouped["total_line_item_level_all_revenue"].sum() if "total_line_item_level_all_revenue" in grouped.columns else 0.0
+        total_imp = grouped["total_line_item_level_impressions"].sum() if "total_line_item_level_impressions" in grouped.columns else 0
+
+        sort_col = "total_line_item_level_all_revenue" if metric.lower() == "revenue" else "total_line_item_level_impressions"
+        if sort_col in grouped.columns:
+            grouped = grouped.sort_values(by=sort_col, ascending=False)
+
+        rankings = []
+        for rank, row in enumerate(grouped.head(limit).to_dict("records"), 1):
+            rev = float(row.get("total_line_item_level_all_revenue", 0.0))
+            imp = int(row.get("total_line_item_level_impressions", 0))
+            clk = int(row.get("total_line_item_level_clicks", 0))
+            
+            share_pct = round((rev / total_rev * 100.0), 2) if total_rev > 0 else 0.0
+            ecpm = round((rev / imp * 1000.0), 2) if imp > 0 else 0.0
+            ctr = round((clk / imp * 100.0), 2) if imp > 0 else 0.0
+
+            rankings.append({
+                "rank": rank,
+                "advertiser_name": str(row["advertiser_name"]),
+                "revenue": round(rev, 2),
+                "impressions": imp,
+                "clicks": clk,
+                "share_of_network_revenue_pct": f"{share_pct}%",
+                "ecpm": round(ecpm, 2),
+                "ctr_pct": f"{ctr}%"
+            })
+
+        return {
+            "date_range": f"{start_date} to {end_date}",
+            "metric_sorted": metric,
+            "total_network_revenue": round(total_rev, 2),
+            "total_network_impressions": total_imp,
+            "rankings": rankings
+        }
+
+    def get_live_data_sync(
+        self,
+        start_date: datetime.date,
+        end_date: datetime.date,
+        extra_dims: List[str] = None,
+        separate_report: bool = False
+    ) -> pd.DataFrame:
+        """Synchronous wrapper for get_live_data for internal ranking aggregations."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        if loop.is_running():
+            # If already running in loop, call run_report directly
+            csv_path = self.run_report(start_date, end_date, extra_dims=extra_dims, separate_report=separate_report)
+            df = pd.read_csv(csv_path, compression='gzip')
+            df.columns = [c.lower() for c in df.columns]
+            return df
+        else:
+            return loop.run_until_complete(self.get_live_data(start_date, end_date, extra_dims=extra_dims, separate_report=separate_report))
+

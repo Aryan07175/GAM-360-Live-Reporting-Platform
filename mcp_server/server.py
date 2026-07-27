@@ -3450,6 +3450,131 @@ async def list_tools() -> list[types.Tool]:
                 }
             }
         ),
+        types.Tool(
+            name="getOrders",
+            description="Fetch LIVE Google Ad Manager Orders and Campaign budgets.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter orders by name."},
+                    "status_filter": {"type": "string", "description": "Filter by status (e.g., APPROVED, DRAFT, PAUSED)."},
+                    "advertiser_id": {"type": "string", "description": "Filter by Advertiser ID."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getLineItems",
+            description="Fetch LIVE Google Ad Manager Line Items, priority tiers, and cost configurations.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter line items by name."},
+                    "order_id": {"type": "string", "description": "Filter by Order ID."},
+                    "status_filter": {"type": "string", "description": "Filter by status (e.g., DELIVERING, PAUSED)."},
+                    "type_filter": {"type": "string", "description": "Filter by type (e.g., SPONSORSHIP, STANDARD, HOUSE, BULK)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getDeliveryProgress",
+            description="Fetch LIVE Campaign Delivery Progress and Pacing Diagnostics.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string", "description": "Filter diagnostics by Order ID."},
+                    "status_filter": {"type": "string", "description": "Status filter (default DELIVERING)."},
+                    "limit": {"type": "integer", "description": "Max results (default 50)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getCreatives",
+            description="Fetch live Google Ad Manager Creatives and asset details.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter creatives by name."},
+                    "advertiser_id": {"type": "string", "description": "Filter by Advertiser ID."},
+                    "type_filter": {"type": "string", "description": "Filter by type (e.g., ImageCreative, VideoCreative)."},
+                    "size_filter": {"type": "string", "description": "Filter by size (e.g., 300x250)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getCreativeTemplates",
+            description="Fetch Google Ad Manager Creative Templates.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter templates by name."},
+                    "type_filter": {"type": "string", "description": "Filter by type (SYSTEM or CUSTOM)."},
+                    "status_filter": {"type": "string", "description": "Filter by status (ACTIVE or INACTIVE)."},
+                    "limit": {"type": "integer", "description": "Max results (default 50)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getCreativeDiagnostics",
+            description="Fetch Creative Inventory Diagnostics, analyzing creative format distribution and health checks.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "advertiser_id": {"type": "string", "description": "Filter diagnostics by Advertiser ID."},
+                    "limit": {"type": "integer", "description": "Max creatives to analyze (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getCompanies",
+            description="Fetch live Google Ad Manager Companies (Advertisers, Agencies, Ad Networks, Child Publishers).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter companies by name."},
+                    "type_filter": {"type": "string", "description": "Filter by type (ADVERTISER, AGENCY, AD_NETWORK, CHILD_PUBLISHER)."},
+                    "credit_status_filter": {"type": "string", "description": "Filter by credit status (ACTIVE, INACTIVE, BLOCKED, ON_HOLD)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getContacts",
+            description="Fetch Google Ad Manager Commercial Contacts (advertiser and agency contact directory).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter contacts by name."},
+                    "company_id": {"type": "string", "description": "Filter contacts belonging to a specific Company ID."},
+                    "limit": {"type": "integer", "description": "Max results (default 50)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getAdvertiserAnalytics",
+            description="Fetch Commercial Customer Portfolio Analytics, analyzing company type distributions and credit risk health.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max companies to analyze (default 200)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getAdvertiserRankings",
+            description="Rank network Advertisers by live Revenue or Impression volume across a date range.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                    "metric": {"type": "string", "description": "Metric to rank by ('revenue' or 'impressions', default 'revenue')."},
+                    "limit": {"type": "integer", "description": "Number of top advertisers to return (default 20)."}
+                }
+            }
+        ),
     ]
 
 
@@ -3480,6 +3605,92 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 arguments.get("active_only", True)
             )
             return [types.TextContent(type="text", text=json.dumps({"count": len(res), "custom_targeting_keys": res}, indent=2))]
+        if name == "getOrders":
+            res = await asyncio.to_thread(
+                gam.get_orders,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("status_filter"),
+                arguments.get("advertiser_id")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "orders": res}, indent=2))]
+        if name == "getLineItems":
+            res = await asyncio.to_thread(
+                gam.get_line_items,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("order_id"),
+                arguments.get("status_filter"),
+                arguments.get("type_filter")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "line_items": res}, indent=2))]
+        if name == "getDeliveryProgress":
+            res = await asyncio.to_thread(
+                gam.get_delivery_progress,
+                int(arguments.get("limit", 50)),
+                arguments.get("order_id"),
+                arguments.get("status_filter", "DELIVERING")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "delivery_diagnostics": res}, indent=2))]
+        if name == "getCreatives":
+            res = await asyncio.to_thread(
+                gam.get_creatives,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("advertiser_id"),
+                arguments.get("type_filter"),
+                arguments.get("size_filter")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "creatives": res}, indent=2))]
+        if name == "getCreativeTemplates":
+            res = await asyncio.to_thread(
+                gam.get_creative_templates,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+                arguments.get("type_filter"),
+                arguments.get("status_filter")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "templates": res}, indent=2))]
+        if name == "getCreativeDiagnostics":
+            res = await asyncio.to_thread(
+                gam.get_creative_diagnostics,
+                int(arguments.get("limit", 100)),
+                arguments.get("advertiser_id")
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getCompanies":
+            res = await asyncio.to_thread(
+                gam.get_companies,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("type_filter"),
+                arguments.get("credit_status_filter")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "companies": res}, indent=2))]
+        if name == "getContacts":
+            res = await asyncio.to_thread(
+                gam.get_contacts,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+                arguments.get("company_id")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "contacts": res}, indent=2))]
+        if name == "getAdvertiserAnalytics":
+            res = await asyncio.to_thread(
+                gam.get_advertiser_analytics,
+                int(arguments.get("limit", 200))
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getAdvertiserRankings":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(
+                gam.get_advertiser_rankings,
+                s_date,
+                e_date,
+                int(arguments.get("limit", 20)),
+                arguments.get("metric", "revenue")
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 
         start_date, end_date, start_hour, end_hour = _resolve_dates(arguments)
         force_refresh = arguments.get("force_refresh", False)

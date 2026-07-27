@@ -401,6 +401,346 @@ def get_custom_targeting_tool_spec() -> dict:
     }
 
 
+def get_orders_tool_spec() -> dict:
+    """Bedrock tool spec for getOrders."""
+    return {
+        "toolSpec": {
+            "name": "getOrders",
+            "description": (
+                "Fetch LIVE Google Ad Manager Orders and Campaign budgets. "
+                "Use this tool when the user asks about orders, campaign budgets, active campaigns, or order status."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter orders by name."
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Optional status filter (e.g., APPROVED, DRAFT, PAUSED, CANCELED, COMPLETED)."
+                        },
+                        "advertiser_id": {
+                            "type": "string",
+                            "description": "Optional Advertiser ID to filter orders."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of orders to return (default 100)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_line_items_tool_spec() -> dict:
+    """Bedrock tool spec for getLineItems."""
+    return {
+        "toolSpec": {
+            "name": "getLineItems",
+            "description": (
+                "Fetch LIVE Google Ad Manager Line Items, priority tiers, and cost configurations. "
+                "Use this tool when the user asks about line items, sponsorship deals, standard campaigns, house ads, price priority, bulk line items, or line item priority tiers."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter line items by name."
+                        },
+                        "order_id": {
+                            "type": "string",
+                            "description": "Optional Order ID to filter line items."
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Optional status filter (e.g., DELIVERING, PAUSED, READY, COMPLETED)."
+                        },
+                        "type_filter": {
+                            "type": "string",
+                            "description": "Optional line item type filter (e.g., SPONSORSHIP, STANDARD, HOUSE, PRICE_PRIORITY, BULK, NETWORK, AD_EXCHANGE)."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of line items to return (default 100)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_delivery_progress_tool_spec() -> dict:
+    """Bedrock tool spec for getDeliveryProgress."""
+    return {
+        "toolSpec": {
+            "name": "getDeliveryProgress",
+            "description": (
+                "Fetch LIVE Campaign Delivery Progress and Pacing Diagnostics. "
+                "Use this tool when the user asks about campaign pacing, under-delivering campaigns, delivery completion percentage, or whether campaigns are on track to meet their goals."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "order_id": {
+                            "type": "string",
+                            "description": "Optional Order ID to filter diagnostics."
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Status filter (default 'DELIVERING')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of diagnostics to return (default 50)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_creatives_tool_spec() -> dict:
+    """Bedrock tool spec for getCreatives."""
+    return {
+        "toolSpec": {
+            "name": "getCreatives",
+            "description": (
+                "Fetch live Google Ad Manager Creatives and asset details. "
+                "Use this tool when the user asks about creatives, ad sizes, image ads, HTML5 ads, video VAST creatives, native ads, ad exchange backfill creatives, or snippet code."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter creatives by name."
+                        },
+                        "advertiser_id": {
+                            "type": "string",
+                            "description": "Optional Advertiser ID to filter creatives."
+                        },
+                        "type_filter": {
+                            "type": "string",
+                            "description": "Optional creative type filter (e.g., ImageCreative, Html5Creative, VideoCreative, NativeCreative, AdExchangeCreative)."
+                        },
+                        "size_filter": {
+                            "type": "string",
+                            "description": "Optional size filter (e.g., '300x250', '728x90', '1920x1080')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of creatives to return (default 100)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_creative_templates_tool_spec() -> dict:
+    """Bedrock tool spec for getCreativeTemplates."""
+    return {
+        "toolSpec": {
+            "name": "getCreativeTemplates",
+            "description": (
+                "Fetch Google Ad Manager Creative Templates (SYSTEM vs CUSTOM templates). "
+                "Use this tool when the user asks about creative templates, custom variables, or native/interstitial template eligibility."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter templates by name."
+                        },
+                        "type_filter": {
+                            "type": "string",
+                            "description": "Optional template type filter ('SYSTEM' or 'CUSTOM')."
+                        },
+                        "status_filter": {
+                            "type": "string",
+                            "description": "Optional status filter ('ACTIVE' or 'INACTIVE')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of templates to return (default 50)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_creative_diagnostics_tool_spec() -> dict:
+    """Bedrock tool spec for getCreativeDiagnostics."""
+    return {
+        "toolSpec": {
+            "name": "getCreativeDiagnostics",
+            "description": (
+                "Fetch Creative Inventory Diagnostics, analyzing creative format distribution, top sizes, and health checks. "
+                "Use this tool when the user asks for an audit of creatives, creative type breakdown, missing preview URLs, or creative inventory health."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "advertiser_id": {
+                            "type": "string",
+                            "description": "Optional Advertiser ID to filter creative diagnostics."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of creatives to analyze (default 100)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_companies_tool_spec() -> dict:
+    """Bedrock tool spec for getCompanies."""
+    return {
+        "toolSpec": {
+            "name": "getCompanies",
+            "description": (
+                "Fetch live Google Ad Manager Companies (Advertisers, Agencies, Ad Networks, Child Publishers). "
+                "Use this tool when the user asks about customer accounts, direct advertisers, ad agencies, programmatic buyers, external CRM IDs, or customer credit holds."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter companies by name."
+                        },
+                        "type_filter": {
+                            "type": "string",
+                            "description": "Optional type filter ('ADVERTISER', 'AGENCY', 'AD_NETWORK', 'CHILD_PUBLISHER', 'HOUSE_ADVERTISER')."
+                        },
+                        "credit_status_filter": {
+                            "type": "string",
+                            "description": "Optional credit status filter ('ACTIVE', 'INACTIVE', 'BLOCKED', 'ON_HOLD')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of companies to return (default 100)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_contacts_tool_spec() -> dict:
+    """Bedrock tool spec for getContacts."""
+    return {
+        "toolSpec": {
+            "name": "getContacts",
+            "description": (
+                "Fetch Google Ad Manager Commercial Contacts (advertiser and agency contact directory). "
+                "Use this tool when the user asks for contact emails, phone numbers, contact names, or commercial account reps."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter contacts by name."
+                        },
+                        "company_id": {
+                            "type": "string",
+                            "description": "Optional Company ID to filter contacts belonging to a specific advertiser or agency."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of contacts to return (default 50)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_advertiser_analytics_tool_spec() -> dict:
+    """Bedrock tool spec for getAdvertiserAnalytics."""
+    return {
+        "toolSpec": {
+            "name": "getAdvertiserAnalytics",
+            "description": (
+                "Fetch Commercial Customer Portfolio Analytics, analyzing company type distributions, credit holds, and missing CRM mappings. "
+                "Use this tool when the user asks for an audit of advertisers, agency breakdown, or credit risk health."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of companies to analyze (default 200)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_advertiser_rankings_tool_spec() -> dict:
+    """Bedrock tool spec for getAdvertiserRankings."""
+    return {
+        "toolSpec": {
+            "name": "getAdvertiserRankings",
+            "description": (
+                "Rank network Advertisers by live Revenue or Impression volume across a date range. "
+                "Use this tool when the user asks for top advertisers, highest spending customers, revenue by advertiser, advertiser rankings, or advertiser market share."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {
+                            "type": "string",
+                            "description": "Start date in YYYY-MM-DD format."
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "End date in YYYY-MM-DD format."
+                        },
+                        "metric": {
+                            "type": "string",
+                            "description": "Metric to rank by ('revenue' or 'impressions', default 'revenue')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Number of top advertisers to return (default 20)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 def get_query_data_tool_spec() -> dict:
     """Bedrock-compatible tool specification for the query_data tool (in-session aggregations)."""
     return {
@@ -943,6 +1283,23 @@ async def stream_bedrock_response(
                     get_website_performance_tool_spec(),    # WEBSITE PERFORMANCE: metrics breakdown
                     get_website_health_tool_spec(),         # WEBSITE HEALTH: working vs critical
                     get_website_trend_tool_spec(),          # WEBSITE TREND: daily/weekly historical
+                    # ── PHASE 2: INVENTORY TOOLS ──────────────────────────────
+                    get_ad_unit_hierarchy_tool_spec(),
+                    get_placements_tool_spec(),
+                    get_custom_targeting_tool_spec(),
+                    # ── PHASE 3: CAMPAIGN TOOLS ───────────────────────────────
+                    get_orders_tool_spec(),
+                    get_line_items_tool_spec(),
+                    get_delivery_progress_tool_spec(),
+                    # ── PHASE 4: CREATIVE TOOLS ───────────────────────────────
+                    get_creatives_tool_spec(),
+                    get_creative_templates_tool_spec(),
+                    get_creative_diagnostics_tool_spec(),
+                    # ── PHASE 5: ADVERTISER & COMMERCIAL TOOLS ────────────────
+                    get_companies_tool_spec(),
+                    get_contacts_tool_spec(),
+                    get_advertiser_analytics_tool_spec(),
+                    get_advertiser_rankings_tool_spec(),
                     get_query_data_tool_spec(),             # SECONDARY: in-session aggregations
                     # ── NEW TOOLS (additive) ──────────────────────────────────
                     get_network_summary_tool_spec(),        # NETWORK: summary + health + insights
