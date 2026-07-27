@@ -299,7 +299,7 @@ class GAMClient:
             ]
             if any(d in {"YIELD_GROUP_NAME", "YIELD_GROUP_ID"} for d in report_dims):
                 report_cols = [c for c in report_cols if c not in {"TOTAL_LINE_ITEM_LEVEL_CLICKS", "TOTAL_LINE_ITEM_LEVEL_CTR"}]
-            if any(d in {"REGION_NAME", "CITY_NAME", "DEVICE_CATEGORY_NAME", "BROWSER_NAME", "OPERATING_SYSTEM_NAME", "MOBILE_APP_NAME", "REFERER_URL", "DOMAIN", "TRAFFIC_SOURCE_NAME"} for d in report_dims):
+            if any(d in {"REGION_NAME", "CITY_NAME", "DEVICE_CATEGORY_NAME", "BROWSER_NAME", "OPERATING_SYSTEM_NAME", "MOBILE_APP_NAME", "REFERER_URL", "DOMAIN", "TRAFFIC_SOURCE_NAME", "CHILD_NETWORK_CODE", "CHILD_NETWORK_NAME"} for d in report_dims):
                 report_cols = [
                     "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
                     "TOTAL_LINE_ITEM_LEVEL_CLICKS",
@@ -1223,8 +1223,11 @@ class GAMClient:
         self,
         start_date: datetime.date,
         end_date: datetime.date,
+        force_refresh: bool = False,
+        demand_channel: str = "all",
         extra_dims: List[str] = None,
-        separate_report: bool = False
+        separate_report: bool = False,
+        omit_ad_units: bool = False,
     ) -> pd.DataFrame:
         """Synchronous wrapper for get_live_data for internal ranking aggregations."""
         import asyncio
@@ -1236,12 +1239,12 @@ class GAMClient:
         
         if loop.is_running():
             # If already running in loop, call run_report directly
-            csv_path = self.run_report(start_date, end_date, extra_dims=extra_dims, separate_report=separate_report)
+            csv_path = self.run_report(start_date, end_date, extra_dims=extra_dims, separate_report=separate_report, omit_ad_units=omit_ad_units)
             df = pd.read_csv(csv_path, compression='gzip')
             df.columns = [c.lower() for c in df.columns]
             return df
         else:
-            return loop.run_until_complete(self.get_live_data(start_date, end_date, extra_dims=extra_dims, separate_report=separate_report))
+            return loop.run_until_complete(self.get_live_data(start_date, end_date, force_refresh=force_refresh, demand_channel=demand_channel, extra_dims=extra_dims, separate_report=separate_report, omit_ad_units=omit_ad_units))
 
     # ── PHASE 6: YIELD & PROGRAMMATIC INTELLIGENCE ─────────────────────────────
 
@@ -1843,6 +1846,74 @@ class GAMClient:
                 "impression_share_pct": round(share_pct, 2)
             })
         return results
+
+    # ─── PHASE 9: NETWORK INTELLIGENCE ────────────────────────────────────────
+
+    def get_network_metadata(self) -> Dict[str, Any]:
+        """
+        Retrieve live network configuration, properties, timezone, currency, and root ad unit from GAM.
+        """
+        from zeep.helpers import serialize_object
+        srv = self.client.GetService("NetworkService", version=API_VERSION)
+        net = serialize_object(srv.getCurrentNetwork())
+        return {
+            "network_id": str(net.get("id", "")),
+            "network_code": str(net.get("networkCode", "")),
+            "display_name": str(net.get("displayName", "")),
+            "property_code": str(net.get("propertyCode", "")),
+            "time_zone": str(net.get("timeZone", "")),
+            "currency_code": str(net.get("currencyCode", "")),
+            "secondary_currency_codes": list(net.get("secondaryCurrencyCodes", []) or []),
+            "effective_root_ad_unit_id": str(net.get("effectiveRootAdUnitId", "")),
+            "is_test": bool(net.get("isTest", False))
+        }
+
+    def get_network_summary(self, start_date: date, end_date: date, include_insights: bool = True) -> Dict[str, Any]:
+        """
+        Analyze high-level network health, core KPIs, fill rate, eCPM, and automatic insights.
+        """
+        from mcp_server.services.network_analytics import compute_network_summary, compute_anomalies_from_df, compute_automatic_insights
+        df = self.get_live_data_sync(start_date, end_date, force_refresh=True, demand_channel="all")
+        summary = compute_network_summary(df, self.network_code, start_date, end_date)
+        if include_insights:
+            anomalies = compute_anomalies_from_df(df)
+            insights = compute_automatic_insights(summary)
+            summary["anomalies"] = anomalies[:8]
+            summary["insights"] = insights
+        return summary
+
+    def get_child_network_analytics(self, start_date: date, end_date: date, metric: str = "revenue", limit: int = 15, filter_network: str = "") -> Dict[str, Any]:
+        """
+        Analyze monetization and performance across child publishers and MCM partners.
+        """
+        from mcp_server.services.network_analytics import compute_child_network_analytics
+        try:
+            df = self.get_live_data_sync(start_date, end_date, force_refresh=True, demand_channel="all", extra_dims=["CHILD_NETWORK_CODE"], omit_ad_units=True)
+        except Exception:
+            df = self.get_live_data_sync(start_date, end_date, force_refresh=True, demand_channel="all")
+        return compute_child_network_analytics(df, start_date, end_date, metric=metric, limit=limit, filter_network=filter_network)
+
+    def get_match_rate_analytics(self, start_date: date, end_date: date, dimension: str = "device", limit: int = 15) -> Dict[str, Any]:
+        """
+        Analyze ad request fill rates and match rates broken down by dimension.
+        """
+        from mcp_server.services.network_analytics import compute_match_rate_analytics
+        dim_map = {
+            "device": "DEVICE_CATEGORY_NAME",
+            "country": "COUNTRY_NAME",
+            "browser": "BROWSER_NAME",
+            "app": "MOBILE_APP_NAME",
+            "domain": "DOMAIN",
+            "ad_unit": "AD_UNIT_NAME"
+        }
+        target_dim = dim_map.get(dimension.lower().strip(), "DEVICE_CATEGORY_NAME")
+        try:
+            df = self.get_live_data_sync(start_date, end_date, force_refresh=True, demand_channel="all", extra_dims=[target_dim], omit_ad_units=True)
+        except Exception:
+            df = self.get_live_data_sync(start_date, end_date, force_refresh=True, demand_channel="all")
+        return compute_match_rate_analytics(df, dimension, start_date, end_date, limit=limit)
+
+
 
 
 

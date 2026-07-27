@@ -16,7 +16,7 @@ This roadmap tracks the 12 phases for transforming Ask GAM 360 into a complete c
 | Phase 6 | Yield | ✅ Completed |
 | Phase 7 | Forecasting | ✅ Completed |
 | Phase 8 | Audience | ✅ Completed |
-| Phase 9 | Network | ⏳ Pending |
+| Phase 9 | Network | ✅ Completed |
 | Phase 10 | Targeting | ⏳ Pending |
 | Phase 11 | Executive AI | ⏳ Pending |
 | Phase 12 | Knowledge | ⏳ Pending |

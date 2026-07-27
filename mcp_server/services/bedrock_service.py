@@ -934,6 +934,26 @@ def get_query_data_tool_spec() -> dict:
 
 # ─── NEW TOOL SPECS (Additive) ────────────────────────────────────────────────
 
+def get_network_metadata_tool_spec() -> dict:
+    """Tool spec for getNetworkMetadata — live network configuration & metadata."""
+    return {
+        "toolSpec": {
+            "name": "getNetworkMetadata",
+            "description": (
+                "Fetch live network configuration and metadata from Google Ad Manager. "
+                "Use when the user asks about network settings, timezone, currency, display name, "
+                "network ID, network code, or effective root ad unit ID."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        }
+    }
+
 def get_network_summary_tool_spec() -> dict:
     """Tool spec for getNetworkSummary — live network-level intelligence."""
     return {
@@ -1612,7 +1632,8 @@ async def stream_bedrock_response(
                     get_audience_technology_tool_spec(),
                     get_mobile_app_traffic_tool_spec(),
                     get_traffic_sources_tool_spec(),
-                    # ── NEW TOOLS (additive) ──────────────────────────────────
+                    # ── PHASE 9: NETWORK INTELLIGENCE TOOLS ───────────────────
+                    get_network_metadata_tool_spec(),       # NETWORK: metadata + properties
                     get_network_summary_tool_spec(),        # NETWORK: summary + health + insights
                     get_child_network_analytics_tool_spec(),# MCM: child network breakdown
                     get_match_rate_analytics_tool_spec(),   # MATCH RATE: by dimension

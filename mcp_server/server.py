@@ -2234,6 +2234,15 @@ def _make_tool_executor(cached_df):
 
         # ── NEW TOOLS (additive) ─────────────────────────────────────────────────
 
+        if tool_name == "getNetworkMetadata":
+            try:
+                meta = gam.get_network_metadata()
+                log_payload_stats("getNetworkMetadata", meta)
+                return meta
+            except Exception as e:
+                log.error("[Chat:getNetworkMetadata] GAM fetch failed: %s", e)
+                return {"error": f"Failed to fetch network metadata: {e}"}
+
         if tool_name == "getNetworkSummary":
             start_raw  = input_dict.get("start_date", "").strip()
             end_raw    = input_dict.get("end_date",   "").strip()
@@ -3722,6 +3731,50 @@ async def list_tools() -> list[types.Tool]:
                 }
             }
         ),
+        types.Tool(
+            name="getNetworkMetadata",
+            description="Fetch live network configuration and metadata from Google Ad Manager.",
+            inputSchema={"type": "object", "properties": {}, "required": []}
+        ),
+        types.Tool(
+            name="getNetworkSummary",
+            description="Fetch a live network-wide performance summary from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                    "include_insights": {"type": "boolean", "description": "Whether to compute anomalies and insights. Default is true."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getChildNetworkAnalytics",
+            description="Analyze monetization and performance across child publishers and MCM partners.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                    "metric": {"type": "string", "description": "Sort metric: 'revenue', 'impressions', or 'ecpm'. Default is 'revenue'."},
+                    "limit": {"type": "integer", "description": "Max child networks to return. Default is 15."},
+                    "filter_network": {"type": "string", "description": "Filter by network code or name."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getMatchRateAnalytics",
+            description="Analyze ad request fill rates and match rates broken down by dimension.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                    "dimension": {"type": "string", "description": "Dimension to group by: 'device', 'country', 'browser', 'app', 'domain'. Default is 'device'."},
+                    "limit": {"type": "integer", "description": "Max items to return. Default is 15."}
+                }
+            }
+        ),
     ]
 
 
@@ -3939,6 +3992,39 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 int(arguments.get("limit", 25))
             )
             return [types.TextContent(type="text", text=json.dumps({"count": len(res), "traffic_sources": res}, indent=2))]
+        if name == "getNetworkMetadata":
+            res = await asyncio.to_thread(gam.get_network_metadata)
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getNetworkSummary":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(
+                gam.get_network_summary,
+                s_date,
+                e_date,
+                arguments.get("include_insights", True)
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getChildNetworkAnalytics":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(
+                gam.get_child_network_analytics,
+                s_date,
+                e_date,
+                arguments.get("metric", "revenue"),
+                int(arguments.get("limit", 15)),
+                arguments.get("filter_network", "")
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getMatchRateAnalytics":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(
+                gam.get_match_rate_analytics,
+                s_date,
+                e_date,
+                arguments.get("dimension", "device"),
+                int(arguments.get("limit", 15))
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 
         start_date, end_date, start_hour, end_hour = _resolve_dates(arguments)
         force_refresh = arguments.get("force_refresh", False)
