@@ -490,6 +490,106 @@ def get_match_rate_analytics_tool_spec() -> dict:
     }
 
 
+def get_top_websites_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for the getTopWebsites tool."""
+    return {
+        "toolSpec": {
+            "name": "getTopWebsites",
+            "description": "Get the top N performing websites/placements ranked by a specific metric (revenue, impressions, clicks, ecpm, fill_rate, ctr). ALWAYS use this when user asks for top websites.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "metric": {"type": "string", "description": "Metric to rank by: revenue, impressions, clicks, ecpm, fill_rate, ctr. Default is revenue."},
+                        "limit": {"type": "integer", "description": "Number of websites to return. Default is 10."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_bottom_websites_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for the getBottomWebsites tool."""
+    return {
+        "toolSpec": {
+            "name": "getBottomWebsites",
+            "description": "Get the bottom/lowest N performing websites/placements ranked by a specific metric (revenue, impressions, clicks, ecpm, fill_rate, ctr). ALWAYS call this when user asks for lowest or bottom websites or lowest impressions.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "metric": {"type": "string", "description": "Metric to rank by: revenue, impressions, clicks, ecpm, fill_rate, ctr. Default is revenue."},
+                        "limit": {"type": "integer", "description": "Number of websites to return. Default is 10."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_website_performance_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for the getWebsitePerformance tool."""
+    return {
+        "toolSpec": {
+            "name": "getWebsitePerformance",
+            "description": "Get detailed performance metrics (impressions, clicks, revenue, eCPM, fill rate) for all websites.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_website_health_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for the getWebsiteHealth tool."""
+    return {
+        "toolSpec": {
+            "name": "getWebsiteHealth",
+            "description": "Analyze health status (Working, Warning, Critical, Offline) across all websites.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_website_trend_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for the getWebsiteTrend tool."""
+    return {
+        "toolSpec": {
+            "name": "getWebsiteTrend",
+            "description": "Get historical daily or weekly trend data for websites over time.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "interval": {"type": "string", "description": "Interval for trend: daily or weekly. Default is daily."}
+                    }
+                }
+            }
+        }
+    }
+
+
 # ─── Message Builder ──────────────────────────────────────────────────────────
 
 def build_bedrock_messages(history: list[dict], new_message: str) -> list[dict]:
@@ -725,6 +825,11 @@ async def stream_bedrock_response(
                 "tools": [
                     get_query_gam_data_tool_spec(),         # PRIMARY: live GAM queries
                     get_website_inventory_tool_spec(),      # WEBSITE INVENTORY: full website reports
+                    get_top_websites_tool_spec(),           # TOP WEBSITES: ranked placements
+                    get_bottom_websites_tool_spec(),        # BOTTOM WEBSITES: lowest performing placements
+                    get_website_performance_tool_spec(),    # WEBSITE PERFORMANCE: metrics breakdown
+                    get_website_health_tool_spec(),         # WEBSITE HEALTH: working vs critical
+                    get_website_trend_tool_spec(),          # WEBSITE TREND: daily/weekly historical
                     get_query_data_tool_spec(),             # SECONDARY: in-session aggregations
                     # ── NEW TOOLS (additive) ──────────────────────────────────
                     get_network_summary_tool_spec(),        # NETWORK: summary + health + insights
@@ -757,23 +862,34 @@ async def stream_bedrock_response(
         log.info("[Bedrock] Request — model=%s attempt=%d/%d", model_id, attempt, max_retries)
 
         try:
-            payload = _build_payload(messages)
-            response = await asyncio.to_thread(_call_bedrock, payload)
-
-            text, tool_uses = _extract_text_and_tools(response)
-            log.info("[Bedrock] First turn — text_len=%d tool_uses=%d", len(text), len(tool_uses))
-
-            # ── No tool calls: stream reply directly ──────────────────────────
-            if not tool_uses:
-                if text:
-                    async for chunk in _stream_text(text):
-                        yield chunk
+            # ── Multi-Turn Tool Execution Loop (up to 5 turns) ────────────────
+            current_msgs = list(messages)
+            for turn in range(5):
+                if turn == 0:
+                    payload = _build_payload(current_msgs)
+                    response = await asyncio.to_thread(_call_bedrock, payload)
+                    text, tool_uses = _extract_text_and_tools(response)
                 else:
-                    yield _sse({"type": "error", "content": "No response from AI model."})
+                    log.info("[Bedrock] Sending tool results for turn %d...", turn + 1)
+                    payload_next = _build_payload(current_msgs)
+                    response_next = await asyncio.to_thread(_call_bedrock, payload_next)
+                    text, tool_uses = _extract_text_and_tools(response_next)
 
-            # ── Tool calls: execute (async), then second turn ─────────────────
-            else:
+                log.info("[Bedrock] Turn %d — text_len=%d tool_uses=%d", turn + 1, len(text), len(tool_uses))
+
+                # If no tool calls in this turn, stream the text and finish
+                if not tool_uses:
+                    if text:
+                        async for chunk in _stream_text(text):
+                            yield chunk
+                    else:
+                        yield _sse({"type": "error", "content": "No response from AI model."})
+                    break
+
+                # Otherwise, execute all requested tools and continue loop
                 assistant_content: list[dict] = []
+                if text:
+                    assistant_content.append({"text": text})
                 user_tool_results: list[dict] = []
 
                 for t in tool_uses:
@@ -781,11 +897,8 @@ async def stream_bedrock_response(
                     tool_use_id = t["toolUseId"]
                     input_dict = t["input"]
 
-                    log.info("[Bedrock] Tool call — name=%s input=%s", tool_name, input_dict)
-
-                    # tool_executor is async — await it directly
+                    log.info("[Bedrock] Tool call (turn %d) — name=%s input=%s", turn + 1, tool_name, input_dict)
                     result = await tool_executor(tool_name, input_dict)
-
                     safe_result = json.loads(json.dumps(result, default=str))
                     log.info("[Bedrock] Tool result — name=%s keys=%s", tool_name, list(safe_result.keys()))
 
@@ -804,22 +917,8 @@ async def stream_bedrock_response(
                         }
                     })
 
-                messages_with_tools = messages + [
-                    {"role": "assistant", "content": assistant_content},
-                    {"role": "user", "content": user_tool_results},
-                ]
-
-                log.info("[Bedrock] Sending tool results for second-turn response...")
-                payload2 = _build_payload(messages_with_tools)
-                response2 = await asyncio.to_thread(_call_bedrock, payload2)
-                text2, _ = _extract_text_and_tools(response2)
-                log.info("[Bedrock] Second turn — text_len=%d", len(text2))
-
-                if text2:
-                    async for chunk in _stream_text(text2):
-                        yield chunk
-                else:
-                    yield _sse({"type": "error", "content": "No response from AI model on second turn."})
+                current_msgs.append({"role": "assistant", "content": assistant_content})
+                current_msgs.append({"role": "user", "content": user_tool_results})
 
             latency_ms = round((time.monotonic() - t_start) * 1000)
             log.info("[Bedrock] Completed — latency_ms=%d", latency_ms)
