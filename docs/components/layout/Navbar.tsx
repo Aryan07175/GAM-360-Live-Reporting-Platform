@@ -72,7 +72,7 @@ export function Navbar({ onMenuClick }: { onMenuClick?: () => void }) {
           </div>
           <nav className="flex items-center">
             <Link
-              href="https://github.com/YOUR_USERNAME/GAM-360-Live-Reporting-Platform"
+              href="https://github.com/Aryan07175/GAM-360-Live-Reporting-Platform"
               target="_blank"
               rel="noreferrer"
             >

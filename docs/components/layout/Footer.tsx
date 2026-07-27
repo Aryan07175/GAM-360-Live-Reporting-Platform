@@ -25,7 +25,7 @@ export function Footer() {
           <p className="text-center text-sm leading-loose text-muted-foreground md:text-left">
             Built for{" "}
             <a
-              href="https://github.com/YOUR_USERNAME/GAM-360-Live-Reporting-Platform"
+              href="https://github.com/Aryan07175/GAM-360-Live-Reporting-Platform"
               target="_blank"
               rel="noreferrer"
               className="font-medium underline underline-offset-4"
@@ -37,7 +37,7 @@ export function Footer() {
         </div>
         <div className="flex items-center space-x-4">
           <Link
-            href="https://github.com/YOUR_USERNAME/GAM-360-Live-Reporting-Platform"
+            href="https://github.com/Aryan07175/GAM-360-Live-Reporting-Platform"
             target="_blank"
             rel="noreferrer"
             className="text-muted-foreground hover:text-foreground"

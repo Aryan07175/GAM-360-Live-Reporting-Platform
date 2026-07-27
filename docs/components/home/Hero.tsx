@@ -73,7 +73,7 @@ export function Hero() {
               Read the Docs
             </Link>
             <Link
-              href="https://github.com/YOUR_USERNAME/GAM-360-Live-Reporting-Platform"
+              href="https://github.com/Aryan07175/GAM-360-Live-Reporting-Platform"
               target="_blank"
               rel="noreferrer"
               className="inline-flex h-12 items-center justify-center rounded-md border border-input bg-background px-8 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -82,7 +82,7 @@ export function Hero() {
               GitHub
             </Link>
             <Link
-              href="https://dashboard.render.com"
+              href="https://gam-360-live-reporting-platform.vercel.app"
               target="_blank"
               rel="noreferrer"
               className="inline-flex h-12 items-center justify-center rounded-md bg-secondary px-8 text-sm font-medium shadow-sm transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
