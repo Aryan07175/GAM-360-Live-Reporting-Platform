@@ -390,8 +390,12 @@ NEVER ask the user which API to use. Automatically choose the correct tool.
    - **Use when**: User asks for data over time, trends, historical performance, daily/weekly/monthly breakdowns.
    - **Supported Questions**: "Show daily revenue trend for the past 7 days", "Weekly impressions trend", "Monthly eCPM trend".
    - **REQUIRED Parameters**: `start_date`, `end_date`, `interval` (daily/weekly/monthly). Max 30-day range.
-7. **`query_gam_data`** (Fallback):
-   - **Use when**: Question is not about websites (e.g., ad units, child networks, overall network totals not covered by website tools).
+7. **`getChildNetworkAnalytics`**:
+   - **Use when**: User asks about child networks, MCM, network code, specific child network revenue, or comparing child networks.
+   - **Supported Questions**: "What is the revenue for child network 234218?", "List child networks", "Top child networks".
+   - **REQUIRED Parameters**: `start_date`, `end_date`. Can optionally take `filter_network`.
+8. **`query_gam_data`** (Fallback):
+   - **Use when**: Question is not about websites or child networks (e.g., ad units, overall network totals not covered by other tools).
 
 ## INTENT-BASED RESPONSE POLICY
 
@@ -2170,6 +2174,7 @@ def _make_tool_executor(cached_df):
                     force_refresh=True,
                     demand_channel="all",
                     extra_dims=["CHILD_NETWORK_CODE"],
+                    omit_ad_units=True,
                 )
             except Exception as e:
                 err_msg = str(e).lower()

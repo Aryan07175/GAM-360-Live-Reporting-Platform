@@ -215,6 +215,7 @@ class GAMClient:
         end: date,
         extra_dims: List[str] = None,
         separate_report: bool = False,
+        omit_ad_units: bool = False,
     ) -> int:
         """
         Submit a report job to Google Ad Manager.
@@ -230,7 +231,7 @@ class GAMClient:
 
         day_count = (end - start).days + 1
 
-        if separate_report:
+        if separate_report or omit_ad_units:
             # No ad-unit breakdown — DATE + specified dimensions only
             report_dims = ["DATE"]
         else:
@@ -480,7 +481,7 @@ class GAMClient:
     async def get_live_data(
         self, start: date, end: date, force_refresh: bool = False,
         demand_channel: str = "all", extra_dims: List[str] = None,
-        separate_report: bool = False,
+        separate_report: bool = False, omit_ad_units: bool = False,
     ) -> pd.DataFrame:
         """
         Fetch LIVE data from Google Ad Manager. Always generates a new report.
@@ -495,7 +496,8 @@ class GAMClient:
         """
         extra_suffix = "_".join(extra_dims) if extra_dims else ""
         sep_suffix = "_sep" if separate_report else ""
-        key = _dedup._key(self.network_code, start, end) + f"_{demand_channel}_{extra_suffix}{sep_suffix}"
+        omit_suffix = "_omit" if omit_ad_units else ""
+        key = _dedup._key(self.network_code, start, end) + f"_{demand_channel}_{extra_suffix}{sep_suffix}{omit_suffix}"
         lock = _dedup._get_lock(key)
 
         async with lock:
@@ -505,9 +507,9 @@ class GAMClient:
                     log.info(f"Dedup hit for {key} (within 30s window)")
                     return existing
 
-            log.info(f"Fetching LIVE data from GAM: {start} to {end} (extra_dims={extra_dims} separate={separate_report})")
+            log.info(f"Fetching LIVE data from GAM: {start} to {end} (extra_dims={extra_dims} separate={separate_report} omit_ad_units={omit_ad_units})")
 
-            job_id = await asyncio.to_thread(self.run_report, start, end, extra_dims, separate_report)
+            job_id = await asyncio.to_thread(self.run_report, start, end, extra_dims, separate_report, omit_ad_units)
             await self.wait_for_report(job_id)
             df = await asyncio.to_thread(self.download_report, job_id, demand_channel)
 
@@ -518,7 +520,7 @@ class GAMClient:
     async def get_live_data_multi_day(
         self, start: date, end: date, force_refresh: bool = False,
         demand_channel: str = "all", extra_dims: List[str] = None,
-        separate_report: bool = False,
+        separate_report: bool = False, omit_ad_units: bool = False,
     ) -> pd.DataFrame:
         """
         Fetch data for a date range from Google Ad Manager.
@@ -534,7 +536,7 @@ class GAMClient:
 
         # For ranges up to 90 days, fetch as a single GAM report
         if day_count <= 90:
-            df = await self.get_live_data(start, end, force_refresh, demand_channel, extra_dims, separate_report)
+            df = await self.get_live_data(start, end, force_refresh, demand_channel, extra_dims, separate_report, omit_ad_units)
         else:
             # For larger ranges, split into 30-day chunks and fetch in parallel
             log.info(f"Splitting {day_count}-day range into 30-day chunks")
@@ -552,7 +554,7 @@ class GAMClient:
                 for attempt in range(retries):
                     try:
                         async with semaphore:
-                            return await self.get_live_data(s, e, force_refresh, demand_channel, extra_dims, separate_report)
+                            return await self.get_live_data(s, e, force_refresh, demand_channel, extra_dims, separate_report, omit_ad_units)
                     except Exception as e_in:
                         if attempt == retries - 1:
                             log.error(f"Chunk {s} to {e} failed after {retries} attempts: {e_in}")
