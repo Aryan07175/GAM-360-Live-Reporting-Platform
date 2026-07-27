@@ -3671,6 +3671,57 @@ async def list_tools() -> list[types.Tool]:
                 }
             }
         ),
+        types.Tool(
+            name="getAudienceGeography",
+            description="Analyze audience geographical distribution and monetization by country, state (region), or city.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                    "level": {"type": "string", "description": "Geographical level: 'country', 'state', 'region', or 'city'. Default is 'country'."},
+                    "limit": {"type": "integer", "description": "Number of top locations to return. Default is 25."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getAudienceTechnology",
+            description="Analyze audience technology breakdown by device category, browser, or operating system.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                    "dimension": {"type": "string", "description": "Technology dimension: 'device', 'browser', or 'operating_system'. Default is 'device'."},
+                    "limit": {"type": "integer", "description": "Number of top technology records to return. Default is 25."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getMobileAppTraffic",
+            description="Analyze traffic and monetization performance across mobile apps.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                    "limit": {"type": "integer", "description": "Number of top mobile apps to return. Default is 25."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getTrafficSources",
+            description="Analyze traffic sources by domain, referrer URL, or traffic source channel.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                    "source_type": {"type": "string", "description": "Source dimension: 'domain', 'referrer', or 'traffic_source'. Default is 'domain'."},
+                    "limit": {"type": "integer", "description": "Number of top traffic sources to return. Default is 25."}
+                }
+            }
+        ),
     ]
 
 
@@ -3849,6 +3900,45 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 int(arguments.get("limit", 10))
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getAudienceGeography":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(
+                gam.get_audience_geography,
+                s_date,
+                e_date,
+                arguments.get("level", "country"),
+                int(arguments.get("limit", 25))
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "geography": res}, indent=2))]
+        if name == "getAudienceTechnology":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(
+                gam.get_audience_technology,
+                s_date,
+                e_date,
+                arguments.get("dimension", "device"),
+                int(arguments.get("limit", 25))
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "technology": res}, indent=2))]
+        if name == "getMobileAppTraffic":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(
+                gam.get_mobile_app_traffic,
+                s_date,
+                e_date,
+                int(arguments.get("limit", 25))
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "mobile_apps": res}, indent=2))]
+        if name == "getTrafficSources":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(
+                gam.get_traffic_sources,
+                s_date,
+                e_date,
+                arguments.get("source_type", "domain"),
+                int(arguments.get("limit", 25))
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "traffic_sources": res}, indent=2))]
 
         start_date, end_date, start_hour, end_hour = _resolve_dates(arguments)
         force_refresh = arguments.get("force_refresh", False)

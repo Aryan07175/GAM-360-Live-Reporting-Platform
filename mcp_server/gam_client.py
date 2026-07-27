@@ -82,6 +82,13 @@ DIMENSION_MAP = {
     "advertiser":             "ADVERTISER_NAME",           # requires separate report
     "advertiser_classified":  "CLASSIFIED_ADVERTISER_NAME",# requires separate report
     "country":                "COUNTRY_NAME",              # requires separate report
+    "state":                  "REGION_NAME",               # requires separate report
+    "region":                 "REGION_NAME",               # requires separate report
+    "city":                   "CITY_NAME",                 # requires separate report
+    "mobile_app":             "MOBILE_APP_NAME",           # requires separate report
+    "domain":                 "DOMAIN",                    # requires separate report
+    "referrer":               "REFERER_URL",               # requires separate report
+    "traffic_source":         "TRAFFIC_SOURCE_NAME",       # requires separate report
     "placement":              "PLACEMENT_NAME",            # requires separate report
     "device":                 "DEVICE_CATEGORY_NAME",      # requires separate report
     "browser":                "BROWSER_NAME",              # requires separate report
@@ -101,6 +108,8 @@ DIMENSION_MAP = {
 # For these, run_report() will use DATE + dimension only (no ad-unit breakdown).
 DIMENSIONS_NEED_SEPARATE_REPORT = {
     "ADVERTISER_NAME", "CLASSIFIED_ADVERTISER_NAME", "COUNTRY_NAME",
+    "REGION_NAME", "CITY_NAME", "MOBILE_APP_NAME", "DOMAIN",
+    "REFERER_URL", "TRAFFIC_SOURCE_NAME",
     "PLACEMENT_NAME", "DEVICE_CATEGORY_NAME", "BROWSER_NAME",
     "OPERATING_SYSTEM_NAME", "COMPANY_NAME", "ORDER_NAME",
     "LINE_ITEM_NAME", "CREATIVE_NAME", "YIELD_GROUP_NAME",
@@ -290,6 +299,14 @@ class GAMClient:
             ]
             if any(d in {"YIELD_GROUP_NAME", "YIELD_GROUP_ID"} for d in report_dims):
                 report_cols = [c for c in report_cols if c not in {"TOTAL_LINE_ITEM_LEVEL_CLICKS", "TOTAL_LINE_ITEM_LEVEL_CTR"}]
+            if any(d in {"REGION_NAME", "CITY_NAME", "DEVICE_CATEGORY_NAME", "BROWSER_NAME", "OPERATING_SYSTEM_NAME", "MOBILE_APP_NAME", "REFERER_URL", "DOMAIN", "TRAFFIC_SOURCE_NAME"} for d in report_dims):
+                report_cols = [
+                    "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
+                    "TOTAL_LINE_ITEM_LEVEL_CLICKS",
+                    "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
+                    "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
+                    "TOTAL_LINE_ITEM_LEVEL_CTR",
+                ]
         else:
             if extra_dims or omit_ad_units:
                 report_cols = [c for c in COLUMNS if not c.startswith("TOTAL_INVENTORY_")]
@@ -1654,6 +1671,179 @@ class GAMClient:
             "estimated_total_monthly_revenue_uplift": round(float(total_uplift), 2),
             "opportunities": opportunities
         }
+
+    # ─── PHASE 8: AUDIENCE & TRAFFIC INTELLIGENCE ─────────────────────────────
+
+    def get_audience_geography(self, start_date: date, end_date: date, level: str = "country", limit: int = 25) -> List[Dict[str, Any]]:
+        """
+        Analyze audience geographical distribution by country, state (region), or city.
+        """
+        level_clean = level.lower().strip()
+        dim_map = {
+            "country": "COUNTRY_NAME",
+            "state": "REGION_NAME",
+            "region": "REGION_NAME",
+            "city": "CITY_NAME"
+        }
+        target_dim = dim_map.get(level_clean, "COUNTRY_NAME")
+        df = self.get_live_data_sync(start_date, end_date, extra_dims=[target_dim], separate_report=True)
+        
+        if df.empty or target_dim.lower() not in df.columns:
+            return []
+            
+        grouped = df.groupby(target_dim.lower(), as_index=False).agg({
+            "total_line_item_level_impressions": "sum",
+            "total_line_item_level_clicks": "sum",
+            "total_line_item_level_cpm_and_cpc_revenue": "sum"
+        })
+        grouped = grouped.sort_values(by="total_line_item_level_impressions", ascending=False)
+        
+        total_imp = float(grouped["total_line_item_level_impressions"].sum()) or 1.0
+        results = []
+        for _, row in grouped.head(limit).iterrows():
+            imp = int(row["total_line_item_level_impressions"])
+            clk = int(row["total_line_item_level_clicks"])
+            rev = float(row["total_line_item_level_cpm_and_cpc_revenue"])
+            ecpm = (rev / imp * 1000.0) if imp > 0 else 0.0
+            ctr = (clk / imp * 100.0) if imp > 0 else 0.0
+            share_pct = (imp / total_imp) * 100.0
+            results.append({
+                level_clean: str(row[target_dim.lower()]),
+                "impressions": imp,
+                "clicks": clk,
+                "cpm_cpc_revenue": round(rev, 2),
+                "ecpm": round(ecpm, 2),
+                "ctr_pct": round(ctr, 4),
+                "impression_share_pct": round(share_pct, 2)
+            })
+        return results
+
+    def get_audience_technology(self, start_date: date, end_date: date, dimension: str = "device", limit: int = 25) -> List[Dict[str, Any]]:
+        """
+        Analyze audience technology breakdown by device category, browser, or operating system.
+        """
+        dim_clean = dimension.lower().strip()
+        dim_map = {
+            "device": "DEVICE_CATEGORY_NAME",
+            "device_category": "DEVICE_CATEGORY_NAME",
+            "browser": "BROWSER_NAME",
+            "operating_system": "OPERATING_SYSTEM_NAME",
+            "os": "OPERATING_SYSTEM_NAME"
+        }
+        target_dim = dim_map.get(dim_clean, "DEVICE_CATEGORY_NAME")
+        df = self.get_live_data_sync(start_date, end_date, extra_dims=[target_dim], separate_report=True)
+        
+        if df.empty or target_dim.lower() not in df.columns:
+            return []
+            
+        grouped = df.groupby(target_dim.lower(), as_index=False).agg({
+            "total_line_item_level_impressions": "sum",
+            "total_line_item_level_clicks": "sum",
+            "total_line_item_level_cpm_and_cpc_revenue": "sum"
+        })
+        grouped = grouped.sort_values(by="total_line_item_level_impressions", ascending=False)
+        
+        total_imp = float(grouped["total_line_item_level_impressions"].sum()) or 1.0
+        results = []
+        for _, row in grouped.head(limit).iterrows():
+            imp = int(row["total_line_item_level_impressions"])
+            clk = int(row["total_line_item_level_clicks"])
+            rev = float(row["total_line_item_level_cpm_and_cpc_revenue"])
+            ecpm = (rev / imp * 1000.0) if imp > 0 else 0.0
+            ctr = (clk / imp * 100.0) if imp > 0 else 0.0
+            share_pct = (imp / total_imp) * 100.0
+            results.append({
+                dim_clean: str(row[target_dim.lower()]),
+                "impressions": imp,
+                "clicks": clk,
+                "cpm_cpc_revenue": round(rev, 2),
+                "ecpm": round(ecpm, 2),
+                "ctr_pct": round(ctr, 4),
+                "impression_share_pct": round(share_pct, 2)
+            })
+        return results
+
+    def get_mobile_app_traffic(self, start_date: date, end_date: date, limit: int = 25) -> List[Dict[str, Any]]:
+        """
+        Analyze traffic and monetization across mobile apps.
+        """
+        df = self.get_live_data_sync(start_date, end_date, extra_dims=["MOBILE_APP_NAME"], separate_report=True)
+        
+        if df.empty or "mobile_app_name" not in df.columns:
+            return []
+            
+        grouped = df.groupby("mobile_app_name", as_index=False).agg({
+            "total_line_item_level_impressions": "sum",
+            "total_line_item_level_clicks": "sum",
+            "total_line_item_level_cpm_and_cpc_revenue": "sum"
+        })
+        grouped = grouped.sort_values(by="total_line_item_level_impressions", ascending=False)
+        
+        total_imp = float(grouped["total_line_item_level_impressions"].sum()) or 1.0
+        results = []
+        for _, row in grouped.head(limit).iterrows():
+            imp = int(row["total_line_item_level_impressions"])
+            clk = int(row["total_line_item_level_clicks"])
+            rev = float(row["total_line_item_level_cpm_and_cpc_revenue"])
+            ecpm = (rev / imp * 1000.0) if imp > 0 else 0.0
+            ctr = (clk / imp * 100.0) if imp > 0 else 0.0
+            share_pct = (imp / total_imp) * 100.0
+            results.append({
+                "mobile_app_name": str(row["mobile_app_name"]),
+                "impressions": imp,
+                "clicks": clk,
+                "cpm_cpc_revenue": round(rev, 2),
+                "ecpm": round(ecpm, 2),
+                "ctr_pct": round(ctr, 4),
+                "impression_share_pct": round(share_pct, 2)
+            })
+        return results
+
+    def get_traffic_sources(self, start_date: date, end_date: date, source_type: str = "domain", limit: int = 25) -> List[Dict[str, Any]]:
+        """
+        Analyze traffic sources by domain, referrer URL, or traffic source channel.
+        """
+        src_clean = source_type.lower().strip()
+        dim_map = {
+            "domain": "DOMAIN",
+            "referrer": "REFERER_URL",
+            "referer": "REFERER_URL",
+            "source": "TRAFFIC_SOURCE_NAME",
+            "traffic_source": "TRAFFIC_SOURCE_NAME"
+        }
+        target_dim = dim_map.get(src_clean, "DOMAIN")
+        df = self.get_live_data_sync(start_date, end_date, extra_dims=[target_dim], separate_report=True)
+        
+        if df.empty or target_dim.lower() not in df.columns:
+            return []
+            
+        grouped = df.groupby(target_dim.lower(), as_index=False).agg({
+            "total_line_item_level_impressions": "sum",
+            "total_line_item_level_clicks": "sum",
+            "total_line_item_level_cpm_and_cpc_revenue": "sum"
+        })
+        grouped = grouped.sort_values(by="total_line_item_level_impressions", ascending=False)
+        
+        total_imp = float(grouped["total_line_item_level_impressions"].sum()) or 1.0
+        results = []
+        for _, row in grouped.head(limit).iterrows():
+            imp = int(row["total_line_item_level_impressions"])
+            clk = int(row["total_line_item_level_clicks"])
+            rev = float(row["total_line_item_level_cpm_and_cpc_revenue"])
+            ecpm = (rev / imp * 1000.0) if imp > 0 else 0.0
+            ctr = (clk / imp * 100.0) if imp > 0 else 0.0
+            share_pct = (imp / total_imp) * 100.0
+            results.append({
+                src_clean: str(row[target_dim.lower()]),
+                "impressions": imp,
+                "clicks": clk,
+                "cpm_cpc_revenue": round(rev, 2),
+                "ecpm": round(ecpm, 2),
+                "ctr_pct": round(ctr, 4),
+                "impression_share_pct": round(share_pct, 2)
+            })
+        return results
+
 
 
 

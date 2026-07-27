@@ -1256,6 +1256,89 @@ def get_monetization_opportunity_analysis_tool_spec() -> dict:
     }
 
 
+def get_audience_geography_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getAudienceGeography."""
+    return {
+        "toolSpec": {
+            "name": "getAudienceGeography",
+            "description": "Analyze audience geographical distribution and monetization by country, state (region), or city.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "level": {"type": "string", "description": "Geographical level: 'country', 'state', 'region', or 'city'. Default is 'country'."},
+                        "limit": {"type": "integer", "description": "Number of top locations to return. Default is 25."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_audience_technology_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getAudienceTechnology."""
+    return {
+        "toolSpec": {
+            "name": "getAudienceTechnology",
+            "description": "Analyze audience technology breakdown by device category, browser, or operating system.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "dimension": {"type": "string", "description": "Technology dimension: 'device', 'browser', or 'operating_system'. Default is 'device'."},
+                        "limit": {"type": "integer", "description": "Number of top technology records to return. Default is 25."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_mobile_app_traffic_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getMobileAppTraffic."""
+    return {
+        "toolSpec": {
+            "name": "getMobileAppTraffic",
+            "description": "Analyze traffic and monetization performance across mobile apps.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "limit": {"type": "integer", "description": "Number of top mobile apps to return. Default is 25."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_traffic_sources_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getTrafficSources."""
+    return {
+        "toolSpec": {
+            "name": "getTrafficSources",
+            "description": "Analyze traffic sources by domain, referrer URL, or traffic source channel.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "source_type": {"type": "string", "description": "Source dimension: 'domain', 'referrer', or 'traffic_source'. Default is 'domain'."},
+                        "limit": {"type": "integer", "description": "Number of top traffic sources to return. Default is 25."}
+                    }
+                }
+            }
+        }
+    }
+
+
 # ─── Message Builder ──────────────────────────────────────────────────────────
 
 def build_bedrock_messages(history: list[dict], new_message: str) -> list[dict]:
@@ -1524,6 +1607,11 @@ async def stream_bedrock_response(
                     get_line_item_delivery_forecast_tool_spec(),
                     get_capacity_planning_report_tool_spec(),
                     get_monetization_opportunity_analysis_tool_spec(),
+                    # ── PHASE 8: AUDIENCE & TRAFFIC TOOLS ─────────────────────
+                    get_audience_geography_tool_spec(),
+                    get_audience_technology_tool_spec(),
+                    get_mobile_app_traffic_tool_spec(),
+                    get_traffic_sources_tool_spec(),
                     # ── NEW TOOLS (additive) ──────────────────────────────────
                     get_network_summary_tool_spec(),        # NETWORK: summary + health + insights
                     get_child_network_analytics_tool_spec(),# MCM: child network breakdown
