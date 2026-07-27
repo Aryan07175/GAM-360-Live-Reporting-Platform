@@ -3527,6 +3527,54 @@ async def list_tools() -> list[types.Tool]:
                 }
             }
         ),
+        types.Tool(
+            name="getCompanies",
+            description="Fetch live Google Ad Manager Companies (Advertisers, Agencies, Ad Networks, Child Publishers).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter companies by name."},
+                    "type_filter": {"type": "string", "description": "Filter by type (ADVERTISER, AGENCY, AD_NETWORK, CHILD_PUBLISHER)."},
+                    "credit_status_filter": {"type": "string", "description": "Filter by credit status (ACTIVE, INACTIVE, BLOCKED, ON_HOLD)."},
+                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getContacts",
+            description="Fetch Google Ad Manager Commercial Contacts (advertiser and agency contact directory).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter contacts by name."},
+                    "company_id": {"type": "string", "description": "Filter contacts belonging to a specific Company ID."},
+                    "limit": {"type": "integer", "description": "Max results (default 50)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getAdvertiserAnalytics",
+            description="Fetch Commercial Customer Portfolio Analytics, analyzing company type distributions and credit risk health.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max companies to analyze (default 200)."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getAdvertiserRankings",
+            description="Rank network Advertisers by live Revenue or Impression volume across a date range.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                    "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                    "metric": {"type": "string", "description": "Metric to rank by ('revenue' or 'impressions', default 'revenue')."},
+                    "limit": {"type": "integer", "description": "Number of top advertisers to return (default 20)."}
+                }
+            }
+        ),
     ]
 
 
@@ -3608,6 +3656,39 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 gam.get_creative_diagnostics,
                 int(arguments.get("limit", 100)),
                 arguments.get("advertiser_id")
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getCompanies":
+            res = await asyncio.to_thread(
+                gam.get_companies,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter"),
+                arguments.get("type_filter"),
+                arguments.get("credit_status_filter")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "companies": res}, indent=2))]
+        if name == "getContacts":
+            res = await asyncio.to_thread(
+                gam.get_contacts,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+                arguments.get("company_id")
+            )
+            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "contacts": res}, indent=2))]
+        if name == "getAdvertiserAnalytics":
+            res = await asyncio.to_thread(
+                gam.get_advertiser_analytics,
+                int(arguments.get("limit", 200))
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getAdvertiserRankings":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(
+                gam.get_advertiser_rankings,
+                s_date,
+                e_date,
+                int(arguments.get("limit", 20)),
+                arguments.get("metric", "revenue")
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 

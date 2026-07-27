@@ -268,47 +268,26 @@ class GAMClient:
                 if dim not in report_dims:
                     report_dims.append(dim)
 
-        # Columns: for separate-report mode, only request total-network columns
-        # (ad-unit-level columns like AD_SERVER_AD_REQUESTS conflict with non-unit dims).
-        entity_dims = {"CREATIVE_NAME", "CREATIVE_ID", "LINE_ITEM_NAME", "LINE_ITEM_ID", "ORDER_NAME", "ORDER_ID", "COMPANY_NAME", "COMPANY_ID", "YIELD_GROUP_NAME", "YIELD_GROUP_ID"}
-        if separate_report or any(d in entity_dims for d in report_dims):
-            if any(d in entity_dims for d in report_dims):
-                report_cols = [
-                    "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
-                    "TOTAL_LINE_ITEM_LEVEL_CLICKS",
-                    "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
-                    "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",
-                    "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
-                    "TOTAL_LINE_ITEM_LEVEL_CTR",
-                    "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
-                    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
-                    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
-                    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE",
-                    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE",
-                    "TOTAL_ACTIVE_VIEW_AVERAGE_VIEWABLE_TIME",
-                    "TOTAL_ACTIVE_VIEW_REVENUE",
-                    "DROPOFF_RATE",
-                ]
-            else:
-                report_cols = [
-                    "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
-                    "TOTAL_LINE_ITEM_LEVEL_CLICKS",
-                    "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
-                    "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",
-                    "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
-                    "TOTAL_LINE_ITEM_LEVEL_CTR",
-                    "TOTAL_AD_REQUESTS",
-                    "TOTAL_RESPONSES_SERVED",
-                    "TOTAL_FILL_RATE",
-                    "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
-                    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
-                    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
-                    "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE",
-                    "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE",
-                    "TOTAL_ACTIVE_VIEW_AVERAGE_VIEWABLE_TIME",
-                    "TOTAL_ACTIVE_VIEW_REVENUE",
-                    "DROPOFF_RATE",
-                ]
+        # Columns: for separate-report mode or when non-inventory entity dimensions are requested,
+        # only request line-item-level metrics (ad-request metrics like TOTAL_AD_REQUESTS conflict with entity dims).
+        non_inventory_dims = [d for d in report_dims if d not in {"DATE", "HOUR", "WEEK", "MONTH_AND_YEAR", "AD_UNIT_NAME", "AD_UNIT_ID"}]
+        if separate_report or non_inventory_dims:
+            report_cols = [
+                "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
+                "TOTAL_LINE_ITEM_LEVEL_CLICKS",
+                "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
+                "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",
+                "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
+                "TOTAL_LINE_ITEM_LEVEL_CTR",
+                "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
+                "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
+                "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
+                "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS_RATE",
+                "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS_RATE",
+                "TOTAL_ACTIVE_VIEW_AVERAGE_VIEWABLE_TIME",
+                "TOTAL_ACTIVE_VIEW_REVENUE",
+                "DROPOFF_RATE",
+            ]
         else:
             if extra_dims or omit_ad_units:
                 report_cols = [c for c in COLUMNS if not c.startswith("TOTAL_INVENTORY_")]
@@ -1046,3 +1025,202 @@ class GAMClient:
             },
             "sample_creatives": creatives[:10]
         }
+
+    # ── PHASE 5: ADVERTISER & COMMERCIAL INTELLIGENCE ──────────────────────────
+
+    def get_companies(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        type_filter: str = None,
+        credit_status_filter: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch live Google Ad Manager Companies (Advertisers, Agencies, Ad Networks, Child Publishers)."""
+        company_service = self.client.GetService("CompanyService", version=API_VERSION)
+        statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
+
+        conditions = []
+        if name_filter:
+            conditions.append(f"name LIKE '%{name_filter}%'")
+        if type_filter:
+            conditions.append(f"type = '{type_filter.upper()}'")
+        if credit_status_filter:
+            conditions.append(f"creditStatus = '{credit_status_filter.upper()}'")
+        
+        if conditions:
+            statement_builder.Where(" AND ".join(conditions))
+        statement_builder.Limit(limit)
+
+        log.info(f"Request made: Service: \"CompanyService\" Method: \"getCompaniesByStatement\" URL: \"https://ads.google.com/apis/ads/publisher/{API_VERSION}/CompanyService\"")
+        response = company_service.getCompaniesByStatement(statement_builder.ToStatement())
+
+        results = []
+        for c in getattr(response, "results", []) or []:
+            results.append({
+                "id": str(getattr(c, "id", "")),
+                "name": str(getattr(c, "name", "")),
+                "type": str(getattr(c, "type", "")),
+                "credit_status": str(getattr(c, "creditStatus", "")),
+                "email": str(getattr(c, "email", "")),
+                "primary_phone": str(getattr(c, "primaryPhone", "")),
+                "external_id": str(getattr(c, "externalId", "")),
+                "primary_contact_id": str(getattr(c, "primaryContactId", "")),
+                "comment": str(getattr(c, "comment", ""))
+            })
+        return results
+
+    def get_contacts(
+        self,
+        limit: int = 50,
+        name_filter: str = None,
+        company_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch Google Ad Manager Commercial Contacts via ContactService."""
+        contact_service = self.client.GetService("ContactService", version=API_VERSION)
+        statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
+
+        conditions = []
+        if name_filter:
+            conditions.append(f"name LIKE '%{name_filter}%'")
+        if company_id:
+            conditions.append(f"companyId = {int(company_id)}")
+        
+        if conditions:
+            statement_builder.Where(" AND ".join(conditions))
+        statement_builder.Limit(limit)
+
+        log.info(f"Request made: Service: \"ContactService\" Method: \"getContactsByStatement\" URL: \"https://ads.google.com/apis/ads/publisher/{API_VERSION}/ContactService\"")
+        response = contact_service.getContactsByStatement(statement_builder.ToStatement())
+
+        results = []
+        for ct in getattr(response, "results", []) or []:
+            results.append({
+                "id": str(getattr(ct, "id", "")),
+                "name": str(getattr(ct, "name", "")),
+                "email": str(getattr(ct, "email", "")),
+                "title": str(getattr(ct, "title", "")),
+                "work_phone": str(getattr(ct, "workPhone", "")),
+                "cell_phone": str(getattr(ct, "cellPhone", "")),
+                "company_id": str(getattr(ct, "companyId", "")),
+                "status": str(getattr(ct, "status", ""))
+            })
+        return results
+
+    def get_advertiser_analytics(
+        self,
+        limit: int = 200
+    ) -> Dict[str, Any]:
+        """Compute Commercial Customer Portfolio Analytics across Advertisers and Agencies."""
+        companies = self.get_companies(limit=limit)
+        type_counts = {}
+        credit_counts = {}
+        missing_contacts = 0
+        with_external_id = 0
+
+        for c in companies:
+            ctype = c["type"]
+            type_counts[ctype] = type_counts.get(ctype, 0) + 1
+
+            credit = c["credit_status"] or "UNKNOWN"
+            credit_counts[credit] = credit_counts.get(credit, 0) + 1
+
+            if not c.get("primary_contact_id") or c.get("primary_contact_id") == "0":
+                missing_contacts += 1
+            if c.get("external_id"):
+                with_external_id += 1
+
+        return {
+            "total_companies_sampled": len(companies),
+            "company_types": type_counts,
+            "credit_status_breakdown": credit_counts,
+            "portfolio_health": {
+                "missing_primary_contact_count": missing_contacts,
+                "crm_external_id_mapped_count": with_external_id
+            },
+            "sample_companies": companies[:10]
+        }
+
+    def get_advertiser_rankings(
+        self,
+        start_date: datetime.date,
+        end_date: datetime.date,
+        limit: int = 20,
+        metric: str = "revenue"
+    ) -> Dict[str, Any]:
+        """Rank Advertisers across the network by live Revenue or Impressions."""
+        # Use run_report synchronously via thread in async or directly here
+        df = self.get_live_data_sync(start_date, end_date, extra_dims=["ADVERTISER_NAME"], separate_report=True)
+        if df.empty or "advertiser_name" not in df.columns:
+            return {"date_range": f"{start_date} to {end_date}", "rankings": [], "total_network_revenue": 0.0}
+
+        # Aggregate across dates per advertiser
+        agg_cols = {}
+        if "total_line_item_level_all_revenue" in df.columns:
+            agg_cols["total_line_item_level_all_revenue"] = "sum"
+        if "total_line_item_level_impressions" in df.columns:
+            agg_cols["total_line_item_level_impressions"] = "sum"
+        if "total_line_item_level_clicks" in df.columns:
+            agg_cols["total_line_item_level_clicks"] = "sum"
+
+        grouped = df.groupby("advertiser_name", as_index=False).agg(agg_cols)
+        
+        total_rev = grouped["total_line_item_level_all_revenue"].sum() if "total_line_item_level_all_revenue" in grouped.columns else 0.0
+        total_imp = grouped["total_line_item_level_impressions"].sum() if "total_line_item_level_impressions" in grouped.columns else 0
+
+        sort_col = "total_line_item_level_all_revenue" if metric.lower() == "revenue" else "total_line_item_level_impressions"
+        if sort_col in grouped.columns:
+            grouped = grouped.sort_values(by=sort_col, ascending=False)
+
+        rankings = []
+        for rank, row in enumerate(grouped.head(limit).to_dict("records"), 1):
+            rev = float(row.get("total_line_item_level_all_revenue", 0.0))
+            imp = int(row.get("total_line_item_level_impressions", 0))
+            clk = int(row.get("total_line_item_level_clicks", 0))
+            
+            share_pct = round((rev / total_rev * 100.0), 2) if total_rev > 0 else 0.0
+            ecpm = round((rev / imp * 1000.0), 2) if imp > 0 else 0.0
+            ctr = round((clk / imp * 100.0), 2) if imp > 0 else 0.0
+
+            rankings.append({
+                "rank": rank,
+                "advertiser_name": str(row["advertiser_name"]),
+                "revenue": round(rev, 2),
+                "impressions": imp,
+                "clicks": clk,
+                "share_of_network_revenue_pct": f"{share_pct}%",
+                "ecpm": round(ecpm, 2),
+                "ctr_pct": f"{ctr}%"
+            })
+
+        return {
+            "date_range": f"{start_date} to {end_date}",
+            "metric_sorted": metric,
+            "total_network_revenue": round(total_rev, 2),
+            "total_network_impressions": total_imp,
+            "rankings": rankings
+        }
+
+    def get_live_data_sync(
+        self,
+        start_date: datetime.date,
+        end_date: datetime.date,
+        extra_dims: List[str] = None,
+        separate_report: bool = False
+    ) -> pd.DataFrame:
+        """Synchronous wrapper for get_live_data for internal ranking aggregations."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        if loop.is_running():
+            # If already running in loop, call run_report directly
+            csv_path = self.run_report(start_date, end_date, extra_dims=extra_dims, separate_report=separate_report)
+            df = pd.read_csv(csv_path, compression='gzip')
+            df.columns = [c.lower() for c in df.columns]
+            return df
+        else:
+            return loop.run_until_complete(self.get_live_data(start_date, end_date, extra_dims=extra_dims, separate_report=separate_report))
+

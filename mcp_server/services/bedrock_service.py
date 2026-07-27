@@ -613,6 +613,134 @@ def get_creative_diagnostics_tool_spec() -> dict:
     }
 
 
+def get_companies_tool_spec() -> dict:
+    """Bedrock tool spec for getCompanies."""
+    return {
+        "toolSpec": {
+            "name": "getCompanies",
+            "description": (
+                "Fetch live Google Ad Manager Companies (Advertisers, Agencies, Ad Networks, Child Publishers). "
+                "Use this tool when the user asks about customer accounts, direct advertisers, ad agencies, programmatic buyers, external CRM IDs, or customer credit holds."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter companies by name."
+                        },
+                        "type_filter": {
+                            "type": "string",
+                            "description": "Optional type filter ('ADVERTISER', 'AGENCY', 'AD_NETWORK', 'CHILD_PUBLISHER', 'HOUSE_ADVERTISER')."
+                        },
+                        "credit_status_filter": {
+                            "type": "string",
+                            "description": "Optional credit status filter ('ACTIVE', 'INACTIVE', 'BLOCKED', 'ON_HOLD')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of companies to return (default 100)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_contacts_tool_spec() -> dict:
+    """Bedrock tool spec for getContacts."""
+    return {
+        "toolSpec": {
+            "name": "getContacts",
+            "description": (
+                "Fetch Google Ad Manager Commercial Contacts (advertiser and agency contact directory). "
+                "Use this tool when the user asks for contact emails, phone numbers, contact names, or commercial account reps."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional search string to filter contacts by name."
+                        },
+                        "company_id": {
+                            "type": "string",
+                            "description": "Optional Company ID to filter contacts belonging to a specific advertiser or agency."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of contacts to return (default 50)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_advertiser_analytics_tool_spec() -> dict:
+    """Bedrock tool spec for getAdvertiserAnalytics."""
+    return {
+        "toolSpec": {
+            "name": "getAdvertiserAnalytics",
+            "description": (
+                "Fetch Commercial Customer Portfolio Analytics, analyzing company type distributions, credit holds, and missing CRM mappings. "
+                "Use this tool when the user asks for an audit of advertisers, agency breakdown, or credit risk health."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of companies to analyze (default 200)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_advertiser_rankings_tool_spec() -> dict:
+    """Bedrock tool spec for getAdvertiserRankings."""
+    return {
+        "toolSpec": {
+            "name": "getAdvertiserRankings",
+            "description": (
+                "Rank network Advertisers by live Revenue or Impression volume across a date range. "
+                "Use this tool when the user asks for top advertisers, highest spending customers, revenue by advertiser, advertiser rankings, or advertiser market share."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {
+                            "type": "string",
+                            "description": "Start date in YYYY-MM-DD format."
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "End date in YYYY-MM-DD format."
+                        },
+                        "metric": {
+                            "type": "string",
+                            "description": "Metric to rank by ('revenue' or 'impressions', default 'revenue')."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Number of top advertisers to return (default 20)."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 def get_query_data_tool_spec() -> dict:
     """Bedrock-compatible tool specification for the query_data tool (in-session aggregations)."""
     return {
@@ -1167,6 +1295,11 @@ async def stream_bedrock_response(
                     get_creatives_tool_spec(),
                     get_creative_templates_tool_spec(),
                     get_creative_diagnostics_tool_spec(),
+                    # ── PHASE 5: ADVERTISER & COMMERCIAL TOOLS ────────────────
+                    get_companies_tool_spec(),
+                    get_contacts_tool_spec(),
+                    get_advertiser_analytics_tool_spec(),
+                    get_advertiser_rankings_tool_spec(),
                     get_query_data_tool_spec(),             # SECONDARY: in-session aggregations
                     # ── NEW TOOLS (additive) ──────────────────────────────────
                     get_network_summary_tool_spec(),        # NETWORK: summary + health + insights
