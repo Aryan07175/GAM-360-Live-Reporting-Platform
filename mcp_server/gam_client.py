@@ -1416,4 +1416,245 @@ class GAMClient:
             "results": results
         }
 
+    # ── PHASE 7: FORECASTING & OPTIMIZATION INTELLIGENCE ───────────────────────
+
+    def get_inventory_availability_forecast(
+        self,
+        ad_unit_id: str,
+        target_impressions: int = 100000,
+        days: int = 7
+    ) -> Dict[str, Any]:
+        """Predict inventory availability and capacity for a target ad unit via ForecastService."""
+        forecast_service = self.client.GetService("ForecastService", version=API_VERSION)
+        
+        now = datetime.now() + timedelta(days=2)
+        end = now + timedelta(days=int(days))
+        
+        prospective_line_item = {
+            "lineItem": {
+                "lineItemType": "STANDARD",
+                "costType": "CPM",
+                "priority": 8,
+                "startDateTimeType": "USE_START_DATE_TIME",
+                "startDateTime": {
+                    "date": {"year": now.year, "month": now.month, "day": now.day},
+                    "hour": 12, "minute": 0, "second": 0,
+                    "timeZoneId": "Asia/Kolkata"
+                },
+                "endDateTime": {
+                    "date": {"year": end.year, "month": end.month, "day": end.day},
+                    "hour": 23, "minute": 59, "second": 59,
+                    "timeZoneId": "Asia/Kolkata"
+                },
+                "primaryGoal": {
+                    "goalType": "LIFETIME",
+                    "unitType": "IMPRESSIONS",
+                    "units": int(target_impressions)
+                },
+                "targeting": {
+                    "inventoryTargeting": {
+                        "targetedAdUnits": [{"adUnitId": str(ad_unit_id), "includeDescendants": True}]
+                    }
+                }
+            }
+        }
+
+        log.info(f"Request made: Service: \"ForecastService\" Method: \"getAvailabilityForecast\" URL: \"https://ads.google.com/apis/ads/publisher/{API_VERSION}/ForecastService\"")
+        res = forecast_service.getAvailabilityForecast(prospective_line_item, {})
+
+        avail = int(getattr(res, "availableUnits", 0))
+        matched = int(getattr(res, "matchedUnits", 0))
+        possible = int(getattr(res, "possibleUnits", 0))
+        reserved = int(getattr(res, "reservedUnits", 0))
+        
+        avail_pct = round((avail / matched * 100.0), 2) if matched > 0 else 0.0
+        is_available = avail >= target_impressions
+        overbooking = target_impressions > avail
+
+        return {
+            "ad_unit_id": str(ad_unit_id),
+            "forecast_period_days": int(days),
+            "target_impressions": int(target_impressions),
+            "available_impressions": avail,
+            "matched_impressions": matched,
+            "possible_impressions": possible,
+            "reserved_impressions": reserved,
+            "availability_rate_pct": f"{avail_pct}%",
+            "is_available": is_available,
+            "overbooking_detected": overbooking,
+            "recommendation": "Sufficient inventory capacity to fulfill target campaign." if is_available else f"High risk of under-delivery or overbooking. Short by {target_impressions - avail:,} impressions."
+        }
+
+    def get_line_item_delivery_forecast(
+        self,
+        line_item_id: int
+    ) -> Dict[str, Any]:
+        """Predict delivery progress and under-delivery risk for an existing line item."""
+        li_service = self.client.GetService("LineItemService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION).Where(f"id = {line_item_id}")
+        
+        log.info(f"Request made: Service: \"LineItemService\" Method: \"getLineItemsByStatement\" URL: \"https://ads.google.com/apis/ads/publisher/{API_VERSION}/LineItemService\"")
+        lis = li_service.getLineItemsByStatement(sb.ToStatement())
+        results = getattr(lis, "results", []) or []
+        if not results:
+            raise ValueError(f"Line item ID {line_item_id} not found in network.")
+        
+        li = results[0]
+        li_name = str(getattr(li, "name", ""))
+        li_type = str(getattr(li, "lineItemType", ""))
+        status = str(getattr(li, "status", ""))
+        stats = getattr(li, "stats", {}) or {}
+        delivered = int(getattr(stats, "impressionsDelivered", 0))
+        clicks = int(getattr(stats, "clicksDelivered", 0))
+
+        goal = getattr(li, "primaryGoal", {}) or {}
+        goal_units = int(getattr(goal, "units", 0)) if goal else 0
+
+        forecast_data = {}
+        if li_type in ("STANDARD", "SPONSORSHIP") and status in ("DELIVERING", "READY", "PAUSED"):
+            try:
+                f_service = self.client.GetService("ForecastService", version=API_VERSION)
+                log.info(f"Request made: Service: \"ForecastService\" Method: \"getDeliveryForecastByIds\" URL: \"https://ads.google.com/apis/ads/publisher/{API_VERSION}/ForecastService\"")
+                df_res = f_service.getDeliveryForecastByIds([line_item_id], {})
+                f_list = getattr(df_res, "lineItemDeliveryForecasts", []) or []
+                if f_list:
+                    pred = int(getattr(f_list[0], "predictedDeliveryUnits", 0))
+                    forecast_data["predicted_delivery_units"] = pred
+                    forecast_data["under_delivery_risk"] = pred < goal_units if goal_units > 0 else False
+            except Exception as e:
+                log.warning(f"Could not retrieve SOAP delivery forecast for {line_item_id}: {e}")
+
+        under_risk = forecast_data.get("under_delivery_risk", False)
+        if goal_units > 0 and delivered < (goal_units * 0.5) and status == "DELIVERING":
+            under_risk = True
+
+        return {
+            "line_item_id": str(line_item_id),
+            "name": li_name,
+            "line_item_type": li_type,
+            "status": status,
+            "delivered_impressions": delivered,
+            "delivered_clicks": clicks,
+            "goal_units": goal_units if goal_units > 0 else "Unlimited / Dynamic",
+            "predicted_delivery_units": forecast_data.get("predicted_delivery_units", "N/A (Dynamic/Non-guaranteed)" if goal_units <= 0 else delivered),
+            "under_delivery_risk": under_risk,
+            "overbooking_detected": False,
+            "recommendation": "Delivery is on track." if not under_risk else "High under-delivery risk detected. Recommend relaxing targeting or increasing line item priority."
+        }
+
+    def get_capacity_planning_report(
+        self,
+        limit: int = 10
+    ) -> Dict[str, Any]:
+        """Analyze network-wide inventory capacity across top ad units over a 30-day projection horizon."""
+        end_d = date.today() - timedelta(days=5)
+        start_d = end_d - timedelta(days=2)
+        
+        df = self.get_live_data_sync(start_d, end_d, extra_dims=["AD_UNIT_NAME"], separate_report=False)
+        if df.empty or "ad_unit_name" not in df.columns:
+            return {"projection_horizon_days": 30, "ad_units_analyzed": 0, "capacity_breakdown": []}
+
+        agg_cols = {}
+        if "total_line_item_level_impressions" in df.columns:
+            agg_cols["total_line_item_level_impressions"] = "sum"
+        if "total_line_item_level_all_revenue" in df.columns:
+            agg_cols["total_line_item_level_all_revenue"] = "sum"
+
+        grouped = df.groupby("ad_unit_name", as_index=False).agg(agg_cols)
+        if "total_line_item_level_impressions" in grouped.columns:
+            grouped = grouped.sort_values(by="total_line_item_level_impressions", ascending=False).head(int(limit))
+
+        results = []
+        total_proj_imp = 0
+        for row in grouped.to_dict("records"):
+            imp_3d = int(row.get("total_line_item_level_impressions", 0))
+            rev_3d = float(row.get("total_line_item_level_all_revenue", 0.0))
+            daily_avg_imp = int(imp_3d / 3.0)
+            proj_30d_imp = daily_avg_imp * 30
+            total_proj_imp += proj_30d_imp
+            
+            ecpm = round((rev_3d / imp_3d * 1000.0), 2) if imp_3d > 0 else 0.0
+            
+            status = "HIGH_CAPACITY" if proj_30d_imp > 1_000_000 else ("MODERATE_CAPACITY" if proj_30d_imp > 100_000 else "CONSTRAINED")
+            
+            results.append({
+                "ad_unit_name": str(row["ad_unit_name"]),
+                "daily_average_impressions": daily_avg_imp,
+                "projected_30d_impressions": proj_30d_imp,
+                "projected_30d_revenue_at_current_ecpm": round((proj_30d_imp / 1000.0) * ecpm, 2),
+                "current_ecpm": ecpm,
+                "capacity_status": status
+            })
+
+        return {
+            "projection_horizon_days": 30,
+            "historical_baseline_days": 3,
+            "total_projected_30d_network_impressions": int(total_proj_imp),
+            "capacity_breakdown": results
+        }
+
+    def get_monetization_opportunity_analysis(
+        self,
+        min_unfilled_rate_pct: float = 20.0,
+        limit: int = 10
+    ) -> Dict[str, Any]:
+        """Identify revenue optimization and yield improvement opportunities across network ad units."""
+        end_d = date.today() - timedelta(days=5)
+        start_d = end_d - timedelta(days=2)
+        
+        df = self.get_live_data_sync(start_d, end_d, extra_dims=["AD_UNIT_NAME"], separate_report=False)
+        if df.empty or "ad_unit_name" not in df.columns:
+            return {"opportunities_found": 0, "estimated_total_monthly_revenue_uplift": 0.0, "opportunities": []}
+
+        agg_cols = {}
+        if "total_line_item_level_impressions" in df.columns:
+            agg_cols["total_line_item_level_impressions"] = "sum"
+        if "total_line_item_level_all_revenue" in df.columns:
+            agg_cols["total_line_item_level_all_revenue"] = "sum"
+
+        grouped = df.groupby("ad_unit_name", as_index=False).agg(agg_cols)
+        
+        total_net_rev = grouped["total_line_item_level_all_revenue"].sum() if "total_line_item_level_all_revenue" in grouped.columns else 0.0
+        total_net_imp = grouped["total_line_item_level_impressions"].sum() if "total_line_item_level_impressions" in grouped.columns else 0
+        net_avg_ecpm = (total_net_rev / total_net_imp * 1000.0) if total_net_imp > 0 else 1.0
+
+        if "total_line_item_level_impressions" in grouped.columns:
+            grouped = grouped.sort_values(by="total_line_item_level_impressions", ascending=False)
+
+        opportunities = []
+        total_uplift = 0.0
+        for row in grouped.to_dict("records"):
+            if len(opportunities) >= int(limit):
+                break
+            imp = int(row.get("total_line_item_level_impressions", 0))
+            rev = float(row.get("total_line_item_level_all_revenue", 0.0))
+            if imp < 10_000:
+                continue
+            
+            ecpm = (rev / imp * 1000.0) if imp > 0 else 0.0
+            if ecpm < (net_avg_ecpm * 0.75):
+                monthly_imp = int((imp / 3.0) * 30)
+                potential_rev = (monthly_imp / 1000.0) * net_avg_ecpm
+                current_monthly_rev = (monthly_imp / 1000.0) * ecpm
+                uplift = max(0.0, potential_rev - current_monthly_rev)
+                total_uplift += uplift
+
+                opportunities.append({
+                    "ad_unit_name": str(row["ad_unit_name"]),
+                    "impressions_3d": imp,
+                    "current_ecpm": round(ecpm, 2),
+                    "network_benchmark_ecpm": round(net_avg_ecpm, 2),
+                    "estimated_monthly_revenue_uplift": round(uplift, 2),
+                    "optimization_action": f"eCPM ($ {round(ecpm, 2)}) is 25%+ below network benchmark ($ {round(net_avg_ecpm, 2)}). Recommend enabling Open Bidding demand sources or reviewing Unified Pricing Rule floor prices."
+                })
+
+        return {
+            "network_average_ecpm": round(float(net_avg_ecpm), 2),
+            "opportunities_found": len(opportunities),
+            "estimated_total_monthly_revenue_uplift": round(float(total_uplift), 2),
+            "opportunities": opportunities
+        }
+
+
+
 

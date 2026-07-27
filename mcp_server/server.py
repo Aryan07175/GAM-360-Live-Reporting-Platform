@@ -3626,6 +3626,51 @@ async def list_tools() -> list[types.Tool]:
                 }
             }
         ),
+        types.Tool(
+            name="getInventoryAvailabilityForecast",
+            description="Predict ad unit inventory availability and capacity over a future timeframe using GAM ForecastService.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ad_unit_id": {"type": "string", "description": "Target ad unit ID (required)."},
+                    "units": {"type": "integer", "description": "Number of impressions/units requested. Default is 10000."},
+                    "days": {"type": "integer", "description": "Number of days to forecast into the future. Default is 7."}
+                },
+                "required": ["ad_unit_id"]
+            }
+        ),
+        types.Tool(
+            name="getLineItemDeliveryForecast",
+            description="Get delivery prediction and health status for an existing active line item.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "line_item_id": {"type": "integer", "description": "Existing line item ID (required)."}
+                },
+                "required": ["line_item_id"]
+            }
+        ),
+        types.Tool(
+            name="getCapacityPlanningReport",
+            description="Analyze network-wide inventory capacity across top ad units over a 30-day projection horizon.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Number of top ad units to analyze. Default is 10."}
+                }
+            }
+        ),
+        types.Tool(
+            name="getMonetizationOpportunityAnalysis",
+            description="Identify revenue optimization, underperforming ad units, and yield improvement opportunities across the network.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "min_unfilled_rate_pct": {"type": "number", "description": "Minimum unfilled rate percentage threshold. Default is 20.0."},
+                    "limit": {"type": "integer", "description": "Number of top opportunities to return. Default is 10."}
+                }
+            }
+        ),
     ]
 
 
@@ -3775,6 +3820,33 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 s_date,
                 e_date,
                 arguments.get("breakdown", "demand_channel")
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getInventoryAvailabilityForecast":
+            res = await asyncio.to_thread(
+                gam.get_inventory_availability_forecast,
+                str(arguments["ad_unit_id"]),
+                int(arguments.get("units", 10000)),
+                int(arguments.get("days", 7))
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getLineItemDeliveryForecast":
+            res = await asyncio.to_thread(
+                gam.get_line_item_delivery_forecast,
+                int(arguments["line_item_id"])
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getCapacityPlanningReport":
+            res = await asyncio.to_thread(
+                gam.get_capacity_planning_report,
+                int(arguments.get("limit", 10))
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+        if name == "getMonetizationOpportunityAnalysis":
+            res = await asyncio.to_thread(
+                gam.get_monetization_opportunity_analysis,
+                float(arguments.get("min_unfilled_rate_pct", 20.0)),
+                int(arguments.get("limit", 10))
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 

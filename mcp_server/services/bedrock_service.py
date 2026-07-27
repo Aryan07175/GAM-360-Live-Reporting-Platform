@@ -1179,6 +1179,83 @@ def get_website_trend_tool_spec() -> dict:
     }
 
 
+def get_inventory_availability_forecast_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getInventoryAvailabilityForecast."""
+    return {
+        "toolSpec": {
+            "name": "getInventoryAvailabilityForecast",
+            "description": "Predict ad unit inventory availability and capacity over a future timeframe using GAM ForecastService.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "ad_unit_id": {"type": "string", "description": "Target ad unit ID (required)."},
+                        "units": {"type": "integer", "description": "Number of impressions/units requested. Default is 10000."},
+                        "days": {"type": "integer", "description": "Number of days to forecast into the future. Default is 7."}
+                    },
+                    "required": ["ad_unit_id"]
+                }
+            }
+        }
+    }
+
+
+def get_line_item_delivery_forecast_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getLineItemDeliveryForecast."""
+    return {
+        "toolSpec": {
+            "name": "getLineItemDeliveryForecast",
+            "description": "Get delivery prediction and health status for an existing active line item.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "line_item_id": {"type": "integer", "description": "Existing line item ID (required)."}
+                    },
+                    "required": ["line_item_id"]
+                }
+            }
+        }
+    }
+
+
+def get_capacity_planning_report_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getCapacityPlanningReport."""
+    return {
+        "toolSpec": {
+            "name": "getCapacityPlanningReport",
+            "description": "Analyze network-wide inventory capacity across top ad units over a 30-day projection horizon.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Number of top ad units to analyze. Default is 10."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_monetization_opportunity_analysis_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getMonetizationOpportunityAnalysis."""
+    return {
+        "toolSpec": {
+            "name": "getMonetizationOpportunityAnalysis",
+            "description": "Identify revenue optimization, underperforming ad units, and yield improvement opportunities across the network.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "min_unfilled_rate_pct": {"type": "number", "description": "Minimum unfilled rate percentage threshold. Default is 20.0."},
+                        "limit": {"type": "integer", "description": "Number of top opportunities to return. Default is 10."}
+                    }
+                }
+            }
+        }
+    }
+
+
 # ─── Message Builder ──────────────────────────────────────────────────────────
 
 def build_bedrock_messages(history: list[dict], new_message: str) -> list[dict]:
@@ -1442,6 +1519,11 @@ async def stream_bedrock_response(
                     get_programmatic_deals_tool_spec(),
                     get_yield_analytics_tool_spec(),
                     get_query_data_tool_spec(),             # SECONDARY: in-session aggregations
+                    # ── PHASE 7: FORECASTING & OPTIMIZATION TOOLS ─────────────
+                    get_inventory_availability_forecast_tool_spec(),
+                    get_line_item_delivery_forecast_tool_spec(),
+                    get_capacity_planning_report_tool_spec(),
+                    get_monetization_opportunity_analysis_tool_spec(),
                     # ── NEW TOOLS (additive) ──────────────────────────────────
                     get_network_summary_tool_spec(),        # NETWORK: summary + health + insights
                     get_child_network_analytics_tool_spec(),# MCM: child network breakdown
