@@ -260,7 +260,10 @@ class GAMClient:
                 "TOTAL_FILL_RATE",
             ]
         else:
-            report_cols = COLUMNS
+            if extra_dims or omit_ad_units:
+                report_cols = [c for c in COLUMNS if not c.startswith("TOTAL_INVENTORY_")]
+            else:
+                report_cols = COLUMNS
 
         report_query = {
             "dimensions": report_dims,
