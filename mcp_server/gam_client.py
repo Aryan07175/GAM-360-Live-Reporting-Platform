@@ -299,7 +299,7 @@ class GAMClient:
             ]
             if any(d in {"YIELD_GROUP_NAME", "YIELD_GROUP_ID"} for d in report_dims):
                 report_cols = [c for c in report_cols if c not in {"TOTAL_LINE_ITEM_LEVEL_CLICKS", "TOTAL_LINE_ITEM_LEVEL_CTR"}]
-            if any(d in {"REGION_NAME", "CITY_NAME", "DEVICE_CATEGORY_NAME", "BROWSER_NAME", "OPERATING_SYSTEM_NAME", "MOBILE_APP_NAME", "REFERER_URL", "DOMAIN", "TRAFFIC_SOURCE_NAME", "CHILD_NETWORK_CODE", "CHILD_NETWORK_NAME"} for d in report_dims):
+            if any(d in {"REGION_NAME", "CITY_NAME", "DEVICE_CATEGORY_NAME", "BROWSER_NAME", "OPERATING_SYSTEM_NAME", "MOBILE_APP_NAME", "REFERER_URL", "DOMAIN", "TRAFFIC_SOURCE_NAME", "CHILD_NETWORK_CODE", "CHILD_NETWORK_NAME", "CUSTOM_TARGETING_VALUE_ID", "CUSTOM_CRITERIA"} for d in report_dims):
                 report_cols = [
                     "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
                     "TOTAL_LINE_ITEM_LEVEL_CLICKS",
@@ -1912,6 +1912,185 @@ class GAMClient:
         except Exception:
             df = self.get_live_data_sync(start_date, end_date, force_refresh=True, demand_channel="all")
         return compute_match_rate_analytics(df, dimension, start_date, end_date, limit=limit)
+
+    # ── PHASE 10: TARGETING & RULES INTELLIGENCE ─────────────────────────────
+
+    def get_labels(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        active_only: bool = True,
+    ) -> Dict[str, Any]:
+        """Fetch Labels (Competitive Exclusions, Roadblocks, Frequency Caps) from LabelService."""
+        label_service = self.client.GetService("LabelService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions: List[str] = []
+        if active_only:
+            conditions.append("isActive = :active")
+            sb.WithBindVariable("active", True)
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = label_service.getLabelsByStatement(sb.ToStatement())
+        results = []
+        for lbl in getattr(res, "results", []):
+            types_list = []
+            raw_types = getattr(lbl, "types", None) or []
+            if isinstance(raw_types, str):
+                raw_types = [raw_types]
+            for t in raw_types:
+                types_list.append(str(t))
+            results.append({
+                "id": str(getattr(lbl, "id", "")),
+                "name": str(getattr(lbl, "name", "")),
+                "description": str(getattr(lbl, "description", "") or ""),
+                "is_active": bool(getattr(lbl, "isActive", True)),
+                "types": types_list,
+            })
+        # Summarise label types
+        type_counts: Dict[str, int] = {}
+        for r in results:
+            for t in r["types"]:
+                type_counts[t] = type_counts.get(t, 0) + 1
+        return {
+            "total_labels": len(results),
+            "active_only": active_only,
+            "type_summary": type_counts,
+            "labels": results,
+        }
+
+    def get_custom_targeting(
+        self,
+        key_filter: str = None,
+        value_filter: str = None,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Fetch Custom Targeting Keys and their Values (enriched view) from CustomTargetingService."""
+        ct_service = self.client.GetService("CustomTargetingService", version=API_VERSION)
+        import zeep
+
+        # ── Keys ──────────────────────────────────────────────────────────────
+        key_sb = ad_manager.StatementBuilder(version=API_VERSION)
+        key_conditions: List[str] = ["status = :status"]
+        key_sb.WithBindVariable("status", "ACTIVE")
+        if key_filter:
+            key_conditions.append("name LIKE :kname")
+            key_sb.WithBindVariable("kname", f"%{key_filter}%")
+        key_sb.Where(" AND ".join(key_conditions)).Limit(int(limit))
+        key_res = ct_service.getCustomTargetingKeysByStatement(key_sb.ToStatement())
+        keys: List[Dict[str, Any]] = []
+        key_id_map: Dict[str, str] = {}
+        for k in getattr(key_res, "results", []) or []:
+            kd = zeep.helpers.serialize_object(k)
+            kid = str(kd.get("id", ""))
+            kname = str(kd.get("name", ""))
+            key_id_map[kid] = kname
+            keys.append({
+                "id": kid,
+                "name": kname,
+                "display_name": str(kd.get("displayName") or kname),
+                "type": str(kd.get("type", "")),
+                "status": str(kd.get("status", "")),
+                "reportable_type": str(kd.get("reportableType", "")),
+            })
+
+        # ── Values ────────────────────────────────────────────────────────────
+        val_sb = ad_manager.StatementBuilder(version=API_VERSION)
+        val_conditions: List[str] = ["status = :vstatus"]
+        val_sb.WithBindVariable("vstatus", "ACTIVE")
+        if value_filter:
+            val_conditions.append("name LIKE :vname")
+            val_sb.WithBindVariable("vname", f"%{value_filter}%")
+        val_sb.Where(" AND ".join(val_conditions)).Limit(int(limit) * 10)
+        val_res = ct_service.getCustomTargetingValuesByStatement(val_sb.ToStatement())
+        # Group values by key
+        values_by_key: Dict[str, List[Dict[str, Any]]] = {}
+        for v in getattr(val_res, "results", []) or []:
+            vd = zeep.helpers.serialize_object(v)
+            key_id = str(vd.get("customTargetingKeyId", ""))
+            values_by_key.setdefault(key_id, []).append({
+                "id": str(vd.get("id", "")),
+                "name": str(vd.get("name", "")),
+                "display_name": str(vd.get("displayName") or vd.get("name", "")),
+                "match_type": str(vd.get("matchType", "")),
+                "status": str(vd.get("status", "")),
+            })
+
+        # Enrich keys with their values
+        enriched: List[Dict[str, Any]] = []
+        for k in keys:
+            k["values"] = values_by_key.get(k["id"], [])
+            k["value_count"] = len(k["values"])
+            enriched.append(k)
+
+        total_values = sum(len(v) for v in values_by_key.values())
+        return {
+            "total_keys": len(enriched),
+            "total_values_fetched": total_values,
+            "keys": enriched,
+        }
+
+    def get_ad_rules(
+        self,
+        limit: int = 50,
+        name_filter: str = None,
+        active_only: bool = True,
+    ) -> Dict[str, Any]:
+        """Fetch Ad Rules (Frequency Caps, Roadblocks, Competitive Exclusions) from AdRuleService."""
+        rule_service = self.client.GetService("AdRuleService", version=API_VERSION)
+        import zeep
+
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions: List[str] = []
+        if active_only:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", "ACTIVE")
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+        res = rule_service.getAdRulesByStatement(sb.ToStatement())
+
+        results: List[Dict[str, Any]] = []
+        for rule in getattr(res, "results", []) or []:
+            rd = zeep.helpers.serialize_object(rule)
+            # Frequency cap details
+            freq_cap = rd.get("frequencyCaps") or {}
+            if isinstance(freq_cap, list):
+                freq_cap = freq_cap[0] if freq_cap else {}
+            # Targeting summary
+            targeting = rd.get("targeting") or {}
+            geo_targeting = targeting.get("geoTargeting") or {}
+            device_targeting = targeting.get("technologyTargeting") or {}
+            inventory_targeting = targeting.get("inventoryTargeting") or {}
+            results.append({
+                "id": str(rd.get("id", "")),
+                "name": str(rd.get("name", "") or ""),
+                "status": str(rd.get("status", "")),
+                "priority": rd.get("priority"),
+                "start_date": str(rd.get("startDate") or ""),
+                "end_date": str(rd.get("endDate") or ""),
+                "frequency_cap": {
+                    "max_impressions": freq_cap.get("maxImpressions") if isinstance(freq_cap, dict) else None,
+                    "time_unit": str(freq_cap.get("timeUnit", "") if isinstance(freq_cap, dict) else ""),
+                    "time_length": freq_cap.get("timeLength") if isinstance(freq_cap, dict) else None,
+                },
+                "has_geo_targeting": bool(geo_targeting),
+                "has_device_targeting": bool(device_targeting),
+                "has_inventory_targeting": bool(inventory_targeting),
+            })
+
+        active_count = sum(1 for r in results if r["status"] == "ACTIVE")
+        return {
+            "total_rules": len(results),
+            "active_rules": active_count,
+            "rules": results,
+        }
 
 
 

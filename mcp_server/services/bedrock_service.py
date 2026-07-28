@@ -1099,6 +1099,113 @@ def get_match_rate_analytics_tool_spec() -> dict:
     }
 
 
+# ── PHASE 10: TARGETING & RULES INTELLIGENCE TOOL SPECS ─────────────────────
+
+def get_labels_tool_spec() -> dict:
+    """Tool spec for getLabels — Labels, Competitive Exclusions, Roadblocks."""
+    return {
+        "toolSpec": {
+            "name": "getLabels",
+            "description": (
+                "Fetch Labels from Google Ad Manager including Competitive Exclusions, "
+                "Ad Exclusion labels, and Roadblock labels. Use when the user asks about "
+                "'labels', 'competitive exclusions', 'ad exclusions', 'roadblocks', "
+                "'label list', or 'what labels exist'."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional: filter labels by name (partial match).",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of labels to return. Default is 100.",
+                        },
+                        "active_only": {
+                            "type": "boolean",
+                            "description": "If true, only return active labels. Default is true.",
+                        },
+                    },
+                    "required": [],
+                }
+            },
+        }
+    }
+
+
+def get_custom_targeting_tool_spec() -> dict:
+    """Tool spec for getCustomTargeting — Keys & Values targeting metadata."""
+    return {
+        "toolSpec": {
+            "name": "getCustomTargeting",
+            "description": (
+                "Fetch Custom Targeting Keys and their associated Values from Google Ad Manager. "
+                "Use when the user asks about 'custom targeting', 'targeting keys', 'targeting values', "
+                "'key-value pairs', 'KV targeting', 'custom criteria', or 'what targeting keys exist'. "
+                "Returns an enriched list of keys each with their values and match type."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "key_filter": {
+                            "type": "string",
+                            "description": "Optional: filter targeting keys by name (partial match).",
+                        },
+                        "value_filter": {
+                            "type": "string",
+                            "description": "Optional: filter targeting values by name (partial match).",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max number of keys to return. Default is 50.",
+                        },
+                    },
+                    "required": [],
+                }
+            },
+        }
+    }
+
+
+def get_ad_rules_tool_spec() -> dict:
+    """Tool spec for getAdRules — Ad Rules, Frequency Caps, Roadblocks."""
+    return {
+        "toolSpec": {
+            "name": "getAdRules",
+            "description": (
+                "Fetch Ad Rules from Google Ad Manager. Ad Rules govern ad serving behaviour including "
+                "frequency caps, roadblocks, and competitive exclusions. Use when the user asks about "
+                "'ad rules', 'frequency caps', 'capping', 'roadblock rules', 'serving rules', "
+                "'ad rule list', or 'what ad rules are active'."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional: filter ad rules by name (partial match).",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max number of ad rules to return. Default is 50.",
+                        },
+                        "active_only": {
+                            "type": "boolean",
+                            "description": "If true, only return active ad rules. Default is true.",
+                        },
+                    },
+                    "required": [],
+                }
+            },
+        }
+    }
+
+
 def get_top_websites_tool_spec() -> dict:
     """Bedrock-compatible tool specification for the getTopWebsites tool."""
     return {
@@ -1637,6 +1744,10 @@ async def stream_bedrock_response(
                     get_network_summary_tool_spec(),        # NETWORK: summary + health + insights
                     get_child_network_analytics_tool_spec(),# MCM: child network breakdown
                     get_match_rate_analytics_tool_spec(),   # MATCH RATE: by dimension
+                    # ── PHASE 10: TARGETING & RULES INTELLIGENCE TOOLS ────────
+                    get_labels_tool_spec(),                 # LABELS: exclusions, roadblocks
+                    get_custom_targeting_tool_spec(),       # CUSTOM TARGETING: keys + values
+                    get_ad_rules_tool_spec(),               # AD RULES: frequency caps, rules
                 ]
             },
         }

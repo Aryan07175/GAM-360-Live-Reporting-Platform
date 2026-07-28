@@ -2155,13 +2155,16 @@ def _make_tool_executor(cached_df):
             )
             return {"count": len(res), "placements": res}
         if tool_name == "getCustomTargeting":
-            res = await asyncio.to_thread(
-                gam.get_custom_targeting_keys,
-                int(input_dict.get("limit", 100)),
-                input_dict.get("name_filter"),
-                input_dict.get("active_only", True)
-            )
-            return {"count": len(res), "custom_targeting_keys": res}
+            key_filter   = input_dict.get("key_filter",   "").strip() or None
+            value_filter = input_dict.get("value_filter", "").strip() or None
+            limit = int(input_dict.get("limit", 50))
+            try:
+                result = await asyncio.to_thread(gam.get_custom_targeting, key_filter, value_filter, limit)
+                log_payload_stats("getCustomTargeting", result)
+                return guard_payload_size(result, "keys")
+            except Exception as e:
+                log.error("[Chat:getCustomTargeting] failed: %s", e)
+                return {"error": f"Failed to fetch custom targeting: {e}"}
 
         website_tools = [
             "getWebsiteInventory", "getWebsitePerformance", "getWebsiteHealth",
@@ -2402,6 +2405,44 @@ def _make_tool_executor(cached_df):
 
             log_payload_stats("getMatchRateAnalytics", result)
             return guard_payload_size(result, "match_rate")
+
+        # ── PHASE 10: TARGETING & RULES INTELLIGENCE ─────────────────────────
+
+        if tool_name == "getLabels":
+            name_filter = input_dict.get("name_filter", "").strip() or None
+            limit = int(input_dict.get("limit", 100))
+            active_only = bool(input_dict.get("active_only", True))
+            try:
+                result = await asyncio.to_thread(gam.get_labels, limit, name_filter, active_only)
+                log_payload_stats("getLabels", result)
+                return guard_payload_size(result, "labels")
+            except Exception as e:
+                log.error("[Chat:getLabels] failed: %s", e)
+                return {"error": f"Failed to fetch labels: {e}"}
+
+        if tool_name == "getCustomTargeting":
+            key_filter   = input_dict.get("key_filter",   "").strip() or None
+            value_filter = input_dict.get("value_filter", "").strip() or None
+            limit = int(input_dict.get("limit", 50))
+            try:
+                result = await asyncio.to_thread(gam.get_custom_targeting, key_filter, value_filter, limit)
+                log_payload_stats("getCustomTargeting", result)
+                return guard_payload_size(result, "keys")
+            except Exception as e:
+                log.error("[Chat:getCustomTargeting] failed: %s", e)
+                return {"error": f"Failed to fetch custom targeting: {e}"}
+
+        if tool_name == "getAdRules":
+            name_filter = input_dict.get("name_filter", "").strip() or None
+            limit = int(input_dict.get("limit", 50))
+            active_only = bool(input_dict.get("active_only", True))
+            try:
+                result = await asyncio.to_thread(gam.get_ad_rules, limit, name_filter, active_only)
+                log_payload_stats("getAdRules", result)
+                return guard_payload_size(result, "rules")
+            except Exception as e:
+                log.error("[Chat:getAdRules] failed: %s", e)
+                return {"error": f"Failed to fetch ad rules: {e}"}
 
         return {"error": f"Unknown tool: {tool_name}"}
 
@@ -3449,13 +3490,13 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="getCustomTargeting",
-            description="Fetch Custom Targeting Keys and Custom Dimensions from Google Ad Manager.",
+            description="Fetch Custom Targeting Keys and their Values (KV pairs) from Google Ad Manager.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "name_filter": {"type": "string", "description": "Filter custom targeting keys by name."},
-                    "active_only": {"type": "boolean", "description": "Return only active keys (default true)."},
-                    "limit": {"type": "integer", "description": "Max results (default 100)."}
+                    "key_filter": {"type": "string", "description": "Filter keys by name (partial match)."},
+                    "value_filter": {"type": "string", "description": "Filter values by name (partial match)."},
+                    "limit": {"type": "integer", "description": "Max keys to return. Default is 50."},
                 }
             }
         ),
@@ -3775,6 +3816,30 @@ async def list_tools() -> list[types.Tool]:
                 }
             }
         ),
+        types.Tool(
+            name="getLabels",
+            description="Fetch Labels (Competitive Exclusions, Roadblocks, Ad Exclusions) from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter labels by name (partial match)."},
+                    "limit": {"type": "integer", "description": "Max labels to return. Default is 100."},
+                    "active_only": {"type": "boolean", "description": "Return only active labels. Default is true."},
+                }
+            }
+        ),
+        types.Tool(
+            name="getAdRules",
+            description="Fetch Ad Rules (Frequency Caps, Roadblocks, Serving Rules) from Google Ad Manager.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name_filter": {"type": "string", "description": "Filter ad rules by name (partial match)."},
+                    "limit": {"type": "integer", "description": "Max rules to return. Default is 50."},
+                    "active_only": {"type": "boolean", "description": "Return only active rules. Default is true."},
+                }
+            }
+        ),
     ]
 
 
@@ -3799,12 +3864,12 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             return [types.TextContent(type="text", text=json.dumps({"count": len(res), "placements": res}, indent=2))]
         if name == "getCustomTargeting":
             res = await asyncio.to_thread(
-                gam.get_custom_targeting_keys,
-                int(arguments.get("limit", 100)),
-                arguments.get("name_filter"),
-                arguments.get("active_only", True)
+                gam.get_custom_targeting,
+                arguments.get("key_filter") or None,
+                arguments.get("value_filter") or None,
+                int(arguments.get("limit", 50)),
             )
-            return [types.TextContent(type="text", text=json.dumps({"count": len(res), "custom_targeting_keys": res}, indent=2))]
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
         if name == "getOrders":
             res = await asyncio.to_thread(
                 gam.get_orders,
@@ -4026,7 +4091,28 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 
+        # ── PHASE 10: TARGETING & RULES INTELLIGENCE ─────────────────────────
+        if name == "getLabels":
+            res = await asyncio.to_thread(
+                gam.get_labels,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter") or None,
+                bool(arguments.get("active_only", True)),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+
+        if name == "getAdRules":
+            res = await asyncio.to_thread(
+                gam.get_ad_rules,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter") or None,
+                bool(arguments.get("active_only", True)),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
         start_date, end_date, start_hour, end_hour = _resolve_dates(arguments)
+
         force_refresh = arguments.get("force_refresh", False)
         demand_channel = arguments.get("demand_channel", "all")
 
