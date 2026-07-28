@@ -2092,7 +2092,421 @@ class GAMClient:
             "rules": results,
         }
 
+    # ── PHASE 11: EXECUTIVE AI INTELLIGENCE ──────────────────────────────────
 
+    def get_kpi_health_score(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> Dict[str, Any]:
+        """
+        Compute a composite KPI Health Score across all key metrics.
+        Returns a 0–100 health score with per-dimension scores and action items.
+        """
+        from mcp_server.services.network_analytics import (
+            compute_network_health, _pct, _ecpm, _ctr,
+        )
+
+        df = self.get_live_data_sync(start_date, end_date, force_refresh=True)
+        if df.empty:
+            return {"error": "No data for the requested period.", "period": f"{start_date} to {end_date}"}
+
+        rev    = float(df["ad_server_cpm_and_cpc_revenue"].sum())
+        imp    = int(df["ad_server_impressions"].sum())
+        clicks = int(df.get("ad_server_clicks", df.get("total_line_item_level_clicks", 0)).sum()) if "ad_server_clicks" in df.columns else 0
+        req    = 0
+        for col in ["canonical_ad_requests", "total_ad_requests", "ad_server_ad_requests"]:
+            if col in df.columns:
+                v = int(df[col].sum())
+                if v > 0:
+                    req = v
+                    break
+
+        matched = 0
+        for col in ["matched_requests", "total_responses_served"]:
+            if col in df.columns:
+                v = int(df[col].sum())
+                if v > 0:
+                    matched = v
+                    break
+
+        fill_rate  = _pct(imp, req)
+        match_rate = _pct(matched, req)
+        ecpm_val   = _ecpm(rev, imp)
+        ctr_val    = _ctr(clicks, imp)
+
+        health = compute_network_health({
+            "fill_rate": fill_rate, "match_rate": match_rate,
+            "revenue": rev, "impressions": imp, "ad_requests": req,
+        })
+
+        # Per-KPI scoring (0–100 each)
+        def _score_fill(fr: float) -> int:
+            if fr >= 85: return 100
+            if fr >= 70: return 80
+            if fr >= 50: return 60
+            if fr >= 30: return 40
+            if fr >= 10: return 20
+            return 0
+
+        def _score_ecpm(e: float) -> int:
+            if e >= 2.0: return 100
+            if e >= 1.0: return 80
+            if e >= 0.5: return 60
+            if e >= 0.1: return 40
+            if e > 0:    return 20
+            return 0
+
+        def _score_ctr(c: float) -> int:
+            if 0.5 <= c <= 3.0:  return 100
+            if 0.2 <= c < 0.5:   return 70
+            if 3.0 < c <= 8.0:   return 60
+            if c > 8.0:          return 30
+            return 20
+
+        def _score_rev(r: float) -> int:
+            if r >= 5000:  return 100
+            if r >= 1000:  return 80
+            if r >= 500:   return 60
+            if r >= 100:   return 40
+            if r > 0:      return 20
+            return 0
+
+        scores = {
+            "fill_rate":  _score_fill(fill_rate),
+            "ecpm":       _score_ecpm(ecpm_val),
+            "ctr":        _score_ctr(ctr_val),
+            "revenue":    _score_rev(rev),
+        }
+        composite = round(sum(scores.values()) / len(scores))
+
+        # Action items
+        actions: List[str] = []
+        if fill_rate < 50:
+            actions.append("Fill rate is low — increase demand partner competition or lower floor prices.")
+        if ecpm_val < 0.5:
+            actions.append("eCPM is weak — review floor pricing rules and enable Open Bidding.")
+        if ctr_val > 8.0:
+            actions.append("CTR is unusually high — check for invalid traffic or bot activity.")
+        if ctr_val < 0.2 and imp > 10000:
+            actions.append("CTR is very low — review creative quality and ad placement.")
+        if rev == 0 and imp > 100:
+            actions.append("Revenue is zero despite impressions — verify demand channel configuration.")
+        if not actions:
+            actions.append("Network KPIs are within healthy ranges. Continue monitoring.")
+
+        return {
+            "period": f"{start_date} to {end_date}",
+            "composite_health_score": composite,
+            "health_grade": (
+                "A" if composite >= 85 else
+                "B" if composite >= 70 else
+                "C" if composite >= 55 else
+                "D" if composite >= 40 else "F"
+            ),
+            "network_health_status": health["health_status"],
+            "kpi_scores": scores,
+            "metrics": {
+                "revenue_usd": round(rev, 2),
+                "impressions": imp,
+                "clicks": clicks,
+                "ad_requests": req,
+                "fill_rate_pct": fill_rate,
+                "match_rate_pct": match_rate,
+                "ecpm_usd": ecpm_val,
+                "ctr_pct": ctr_val,
+            },
+            "action_items": actions,
+        }
+
+    def get_executive_briefing(
+        self,
+        start_date: date,
+        end_date: date,
+        compare_days: int = 7,
+    ) -> Dict[str, Any]:
+        """
+        Generate a full executive briefing with period-over-period comparison,
+        anomalies, top performers, and strategic recommendations.
+        """
+        from mcp_server.services.network_analytics import (
+            _pct, _ecpm, _ctr, _detect_entity_anomalies,
+        )
+
+        # Current period
+        df = self.get_live_data_sync(start_date, end_date, force_refresh=True)
+        # Comparison period
+        comp_end   = start_date - timedelta(days=1)
+        comp_start = comp_end - timedelta(days=compare_days - 1)
+        try:
+            df_prev = self.get_live_data_sync(comp_start, comp_end, force_refresh=True)
+        except Exception:
+            df_prev = None
+
+        def _summarise(frame) -> Dict[str, Any]:
+            if frame is None or frame.empty:
+                return {"revenue": 0, "impressions": 0, "clicks": 0,
+                        "fill_rate": 0, "ecpm": 0, "ctr": 0, "requests": 0}
+            rev  = float(frame["ad_server_cpm_and_cpc_revenue"].sum())
+            imp  = int(frame["ad_server_impressions"].sum())
+            clks = int(frame["ad_server_clicks"].sum()) if "ad_server_clicks" in frame.columns else 0
+            req  = 0
+            for col in ["canonical_ad_requests", "total_ad_requests", "ad_server_ad_requests"]:
+                if col in frame.columns:
+                    v = int(frame[col].sum())
+                    if v > 0: req = v; break
+            return {
+                "revenue": round(rev, 2),
+                "impressions": imp,
+                "clicks": clks,
+                "requests": req,
+                "fill_rate": _pct(imp, req),
+                "ecpm": _ecpm(rev, imp),
+                "ctr": _ctr(clks, imp),
+            }
+
+        curr = _summarise(df)
+        prev = _summarise(df_prev)
+
+        def _chg(c, p) -> float:
+            if p == 0: return 0.0
+            return round((c - p) / p * 100, 1)
+
+        changes = {k: _chg(curr[k], prev[k]) for k in curr}
+
+        # Top performers (by ad unit / app)
+        top_performers: List[Dict] = []
+        if not df.empty and "ad_unit_name" in df.columns:
+            grp = df.groupby("ad_unit_name", as_index=False).agg(
+                revenue=("ad_server_cpm_and_cpc_revenue", "sum"),
+                impressions=("ad_server_impressions", "sum"),
+            ).sort_values("revenue", ascending=False).head(5)
+            for _, row in grp.iterrows():
+                top_performers.append({
+                    "name": str(row["ad_unit_name"]),
+                    "revenue_usd": round(float(row["revenue"]), 2),
+                    "impressions": int(row["impressions"]),
+                })
+
+        # Anomalies
+        anomalies = _detect_entity_anomalies(
+            {"revenue_usd": curr["revenue"], "impressions": curr["impressions"],
+             "fill_rate_pct": curr["fill_rate"], "match_rate_pct": 0,
+             "ctr_pct": curr["ctr"], "ad_requests": curr["requests"]},
+            label="Network"
+        )
+
+        # Recommendations
+        recs: List[str] = []
+        if changes.get("revenue", 0) < -10:
+            recs.append("Revenue declined significantly — investigate top performers for delivery issues.")
+        if curr["fill_rate"] < 50:
+            recs.append("Fill rate below 50% — increase bid density via Open Bidding or UPRs.")
+        if curr["ecpm"] < 0.5:
+            recs.append("eCPM below $0.50 — review floor pricing and programmatic demand.")
+        if curr["ctr"] > 8.0:
+            recs.append("CTR is unusually high — flag for IVT review.")
+        if not recs:
+            recs.append("Network performance is stable. Maintain current optimizations.")
+
+        return {
+            "period": f"{start_date} to {end_date}",
+            "comparison_period": f"{comp_start} to {comp_end}",
+            "current_period": curr,
+            "previous_period": prev,
+            "period_over_period_change_pct": changes,
+            "top_performers": top_performers,
+            "anomalies": anomalies,
+            "strategic_recommendations": recs,
+            "briefing_generated_at": str(date.today()),
+        }
+
+    def get_anomaly_report(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> Dict[str, Any]:
+        """
+        Deep anomaly detection across revenue, fill rate, CTR, and traffic.
+        Scans each ad unit/app individually and flags issues.
+        """
+        from mcp_server.services.network_analytics import (
+            _pct, _ecpm, _ctr, _detect_entity_anomalies,
+        )
+
+        df = self.get_live_data_sync(start_date, end_date, force_refresh=True)
+        if df.empty:
+            return {"error": "No data for the requested period.", "anomalies": []}
+
+        all_anomalies: List[Dict] = []
+        entity_col = "ad_unit_name" if "ad_unit_name" in df.columns else None
+
+        if entity_col:
+            for name, grp in df.groupby(entity_col):
+                rev  = float(grp["ad_server_cpm_and_cpc_revenue"].sum())
+                imp  = int(grp["ad_server_impressions"].sum())
+                clks = int(grp["ad_server_clicks"].sum()) if "ad_server_clicks" in grp.columns else 0
+                req  = 0
+                for col in ["canonical_ad_requests", "total_ad_requests", "ad_server_ad_requests"]:
+                    if col in grp.columns:
+                        v = int(grp[col].sum())
+                        if v > 0: req = v; break
+                entity_metrics = {
+                    "revenue_usd": rev, "impressions": imp,
+                    "fill_rate_pct": _pct(imp, req),
+                    "match_rate_pct": 0, "ctr_pct": _ctr(clks, imp),
+                    "ad_requests": req,
+                }
+                detected = _detect_entity_anomalies(entity_metrics, label=str(name))
+                all_anomalies.extend(detected)
+
+        # Network-wide anomalies
+        rev_total  = float(df["ad_server_cpm_and_cpc_revenue"].sum())
+        imp_total  = int(df["ad_server_impressions"].sum())
+        clk_total  = int(df["ad_server_clicks"].sum()) if "ad_server_clicks" in df.columns else 0
+        req_total  = 0
+        for col in ["canonical_ad_requests", "total_ad_requests", "ad_server_ad_requests"]:
+            if col in df.columns:
+                v = int(df[col].sum())
+                if v > 0: req_total = v; break
+
+        network_anomalies = _detect_entity_anomalies({
+            "revenue_usd": rev_total, "impressions": imp_total,
+            "fill_rate_pct": _pct(imp_total, req_total),
+            "match_rate_pct": 0, "ctr_pct": _ctr(clk_total, imp_total),
+            "ad_requests": req_total,
+        }, label="Network-wide")
+        all_anomalies = network_anomalies + all_anomalies
+
+        critical = [a for a in all_anomalies if a.get("severity") == "critical"]
+        warnings = [a for a in all_anomalies if a.get("severity") == "warning"]
+
+        return {
+            "period": f"{start_date} to {end_date}",
+            "total_anomalies": len(all_anomalies),
+            "critical_count": len(critical),
+            "warning_count": len(warnings),
+            "critical_anomalies": critical[:10],
+            "warning_anomalies": warnings[:15],
+            "summary": (
+                f"{len(critical)} critical issue(s) and {len(warnings)} warning(s) detected."
+                if all_anomalies else "No anomalies detected. Network is operating normally."
+            ),
+        }
+
+    def get_optimization_opportunities(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> Dict[str, Any]:
+        """
+        AI-powered optimization opportunity scan across fill rate, eCPM, CTR,
+        and revenue. Returns prioritised action items for the revenue team.
+        """
+        from mcp_server.services.network_analytics import _pct, _ecpm, _ctr
+
+        df = self.get_live_data_sync(start_date, end_date, force_refresh=True)
+        if df.empty:
+            return {"error": "No data for the requested period.", "opportunities": []}
+
+        opportunities: List[Dict] = []
+
+        rev_total = float(df["ad_server_cpm_and_cpc_revenue"].sum())
+        imp_total = int(df["ad_server_impressions"].sum())
+        clk_total = int(df["ad_server_clicks"].sum()) if "ad_server_clicks" in df.columns else 0
+        req_total = 0
+        for col in ["canonical_ad_requests", "total_ad_requests", "ad_server_ad_requests"]:
+            if col in df.columns:
+                v = int(df[col].sum())
+                if v > 0: req_total = v; break
+
+        fill_rate = _pct(imp_total, req_total)
+        ecpm_val  = _ecpm(rev_total, imp_total)
+        ctr_val   = _ctr(clk_total, imp_total)
+        unfilled  = req_total - imp_total if req_total > imp_total else 0
+
+        # Opportunity: Low fill rate
+        if fill_rate < 70 and req_total > 1000:
+            estimated_rev = unfilled * ecpm_val / 1000 if ecpm_val > 0 else 0
+            opportunities.append({
+                "category": "Fill Rate",
+                "priority": "High",
+                "title": f"Fill Rate is {fill_rate:.1f}% — {unfilled:,} requests unfilled",
+                "impact_estimate_usd": round(estimated_rev, 2),
+                "recommendation": "Enable additional demand partners via Open Bidding. Lower floor prices on low-competition inventory.",
+                "kpi_affected": ["fill_rate", "revenue", "impressions"],
+            })
+
+        # Opportunity: Low eCPM
+        if ecpm_val < 0.5 and imp_total > 1000:
+            opportunities.append({
+                "category": "eCPM / Pricing",
+                "priority": "High",
+                "title": f"eCPM is only ${ecpm_val:.3f} — below market average",
+                "impact_estimate_usd": None,
+                "recommendation": "Review Unified Pricing Rules. Increase price floor on premium placements (Native, Rewarded). Enable header bidding.",
+                "kpi_affected": ["ecpm", "revenue"],
+            })
+
+        # Opportunity: Low CTR
+        if ctr_val < 0.3 and imp_total > 5000:
+            opportunities.append({
+                "category": "Creative / Placement",
+                "priority": "Medium",
+                "title": f"CTR is {ctr_val:.2f}% — user engagement is very low",
+                "impact_estimate_usd": None,
+                "recommendation": "Review ad placements for viewability. Refresh creative assets. A/B test placement positions.",
+                "kpi_affected": ["ctr", "clicks"],
+            })
+
+        # Opportunity: Revenue below potential
+        if rev_total < 100 and imp_total > 10000:
+            opportunities.append({
+                "category": "Monetization",
+                "priority": "High",
+                "title": f"High impressions ({imp_total:,}) but revenue is only ${rev_total:.2f}",
+                "impact_estimate_usd": None,
+                "recommendation": "Large impression volume not being fully monetized. Check demand channel configuration and Ad Exchange integration.",
+                "kpi_affected": ["revenue", "ecpm"],
+            })
+
+        # Opportunity: High CTR (potential IVT)
+        if ctr_val > 8.0 and imp_total > 1000:
+            opportunities.append({
+                "category": "Traffic Quality",
+                "priority": "Critical",
+                "title": f"CTR is {ctr_val:.1f}% — possible invalid traffic",
+                "impact_estimate_usd": None,
+                "recommendation": "Review for IVT using Google Ad Manager's Invalid Traffic report. Consider enabling Click Fraud detection.",
+                "kpi_affected": ["ctr", "revenue"],
+            })
+
+        if not opportunities:
+            opportunities.append({
+                "category": "General",
+                "priority": "Low",
+                "title": "Network KPIs are within healthy ranges",
+                "impact_estimate_usd": 0,
+                "recommendation": "Continue monitoring. Consider scaling well-performing inventory segments.",
+                "kpi_affected": [],
+            })
+
+        return {
+            "period": f"{start_date} to {end_date}",
+            "total_opportunities": len(opportunities),
+            "opportunities": sorted(
+                opportunities,
+                key=lambda x: {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}.get(x["priority"], 4)
+            ),
+            "summary_metrics": {
+                "revenue_usd": round(rev_total, 2),
+                "impressions": imp_total,
+                "fill_rate_pct": fill_rate,
+                "ecpm_usd": ecpm_val,
+                "ctr_pct": ctr_val,
+                "unfilled_requests": unfilled,
+            },
+        }
 
 
 

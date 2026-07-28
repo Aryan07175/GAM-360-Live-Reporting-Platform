@@ -1350,6 +1350,37 @@ TOOL ROUTING REFERENCE  [NEW — ADDITIVE]
 
 CRITICAL: Never mix tools. If the user asks about child networks, use getChildNetworkAnalytics — not query_gam_data.
 
+==================================================
+PHASE 12: ENTERPRISE KNOWLEDGE LAYER [NEW]
+==================================================
+
+You are the authoritative Google Ad Manager 360 expert for the company.
+If the user asks a conceptual question, explains a metric, or asks how something in GAM works, you MUST provide a detailed, accurate, and professional explanation.
+
+Key Concepts you are expected to explain confidently:
+- Line Item Types (Sponsorship, Standard, Network, Bulk, Price Priority, House)
+- Ad Exchange & Open Bidding (Yield Groups, Header Bidding vs OB)
+- MCM (Multiple Customer Management) vs SPM
+- Metrics (Fill Rate, Match Rate, Active View Viewability, CTR, eCPM vs CPM)
+- Pricing (Unified Pricing Rules, Target CPM, Floor prices)
+- Targeting (Custom Targeting KV, Placements, Labels, Ad Exclusions)
+- Forecasting (Inventory Availability, Delivery Forecast, Capacity Planning)
+- Troubleshooting (Why an ad isn't serving, line item priorities)
+
+When answering conceptual questions:
+1. Provide a clear, one-sentence definition.
+2. Explain how it works in GAM 360.
+3. Give a practical business example or use case.
+4. Mention any relevant metrics or reporting dimensions.
+5. Use markdown formatting (bolding key terms, bullet points) for readability.
+
+Example: If asked "Why is fill rate different from match rate?"
+- Fill Rate = Impressions / Ad Requests (Measures how often a requested ad was actually served and viewed).
+- Match Rate = Matched Requests / Ad Requests (Measures how often GAM found an eligible ad to serve).
+- The difference is usually due to latency, users scrolling past before the ad renders, or ad blockers.
+
+You do NOT need to call a tool if the user is purely asking for a definition or explanation of a GAM concept.
+
 """
 
 # ─── Live GAM Query for Chat ─────────────────────────────────────────────────
@@ -2443,6 +2474,57 @@ def _make_tool_executor(cached_df):
             except Exception as e:
                 log.error("[Chat:getAdRules] failed: %s", e)
                 return {"error": f"Failed to fetch ad rules: {e}"}
+
+        # ── PHASE 11: EXECUTIVE AI INTELLIGENCE ──────────────────────────────
+
+        if tool_name == "getKPIHealthScore":
+            start_raw = input_dict.get("start_date", "").strip()
+            end_raw   = input_dict.get("end_date",   "").strip()
+            s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            try:
+                result = await asyncio.to_thread(gam.get_kpi_health_score, s_date, e_date)
+                log_payload_stats("getKPIHealthScore", result)
+                return guard_payload_size(result, "kpi_scores")
+            except Exception as e:
+                log.error("[Chat:getKPIHealthScore] failed: %s", e)
+                return {"error": f"Failed to compute KPI Health Score: {e}"}
+
+        if tool_name == "getExecutiveBriefing":
+            start_raw = input_dict.get("start_date", "").strip()
+            end_raw   = input_dict.get("end_date",   "").strip()
+            s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            compare_days = int(input_dict.get("compare_days", 7))
+            try:
+                result = await asyncio.to_thread(gam.get_executive_briefing, s_date, e_date, compare_days)
+                log_payload_stats("getExecutiveBriefing", result)
+                return guard_payload_size(result, "current_period")
+            except Exception as e:
+                log.error("[Chat:getExecutiveBriefing] failed: %s", e)
+                return {"error": f"Failed to generate executive briefing: {e}"}
+
+        if tool_name == "getAnomalyReport":
+            start_raw = input_dict.get("start_date", "").strip()
+            end_raw   = input_dict.get("end_date",   "").strip()
+            s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            try:
+                result = await asyncio.to_thread(gam.get_anomaly_report, s_date, e_date)
+                log_payload_stats("getAnomalyReport", result)
+                return guard_payload_size(result, "critical_anomalies")
+            except Exception as e:
+                log.error("[Chat:getAnomalyReport] failed: %s", e)
+                return {"error": f"Failed to run anomaly report: {e}"}
+
+        if tool_name == "getOptimizationOpportunities":
+            start_raw = input_dict.get("start_date", "").strip()
+            end_raw   = input_dict.get("end_date",   "").strip()
+            s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            try:
+                result = await asyncio.to_thread(gam.get_optimization_opportunities, s_date, e_date)
+                log_payload_stats("getOptimizationOpportunities", result)
+                return guard_payload_size(result, "opportunities")
+            except Exception as e:
+                log.error("[Chat:getOptimizationOpportunities] failed: %s", e)
+                return {"error": f"Failed to generate optimization opportunities: {e}"}
 
         return {"error": f"Unknown tool: {tool_name}"}
 
@@ -3840,6 +3922,56 @@ async def list_tools() -> list[types.Tool]:
                 }
             }
         ),
+        # ── PHASE 11: EXECUTIVE AI INTELLIGENCE TOOLS ─────────────────────────
+        types.Tool(
+            name="getKPIHealthScore",
+            description="Compute a composite KPI Health Score (A–F grade) across fill rate, eCPM, CTR, and revenue.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date YYYY-MM-DD."},
+                    "end_date":   {"type": "string", "description": "End date YYYY-MM-DD."},
+                },
+                "required": ["start_date", "end_date"],
+            }
+        ),
+        types.Tool(
+            name="getExecutiveBriefing",
+            description="Generate a full executive briefing with period-over-period comparison, anomalies, top performers, and strategic recommendations.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date":   {"type": "string", "description": "Start date YYYY-MM-DD."},
+                    "end_date":     {"type": "string", "description": "End date YYYY-MM-DD."},
+                    "compare_days": {"type": "integer", "description": "Days to compare against. Default 7."},
+                },
+                "required": ["start_date", "end_date"],
+            }
+        ),
+        types.Tool(
+            name="getAnomalyReport",
+            description="Deep anomaly detection scan across all inventory — revenue drops, fill rate issues, CTR spikes.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date YYYY-MM-DD."},
+                    "end_date":   {"type": "string", "description": "End date YYYY-MM-DD."},
+                },
+                "required": ["start_date", "end_date"],
+            }
+        ),
+        types.Tool(
+            name="getOptimizationOpportunities",
+            description="AI-powered optimization opportunities ranked by priority — fill rate, eCPM, CTR, and revenue uplift.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "start_date": {"type": "string", "description": "Start date YYYY-MM-DD."},
+                    "end_date":   {"type": "string", "description": "End date YYYY-MM-DD."},
+                },
+                "required": ["start_date", "end_date"],
+            }
+        ),
     ]
 
 
@@ -4110,6 +4242,30 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 bool(arguments.get("active_only", True)),
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        # ── PHASE 11: EXECUTIVE AI INTELLIGENCE ──────────────────────────────
+
+        if name == "getKPIHealthScore":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(gam.get_kpi_health_score, s_date, e_date)
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getExecutiveBriefing":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            compare_days = int(arguments.get("compare_days", 7))
+            res = await asyncio.to_thread(gam.get_executive_briefing, s_date, e_date, compare_days)
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getAnomalyReport":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(gam.get_anomaly_report, s_date, e_date)
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getOptimizationOpportunities":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(gam.get_optimization_opportunities, s_date, e_date)
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
 
         start_date, end_date, start_hour, end_hour = _resolve_dates(arguments)
 
