@@ -934,6 +934,26 @@ def get_query_data_tool_spec() -> dict:
 
 # ─── NEW TOOL SPECS (Additive) ────────────────────────────────────────────────
 
+def get_network_metadata_tool_spec() -> dict:
+    """Tool spec for getNetworkMetadata — live network configuration & metadata."""
+    return {
+        "toolSpec": {
+            "name": "getNetworkMetadata",
+            "description": (
+                "Fetch live network configuration and metadata from Google Ad Manager. "
+                "Use when the user asks about network settings, timezone, currency, display name, "
+                "network ID, network code, or effective root ad unit ID."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        }
+    }
+
 def get_network_summary_tool_spec() -> dict:
     """Tool spec for getNetworkSummary — live network-level intelligence."""
     return {
@@ -1073,6 +1093,113 @@ def get_match_rate_analytics_tool_spec() -> dict:
                         },
                     },
                     "required": ["start_date", "end_date"],
+                }
+            },
+        }
+    }
+
+
+# ── PHASE 10: TARGETING & RULES INTELLIGENCE TOOL SPECS ─────────────────────
+
+def get_labels_tool_spec() -> dict:
+    """Tool spec for getLabels — Labels, Competitive Exclusions, Roadblocks."""
+    return {
+        "toolSpec": {
+            "name": "getLabels",
+            "description": (
+                "Fetch Labels from Google Ad Manager including Competitive Exclusions, "
+                "Ad Exclusion labels, and Roadblock labels. Use when the user asks about "
+                "'labels', 'competitive exclusions', 'ad exclusions', 'roadblocks', "
+                "'label list', or 'what labels exist'."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional: filter labels by name (partial match).",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of labels to return. Default is 100.",
+                        },
+                        "active_only": {
+                            "type": "boolean",
+                            "description": "If true, only return active labels. Default is true.",
+                        },
+                    },
+                    "required": [],
+                }
+            },
+        }
+    }
+
+
+def get_custom_targeting_tool_spec() -> dict:
+    """Tool spec for getCustomTargeting — Keys & Values targeting metadata."""
+    return {
+        "toolSpec": {
+            "name": "getCustomTargeting",
+            "description": (
+                "Fetch Custom Targeting Keys and their associated Values from Google Ad Manager. "
+                "Use when the user asks about 'custom targeting', 'targeting keys', 'targeting values', "
+                "'key-value pairs', 'KV targeting', 'custom criteria', or 'what targeting keys exist'. "
+                "Returns an enriched list of keys each with their values and match type."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "key_filter": {
+                            "type": "string",
+                            "description": "Optional: filter targeting keys by name (partial match).",
+                        },
+                        "value_filter": {
+                            "type": "string",
+                            "description": "Optional: filter targeting values by name (partial match).",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max number of keys to return. Default is 50.",
+                        },
+                    },
+                    "required": [],
+                }
+            },
+        }
+    }
+
+
+def get_ad_rules_tool_spec() -> dict:
+    """Tool spec for getAdRules — Ad Rules, Frequency Caps, Roadblocks."""
+    return {
+        "toolSpec": {
+            "name": "getAdRules",
+            "description": (
+                "Fetch Ad Rules from Google Ad Manager. Ad Rules govern ad serving behaviour including "
+                "frequency caps, roadblocks, and competitive exclusions. Use when the user asks about "
+                "'ad rules', 'frequency caps', 'capping', 'roadblock rules', 'serving rules', "
+                "'ad rule list', or 'what ad rules are active'."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "name_filter": {
+                            "type": "string",
+                            "description": "Optional: filter ad rules by name (partial match).",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max number of ad rules to return. Default is 50.",
+                        },
+                        "active_only": {
+                            "type": "boolean",
+                            "description": "If true, only return active ad rules. Default is true.",
+                        },
+                    },
+                    "required": [],
                 }
             },
         }
@@ -1249,6 +1376,89 @@ def get_monetization_opportunity_analysis_tool_spec() -> dict:
                     "properties": {
                         "min_unfilled_rate_pct": {"type": "number", "description": "Minimum unfilled rate percentage threshold. Default is 20.0."},
                         "limit": {"type": "integer", "description": "Number of top opportunities to return. Default is 10."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_audience_geography_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getAudienceGeography."""
+    return {
+        "toolSpec": {
+            "name": "getAudienceGeography",
+            "description": "Analyze audience geographical distribution and monetization by country, state (region), or city.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "level": {"type": "string", "description": "Geographical level: 'country', 'state', 'region', or 'city'. Default is 'country'."},
+                        "limit": {"type": "integer", "description": "Number of top locations to return. Default is 25."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_audience_technology_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getAudienceTechnology."""
+    return {
+        "toolSpec": {
+            "name": "getAudienceTechnology",
+            "description": "Analyze audience technology breakdown by device category, browser, or operating system.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "dimension": {"type": "string", "description": "Technology dimension: 'device', 'browser', or 'operating_system'. Default is 'device'."},
+                        "limit": {"type": "integer", "description": "Number of top technology records to return. Default is 25."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_mobile_app_traffic_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getMobileAppTraffic."""
+    return {
+        "toolSpec": {
+            "name": "getMobileAppTraffic",
+            "description": "Analyze traffic and monetization performance across mobile apps.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "limit": {"type": "integer", "description": "Number of top mobile apps to return. Default is 25."}
+                    }
+                }
+            }
+        }
+    }
+
+
+def get_traffic_sources_tool_spec() -> dict:
+    """Bedrock-compatible tool specification for getTrafficSources."""
+    return {
+        "toolSpec": {
+            "name": "getTrafficSources",
+            "description": "Analyze traffic sources by domain, referrer URL, or traffic source channel.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "source_type": {"type": "string", "description": "Source dimension: 'domain', 'referrer', or 'traffic_source'. Default is 'domain'."},
+                        "limit": {"type": "integer", "description": "Number of top traffic sources to return. Default is 25."}
                     }
                 }
             }
@@ -1524,10 +1734,20 @@ async def stream_bedrock_response(
                     get_line_item_delivery_forecast_tool_spec(),
                     get_capacity_planning_report_tool_spec(),
                     get_monetization_opportunity_analysis_tool_spec(),
-                    # ── NEW TOOLS (additive) ──────────────────────────────────
+                    # ── PHASE 8: AUDIENCE & TRAFFIC TOOLS ─────────────────────
+                    get_audience_geography_tool_spec(),
+                    get_audience_technology_tool_spec(),
+                    get_mobile_app_traffic_tool_spec(),
+                    get_traffic_sources_tool_spec(),
+                    # ── PHASE 9: NETWORK INTELLIGENCE TOOLS ───────────────────
+                    get_network_metadata_tool_spec(),       # NETWORK: metadata + properties
                     get_network_summary_tool_spec(),        # NETWORK: summary + health + insights
                     get_child_network_analytics_tool_spec(),# MCM: child network breakdown
                     get_match_rate_analytics_tool_spec(),   # MATCH RATE: by dimension
+                    # ── PHASE 10: TARGETING & RULES INTELLIGENCE TOOLS ────────
+                    get_labels_tool_spec(),                 # LABELS: exclusions, roadblocks
+                    get_custom_targeting_tool_spec(),       # CUSTOM TARGETING: keys + values
+                    get_ad_rules_tool_spec(),               # AD RULES: frequency caps, rules
                 ]
             },
         }

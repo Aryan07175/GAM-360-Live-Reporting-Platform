@@ -439,9 +439,20 @@ def compute_match_rate_analytics(
         }
 
     # Determine grouping column
-    if dimension in ("app", "ad_unit"):
+    dim_clean = dimension.lower().strip()
+    if dim_clean == "device" and "device_category_name" in df.columns:
+        group_col = "device_category_name"
+    elif dim_clean == "country" and "country_name" in df.columns:
+        group_col = "country_name"
+    elif dim_clean == "browser" and "browser_name" in df.columns:
+        group_col = "browser_name"
+    elif dim_clean == "app" and "mobile_app_name" in df.columns:
+        group_col = "mobile_app_name"
+    elif dim_clean == "domain" and "domain" in df.columns:
+        group_col = "domain"
+    elif dim_clean in ("app", "ad_unit"):
         group_col = "ad_unit_name"
-    elif dimension == "website":
+    elif dim_clean == "website":
         if "ad_unit_name" in df.columns:
             df = df.copy()
             import re as _re
@@ -453,16 +464,18 @@ def compute_match_rate_analytics(
                 return parts[-1].strip() if len(parts) > 1 else s.strip()
             df["_website"] = df["ad_unit_name"].apply(_dom)
             group_col = "_website"
+        elif "domain" in df.columns:
+            group_col = "domain"
         else:
-            return {"period": f"{start} to {end}", "error": "ad_unit_name column missing."}
-    elif dimension == "child_network":
+            return {"period": f"{start} to {end}", "error": "ad_unit_name or domain column missing."}
+    elif dim_clean == "child_network":
         group_col = next(
             (c for c in ["child_network_code", "network_code"] if c in df.columns), None
         )
         if group_col is None:
             return {"period": f"{start} to {end}", "error": "child_network_code column missing."}
     else:
-        group_col = "ad_unit_name"
+        group_col = next((c for c in [f"{dim_clean}_name", dim_clean, "ad_unit_name"] if c in df.columns), "ad_unit_name")
 
     if group_col not in df.columns:
         return {"period": f"{start} to {end}", "error": f"Column '{group_col}' not in data."}
