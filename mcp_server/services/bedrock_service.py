@@ -1206,6 +1206,114 @@ def get_ad_rules_tool_spec() -> dict:
     }
 
 
+# ── PHASE 11: EXECUTIVE AI INTELLIGENCE TOOL SPECS ───────────────────────────
+
+def get_kpi_health_score_tool_spec() -> dict:
+    """Tool spec for getKPIHealthScore — composite health grade for the network."""
+    return {
+        "toolSpec": {
+            "name": "getKPIHealthScore",
+            "description": (
+                "Compute a composite KPI Health Score (0–100, graded A–F) for the network "
+                "based on fill rate, eCPM, CTR, and revenue. Also returns per-metric scores "
+                "and actionable items. Use when the user asks about 'KPI health', 'health score', "
+                "'network health grade', 'overall performance score', 'how healthy is my network', "
+                "or 'KPI dashboard'."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date YYYY-MM-DD."},
+                        "end_date":   {"type": "string", "description": "End date YYYY-MM-DD."},
+                    },
+                    "required": ["start_date", "end_date"],
+                }
+            },
+        }
+    }
+
+
+def get_executive_briefing_tool_spec() -> dict:
+    """Tool spec for getExecutiveBriefing — full executive report with PoP comparison."""
+    return {
+        "toolSpec": {
+            "name": "getExecutiveBriefing",
+            "description": (
+                "Generate a full executive briefing for leadership. Includes period-over-period "
+                "revenue/impressions/fill-rate comparison, top performing inventory, detected anomalies, "
+                "and strategic recommendations. Use when the user asks for 'executive briefing', "
+                "'weekly report', 'monthly report', 'executive summary', 'business summary', "
+                "'performance briefing', or 'management report'."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date":   {"type": "string", "description": "Start date YYYY-MM-DD."},
+                        "end_date":     {"type": "string", "description": "End date YYYY-MM-DD."},
+                        "compare_days": {"type": "integer", "description": "Days to compare against (default 7)."},
+                    },
+                    "required": ["start_date", "end_date"],
+                }
+            },
+        }
+    }
+
+
+def get_anomaly_report_tool_spec() -> dict:
+    """Tool spec for getAnomalyReport — deep anomaly detection across the network."""
+    return {
+        "toolSpec": {
+            "name": "getAnomalyReport",
+            "description": (
+                "Run a deep anomaly detection scan across all inventory (revenue anomalies, "
+                "fill rate drops, CTR spikes, traffic issues). Use when the user asks about "
+                "'anomalies', 'revenue drop', 'fill rate drop', 'CTR spike', 'traffic issues', "
+                "'something wrong with my network', 'detect problems', 'root cause analysis', "
+                "or 'what is causing the revenue drop'."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date YYYY-MM-DD."},
+                        "end_date":   {"type": "string", "description": "End date YYYY-MM-DD."},
+                    },
+                    "required": ["start_date", "end_date"],
+                }
+            },
+        }
+    }
+
+
+def get_optimization_opportunities_tool_spec() -> dict:
+    """Tool spec for getOptimizationOpportunities — AI-generated revenue uplift opportunities."""
+    return {
+        "toolSpec": {
+            "name": "getOptimizationOpportunities",
+            "description": (
+                "Scan the network and generate AI-powered optimization opportunities ranked by priority. "
+                "Identifies fill rate gaps, eCPM improvement areas, creative quality issues, and "
+                "monetization gaps with estimated revenue impact. Use when the user asks for "
+                "'optimization opportunities', 'how to improve revenue', 'revenue growth', "
+                "'increase fill rate', 'AI recommendations', 'what can I improve', "
+                "or 'optimization plan'."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "start_date": {"type": "string", "description": "Start date YYYY-MM-DD."},
+                        "end_date":   {"type": "string", "description": "End date YYYY-MM-DD."},
+                    },
+                    "required": ["start_date", "end_date"],
+                }
+            },
+        }
+    }
+
+
 def get_top_websites_tool_spec() -> dict:
     """Bedrock-compatible tool specification for the getTopWebsites tool."""
     return {
@@ -1748,6 +1856,11 @@ async def stream_bedrock_response(
                     get_labels_tool_spec(),                 # LABELS: exclusions, roadblocks
                     get_custom_targeting_tool_spec(),       # CUSTOM TARGETING: keys + values
                     get_ad_rules_tool_spec(),               # AD RULES: frequency caps, rules
+                    # ── PHASE 11: EXECUTIVE AI INTELLIGENCE TOOLS ─────────────
+                    get_kpi_health_score_tool_spec(),           # KPI HEALTH: composite score
+                    get_executive_briefing_tool_spec(),         # BRIEFING: full exec report
+                    get_anomaly_report_tool_spec(),             # ANOMALY: detection scan
+                    get_optimization_opportunities_tool_spec(), # OPTIMIZE: revenue uplift
                 ]
             },
         }
