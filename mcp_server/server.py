@@ -2185,17 +2185,7 @@ def _make_tool_executor(cached_df):
                 input_dict.get("active_only", True)
             )
             return {"count": len(res), "placements": res}
-        if tool_name == "getCustomTargeting":
-            key_filter   = input_dict.get("key_filter",   "").strip() or None
-            value_filter = input_dict.get("value_filter", "").strip() or None
-            limit = int(input_dict.get("limit", 50))
-            try:
-                result = await asyncio.to_thread(gam.get_custom_targeting, key_filter, value_filter, limit)
-                log_payload_stats("getCustomTargeting", result)
-                return guard_payload_size(result, "keys")
-            except Exception as e:
-                log.error("[Chat:getCustomTargeting] failed: %s", e)
-                return {"error": f"Failed to fetch custom targeting: {e}"}
+
 
         website_tools = [
             "getWebsiteInventory", "getWebsitePerformance", "getWebsiteHealth",
@@ -2525,6 +2515,18 @@ def _make_tool_executor(cached_df):
             except Exception as e:
                 log.error("[Chat:getOptimizationOpportunities] failed: %s", e)
                 return {"error": f"Failed to generate optimization opportunities: {e}"}
+
+        # ── FALLBACK to API Tool Logic ───────────────────────────────────────────
+        try:
+            api_results = await execute_tool_logic(tool_name, input_dict)
+            if api_results and len(api_results) > 0:
+                raw_json = json.loads(api_results[0].text)
+                if isinstance(raw_json, dict) and raw_json.get("error"):
+                    return raw_json
+                log_payload_stats(tool_name, raw_json)
+                return guard_payload_size(raw_json, "results")
+        except Exception as e:
+            log.warning("[Chat:%s] fallback execute_tool_logic threw error: %s", tool_name, e)
 
         return {"error": f"Unknown tool: {tool_name}"}
 

@@ -369,36 +369,7 @@ def get_placements_tool_spec() -> dict:
     }
 
 
-def get_custom_targeting_tool_spec() -> dict:
-    """Bedrock tool spec for getCustomTargeting."""
-    return {
-        "toolSpec": {
-            "name": "getCustomTargeting",
-            "description": (
-                "Fetch LIVE Google Ad Manager Custom Targeting Keys (predefined vs freeform keys and custom dimensions). "
-                "Use this tool when the user asks about key-value targeting, targeting keys, or custom dimensions."
-            ),
-            "inputSchema": {
-                "json": {
-                    "type": "object",
-                    "properties": {
-                        "name_filter": {
-                            "type": "string",
-                            "description": "Optional search string to filter custom targeting keys by name."
-                        },
-                        "active_only": {
-                            "type": "boolean",
-                            "description": "Whether to return only ACTIVE keys (true by default)."
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of keys to return (default 100, max 500)."
-                        }
-                    }
-                }
-            }
-        }
-    }
+
 
 
 def get_orders_tool_spec() -> dict:
@@ -1817,7 +1788,6 @@ async def stream_bedrock_response(
                     # ── PHASE 2: INVENTORY TOOLS ──────────────────────────────
                     get_ad_unit_hierarchy_tool_spec(),
                     get_placements_tool_spec(),
-                    get_custom_targeting_tool_spec(),
                     # ── PHASE 3: CAMPAIGN TOOLS ───────────────────────────────
                     get_orders_tool_spec(),
                     get_line_items_tool_spec(),
