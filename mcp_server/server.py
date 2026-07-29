@@ -881,6 +881,23 @@ Which websites have declining revenue?
 
 ---
 
+## IMPRESSION INTELLIGENCE
+
+Trigger Questions:
+
+Which website has the highest impressions?
+Which website has the lowest impressions?
+Show impressions for all websites.
+Which websites have zero impressions?
+Which websites are receiving traffic?
+Which websites are not receiving traffic?
+Rank websites by impressions.
+Compare impressions between websites.
+Which websites gained impressions today?
+Which websites lost impressions?
+
+---
+
 ## 1. TOP WEBSITES
 
 Use:
