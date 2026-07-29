@@ -14,7 +14,7 @@ import asyncio
 import logging
 import urllib.request
 from datetime import date, datetime, timezone, timedelta
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, Dict, Any
 import pandas as pd
 from googleads import ad_manager, errors
 
