@@ -858,6 +858,29 @@ Never ask the user to specify a date unless the request is ambiguous.
 
 # WEBSITE ROUTING LOGIC
 
+## REVENUE INTELLIGENCE
+
+Trigger Questions (These questions should automatically map to the most appropriate website reporting tools above, depending on intent):
+
+Which website generated the most revenue today?
+Which website generated the least revenue?
+Show revenue for every website.
+Compare website revenue.
+Which website contributes the highest percentage of revenue?
+Which websites generated zero revenue?
+Which websites crossed $100 revenue?
+Which websites generated less than $10?
+Show average revenue per website.
+Which websites lost revenue compared to yesterday?
+Which websites gained revenue this week?
+Rank all websites by revenue.
+Show revenue distribution across websites.
+What percentage of total revenue comes from each website?
+Which websites account for 80% of total revenue?
+Which websites have declining revenue?
+
+---
+
 ## 1. TOP WEBSITES
 
 Use:
