@@ -942,6 +942,47 @@ Rank websites by eCPM
 
 ---
 
+## AD REQUEST INTELLIGENCE
+
+Trigger Questions:
+
+Highest Ad Requests
+Lowest Ad Requests
+Websites with zero requests
+Websites receiving traffic
+Rank websites by requests
+Compare requests
+
+---
+
+## MATCH RATE INTELLIGENCE
+
+Trigger Questions:
+
+Highest Match Rate
+Lowest Match Rate
+Match Rate by website
+Websites with poor Match Rate
+Compare Match Rate
+Average Match Rate
+
+---
+
+## WEBSITE HEALTH INTELLIGENCE
+
+Trigger Questions:
+
+Which websites are healthy?
+Which websites are unhealthy?
+Which websites are offline?
+Which websites are inactive?
+Which websites have stopped serving ads?
+Which websites have no impressions?
+Which websites have requests but no revenue?
+Which websites need attention?
+
+---
+
 ## 1. TOP WEBSITES
 
 Use:
