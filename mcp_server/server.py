@@ -2470,7 +2470,16 @@ def _make_tool_executor(cached_df):
         if tool_name == "getKPIHealthScore":
             start_raw = input_dict.get("start_date", "").strip()
             end_raw   = input_dict.get("end_date",   "").strip()
-            s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            # Default to past 7 days if Bedrock doesn't supply dates
+            _today = date.today()
+            if not start_raw:
+                start_raw = (_today - timedelta(days=7)).isoformat()
+            if not end_raw:
+                end_raw = _today.isoformat()
+            try:
+                s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            except Exception as exc:
+                return {"error": f"Invalid date format: {exc}"}
             try:
                 result = await asyncio.to_thread(gam.get_kpi_health_score, s_date, e_date)
                 log_payload_stats("getKPIHealthScore", result)
@@ -2482,7 +2491,15 @@ def _make_tool_executor(cached_df):
         if tool_name == "getExecutiveBriefing":
             start_raw = input_dict.get("start_date", "").strip()
             end_raw   = input_dict.get("end_date",   "").strip()
-            s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            _today = date.today()
+            if not start_raw:
+                start_raw = (_today - timedelta(days=7)).isoformat()
+            if not end_raw:
+                end_raw = _today.isoformat()
+            try:
+                s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            except Exception as exc:
+                return {"error": f"Invalid date format: {exc}"}
             compare_days = int(input_dict.get("compare_days", 7))
             try:
                 result = await asyncio.to_thread(gam.get_executive_briefing, s_date, e_date, compare_days)
@@ -2495,7 +2512,15 @@ def _make_tool_executor(cached_df):
         if tool_name == "getAnomalyReport":
             start_raw = input_dict.get("start_date", "").strip()
             end_raw   = input_dict.get("end_date",   "").strip()
-            s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            _today = date.today()
+            if not start_raw:
+                start_raw = (_today - timedelta(days=7)).isoformat()
+            if not end_raw:
+                end_raw = _today.isoformat()
+            try:
+                s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            except Exception as exc:
+                return {"error": f"Invalid date format: {exc}"}
             try:
                 result = await asyncio.to_thread(gam.get_anomaly_report, s_date, e_date)
                 log_payload_stats("getAnomalyReport", result)
@@ -2507,7 +2532,15 @@ def _make_tool_executor(cached_df):
         if tool_name == "getOptimizationOpportunities":
             start_raw = input_dict.get("start_date", "").strip()
             end_raw   = input_dict.get("end_date",   "").strip()
-            s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            _today = date.today()
+            if not start_raw:
+                start_raw = (_today - timedelta(days=7)).isoformat()
+            if not end_raw:
+                end_raw = _today.isoformat()
+            try:
+                s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
+            except Exception as exc:
+                return {"error": f"Invalid date format: {exc}"}
             try:
                 result = await asyncio.to_thread(gam.get_optimization_opportunities, s_date, e_date)
                 log_payload_stats("getOptimizationOpportunities", result)

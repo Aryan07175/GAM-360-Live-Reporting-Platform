@@ -1441,15 +1441,16 @@ class GAMClient:
     def get_inventory_availability_forecast(
         self,
         ad_unit_id: str,
-        target_impressions: int = 100000,
+        units: int = 100000,  # renamed from target_impressions to match server.py call site
         days: int = 7
     ) -> Dict[str, Any]:
         """Predict inventory availability and capacity for a target ad unit via ForecastService."""
         forecast_service = self.client.GetService("ForecastService", version=API_VERSION)
-        
-        now = datetime.now() + timedelta(days=2)
+
+        # Use UTC to be timezone-agnostic across all publishers
+        now = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=2)
         end = now + timedelta(days=int(days))
-        
+
         prospective_line_item = {
             "lineItem": {
                 "lineItemType": "STANDARD",
@@ -1458,18 +1459,18 @@ class GAMClient:
                 "startDateTimeType": "USE_START_DATE_TIME",
                 "startDateTime": {
                     "date": {"year": now.year, "month": now.month, "day": now.day},
-                    "hour": 12, "minute": 0, "second": 0,
-                    "timeZoneId": "Asia/Kolkata"
+                    "hour": 0, "minute": 0, "second": 0,
+                    "timeZoneId": "America/New_York"  # GAM requires a named IANA timezone — use a stable universal one
                 },
                 "endDateTime": {
                     "date": {"year": end.year, "month": end.month, "day": end.day},
                     "hour": 23, "minute": 59, "second": 59,
-                    "timeZoneId": "Asia/Kolkata"
+                    "timeZoneId": "America/New_York"
                 },
                 "primaryGoal": {
                     "goalType": "LIFETIME",
                     "unitType": "IMPRESSIONS",
-                    "units": int(target_impressions)
+                    "units": int(units)
                 },
                 "targeting": {
                     "inventoryTargeting": {
@@ -1486,15 +1487,15 @@ class GAMClient:
         matched = int(getattr(res, "matchedUnits", 0))
         possible = int(getattr(res, "possibleUnits", 0))
         reserved = int(getattr(res, "reservedUnits", 0))
-        
+
         avail_pct = round((avail / matched * 100.0), 2) if matched > 0 else 0.0
-        is_available = avail >= target_impressions
-        overbooking = target_impressions > avail
+        is_available = avail >= units
+        overbooking = units > avail
 
         return {
             "ad_unit_id": str(ad_unit_id),
             "forecast_period_days": int(days),
-            "target_impressions": int(target_impressions),
+            "target_impressions": int(units),
             "available_impressions": avail,
             "matched_impressions": matched,
             "possible_impressions": possible,
@@ -1502,7 +1503,7 @@ class GAMClient:
             "availability_rate_pct": f"{avail_pct}%",
             "is_available": is_available,
             "overbooking_detected": overbooking,
-            "recommendation": "Sufficient inventory capacity to fulfill target campaign." if is_available else f"High risk of under-delivery or overbooking. Short by {target_impressions - avail:,} impressions."
+            "recommendation": "Sufficient inventory capacity to fulfill target campaign." if is_available else f"High risk of under-delivery or overbooking. Short by {units - avail:,} impressions."
         }
 
     def get_line_item_delivery_forecast(
@@ -1567,9 +1568,10 @@ class GAMClient:
         limit: int = 10
     ) -> Dict[str, Any]:
         """Analyze network-wide inventory capacity across top ad units over a 30-day projection horizon."""
-        end_d = date.today() - timedelta(days=5)
-        start_d = end_d - timedelta(days=2)
-        
+        # Bug 5 fix: use a 7-day baseline (ending 2 days ago) for more stable daily averages
+        end_d = date.today() - timedelta(days=2)
+        start_d = end_d - timedelta(days=6)  # 7 days inclusive
+
         df = self.get_live_data_sync(start_d, end_d, extra_dims=["AD_UNIT_NAME"], separate_report=False)
         if df.empty or "ad_unit_name" not in df.columns:
             return {"projection_horizon_days": 30, "ad_units_analyzed": 0, "capacity_breakdown": []}
@@ -1587,16 +1589,16 @@ class GAMClient:
         results = []
         total_proj_imp = 0
         for row in grouped.to_dict("records"):
-            imp_3d = int(row.get("total_line_item_level_impressions", 0))
-            rev_3d = float(row.get("total_line_item_level_all_revenue", 0.0))
-            daily_avg_imp = int(imp_3d / 3.0)
+            imp_7d = int(row.get("total_line_item_level_impressions", 0))
+            rev_7d = float(row.get("total_line_item_level_all_revenue", 0.0))
+            daily_avg_imp = int(imp_7d / 7.0)
             proj_30d_imp = daily_avg_imp * 30
             total_proj_imp += proj_30d_imp
-            
-            ecpm = round((rev_3d / imp_3d * 1000.0), 2) if imp_3d > 0 else 0.0
-            
+
+            ecpm = round((rev_7d / imp_7d * 1000.0), 2) if imp_7d > 0 else 0.0
+
             status = "HIGH_CAPACITY" if proj_30d_imp > 1_000_000 else ("MODERATE_CAPACITY" if proj_30d_imp > 100_000 else "CONSTRAINED")
-            
+
             results.append({
                 "ad_unit_name": str(row["ad_unit_name"]),
                 "daily_average_impressions": daily_avg_imp,
@@ -1608,7 +1610,7 @@ class GAMClient:
 
         return {
             "projection_horizon_days": 30,
-            "historical_baseline_days": 3,
+            "historical_baseline_days": 7,
             "total_projected_30d_network_impressions": int(total_proj_imp),
             "capacity_breakdown": results
         }
@@ -1619,8 +1621,9 @@ class GAMClient:
         limit: int = 10
     ) -> Dict[str, Any]:
         """Identify revenue optimization and yield improvement opportunities across network ad units."""
-        end_d = date.today() - timedelta(days=5)
-        start_d = end_d - timedelta(days=2)
+        # Bug 5 fix: use a 7-day baseline (ending 2 days ago) for more stable opportunity detection
+        end_d = date.today() - timedelta(days=2)
+        start_d = end_d - timedelta(days=6)  # 7 days inclusive
         
         df = self.get_live_data_sync(start_d, end_d, extra_dims=["AD_UNIT_NAME"], separate_report=False)
         if df.empty or "ad_unit_name" not in df.columns:
