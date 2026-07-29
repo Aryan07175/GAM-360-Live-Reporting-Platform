@@ -2169,22 +2169,47 @@ def _make_tool_executor(cached_df):
             return await execute_query_gam_data(input_dict)
 
         if tool_name == "getAdUnitHierarchy":
-            res = await asyncio.to_thread(
-                gam.get_ad_units,
-                int(input_dict.get("limit", 100)),
-                input_dict.get("name_filter"),
-                input_dict.get("parent_id"),
-                input_dict.get("active_only", True)
-            )
-            return {"count": len(res), "ad_units": res}
+            # Strict bool coercion: Bedrock may send "false" (string) which is truthy in Python
+            raw_active = input_dict.get("active_only", True)
+            if isinstance(raw_active, str):
+                active_only_flag = raw_active.strip().lower() not in ("false", "0", "no")
+            else:
+                active_only_flag = bool(raw_active)
+            try:
+                res = await asyncio.to_thread(
+                    gam.get_ad_units,
+                    int(input_dict.get("limit", 100)),
+                    input_dict.get("name_filter"),
+                    input_dict.get("parent_id"),
+                    active_only_flag,
+                )
+                result = {"count": len(res), "active_only": active_only_flag, "ad_units": res}
+                log_payload_stats("getAdUnitHierarchy", result)
+                return guard_payload_size(result, "ad_units")
+            except Exception as e:
+                log.error("[Chat:getAdUnitHierarchy] failed: %s", e)
+                return {"error": f"Failed to fetch ad unit hierarchy: {e}"}
+
         if tool_name == "getPlacements":
-            res = await asyncio.to_thread(
-                gam.get_placements,
-                int(input_dict.get("limit", 100)),
-                input_dict.get("name_filter"),
-                input_dict.get("active_only", True)
-            )
-            return {"count": len(res), "placements": res}
+            raw_active = input_dict.get("active_only", True)
+            if isinstance(raw_active, str):
+                active_only_flag = raw_active.strip().lower() not in ("false", "0", "no")
+            else:
+                active_only_flag = bool(raw_active)
+            try:
+                res = await asyncio.to_thread(
+                    gam.get_placements,
+                    int(input_dict.get("limit", 100)),
+                    input_dict.get("name_filter"),
+                    active_only_flag,
+                )
+                result = {"count": len(res), "active_only": active_only_flag, "placements": res}
+                log_payload_stats("getPlacements", result)
+                return guard_payload_size(result, "placements")
+            except Exception as e:
+                log.error("[Chat:getPlacements] failed: %s", e)
+                return {"error": f"Failed to fetch placements: {e}"}
+
 
 
         website_tools = [
