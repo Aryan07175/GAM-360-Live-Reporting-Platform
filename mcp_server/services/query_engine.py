@@ -214,8 +214,8 @@ def slim_rows(rows: list[dict], metric: str, *, max_rows: int = MAX_ROWS_DEFAULT
 
 def slim_website_rows(rows: list[dict], metric: str = "revenue",
                       *, max_rows: int = MAX_ROWS_DEFAULT) -> list[dict]:
-    """Slim website-specific rows. Always keeps: name, status, + metric fields."""
-    WEBSITE_KEEP = {"name", "domain", "status"}
+    """Slim website-specific rows. Always keeps: website, name, status, + metric fields."""
+    WEBSITE_KEEP = {"website", "name", "domain", "status"}
     METRIC_EXTRAS = {
         "revenue":    {"revenue", "impressions", "fill_rate", "ecpm", "ctr"},
         "impressions":{"impressions", "revenue", "ad_requests", "fill_rate"},
