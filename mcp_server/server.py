@@ -406,9 +406,9 @@ NEVER ask the user which API to use. Automatically choose the correct tool.
    - **Supported Questions**: "Which website has the lowest revenue?", "Bottom 3 websites by eCPM", "Lowest fill rate websites", "Worst performing websites", "Website with lowest revenue yesterday", "Least revenue website this week".
    - **REQUIRED Parameters**: `start_date`, `end_date`, `metric` (default revenue), `limit` (default 10).
 6. **`getLowestRevenueWebsiteReport`** ← USE THIS when user asks for multiple time periods:
-   - **Use when**: User asks for lowest/worst website across MULTIPLE time windows (e.g., 7 days, 30 days, 90 days).
-   - **Supported Questions**: "Revenue of lowest website across 7, 15, 30, 60, 90 days", "Show worst website for past month and quarter", "Compare lowest website across time periods".
-   - **NO parameters required** — fetches all standard periods automatically (7/10/15/30/60/90 days).
+   - **Use when**: User asks for lowest/worst website across MULTIPLE time windows (e.g., 7 days, 30 days, 90 days, 6 months).
+   - **Supported Questions**: "Revenue of lowest website across 7, 15, 30, 60, 90, 180 days", "Show worst website for past month, quarter, and 6 months", "Compare lowest website across time periods".
+   - **NO parameters required** — fetches all standard periods automatically (7/10/15/30/60/90/180 days).
 7. **`getWebsiteTrend`**:
    - **Use when**: User asks for data over time, trends, historical performance, daily/weekly/monthly breakdowns.
    - **Supported Questions**: "Show daily revenue trend for the past 7 days", "Weekly impressions trend", "Monthly eCPM trend".
@@ -2408,6 +2408,7 @@ def _make_tool_executor(cached_df):
                 ("30 days", yesterday - timedelta(days=29), yesterday),
                 ("60 days", yesterday - timedelta(days=59), yesterday),
                 ("90 days", yesterday - timedelta(days=89), yesterday),
+                ("6 months", yesterday - timedelta(days=179), yesterday),
             ]
             period_results = []
             for label, p_start, p_end in periods:
@@ -3777,7 +3778,7 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Multi-period lowest revenue website analysis. "
                 "Fetches the bottom (lowest) revenue websites for ALL standard time windows: "
-                "7 days, 10 days, 15 days, 30 days, 60 days, and 90 days — in a single call. "
+                "7 days, 10 days, 15 days, 30 days, 60 days, 90 days, and 6 months (180 days) — in a single call. "
                 "USE THIS when the user asks for lowest/worst website revenue across multiple time periods. "
                 "Returns a comparison table showing which websites consistently underperform."
             ),
