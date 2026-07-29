@@ -3054,10 +3054,11 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
     return guard_payload_size(result_payload, "revenue")
 
 
-def _compute_website_performance(df: pd.DataFrame, start: date, end: date) -> dict:
+def _get_all_website_metrics(df: pd.DataFrame) -> list[dict]:
+    """Helper to compute metrics for all websites before any sorting or trimming."""
     if df.empty:
-        return {"result": "Website inventory is available but performance metrics could not be retrieved."}
-    
+        return []
+        
     df_copy = df.copy()
     df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
     
@@ -3069,7 +3070,6 @@ def _compute_website_performance(df: pd.DataFrame, start: date, end: date) -> di
     }).reset_index()
     
     websites_perf = []
-    
     for _, row in ws.iterrows():
         name = row["website"]
         req = int(row["ad_server_ad_requests"])
@@ -3093,6 +3093,16 @@ def _compute_website_performance(df: pd.DataFrame, start: date, end: date) -> di
             "ecpm": round(ecpm, 4),
             "revenue": round(rev, 6)
         })
+    return websites_perf
+
+
+def _compute_website_performance(df: pd.DataFrame, start: date, end: date) -> dict:
+    if df.empty:
+        return {"result": "Website inventory is available but performance metrics could not be retrieved."}
+    
+    websites_perf = _get_all_website_metrics(df)
+    if not websites_perf:
+        return {"result": "Website inventory is available but performance metrics could not be computed."}
     
     sorted_perf = sorted(websites_perf, key=lambda x: x["revenue"], reverse=True)
     slimmed = slim_website_rows(sorted_perf, "revenue", max_rows=MAX_ROWS_DEFAULT)
@@ -3147,9 +3157,9 @@ def _compute_top_websites(df: pd.DataFrame, start: date, end: date, metric: str 
     if df.empty:
         return {"result": "No websites were returned by Google Ad Manager."}
     
-    perf = _compute_website_performance(df, start, end)
-    if "performance" not in perf:
-        return perf
+    websites_perf = _get_all_website_metrics(df)
+    if not websites_perf:
+        return {"result": "No websites were returned by Google Ad Manager."}
         
     metric_key = metric.lower()
     # Handle mapping to our keys if model passes slightly different names
@@ -3160,7 +3170,7 @@ def _compute_top_websites(df: pd.DataFrame, start: date, end: date, metric: str 
     elif metric_key in ["ecpm"]: metric_key = "ecpm"
     else: metric_key = "revenue" # Default
     
-    sorted_websites = sorted(perf.get("performance", []), key=lambda x: x.get(metric_key, 0), reverse=True)
+    sorted_websites = sorted(websites_perf, key=lambda x: x.get(metric_key, 0), reverse=True)
     slimmed = slim_website_rows(sorted_websites[:limit], metric_key, max_rows=MAX_ROWS_TOP_N)
     result_payload = {
         "period": f"{start} to {end}",
@@ -3175,9 +3185,9 @@ def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: s
     if df.empty:
         return {"result": "No websites were returned by Google Ad Manager."}
         
-    perf = _compute_website_performance(df, start, end)
-    if "performance" not in perf:
-        return perf
+    websites_perf = _get_all_website_metrics(df)
+    if not websites_perf:
+        return {"result": "No websites were returned by Google Ad Manager."}
         
     metric_key = metric.lower()
     if metric_key in ["impressions", "impression"]: metric_key = "impressions"
@@ -3187,7 +3197,7 @@ def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: s
     elif metric_key in ["ecpm"]: metric_key = "ecpm"
     else: metric_key = "revenue"
     
-    sorted_websites = sorted(perf.get("performance", []), key=lambda x: x.get(metric_key, 0), reverse=False)
+    sorted_websites = sorted(websites_perf, key=lambda x: x.get(metric_key, 0), reverse=False)
     slimmed = slim_website_rows(sorted_websites[:limit], metric_key, max_rows=MAX_ROWS_TOP_N)
     result_payload = {
         "period": f"{start} to {end}",
@@ -3196,6 +3206,7 @@ def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: s
         "websites": slimmed,
     }
     return guard_payload_size(result_payload, metric_key)
+
 
 
 def _compute_website_trend(df: pd.DataFrame, start: date, end: date, interval: str = "daily") -> dict:
