@@ -3688,13 +3688,21 @@ async def list_tools() -> list[types.Tool]:
             **DATE_SCHEMA,
             "properties": {**DATE_SCHEMA["properties"], "limit": {"type": "integer", "description": "Number of bottom apps (default 10)"}},
         }),
-        types.Tool(name="getTopWebsites", description="Top N websites by revenue.", inputSchema={
+        types.Tool(name="getTopWebsites", description="Top N websites by any metric (revenue, impressions, clicks, ctr, fill_rate, ecpm).", inputSchema={
             **DATE_SCHEMA,
-            "properties": {**DATE_SCHEMA["properties"], "limit": {"type": "integer", "description": "Number of top websites (default 10)"}},
+            "properties": {
+                **DATE_SCHEMA["properties"],
+                "limit": {"type": "integer", "description": "Number of top websites (default 10)"},
+                "metric": {"type": "string", "description": "Metric to rank by (e.g., revenue, impressions, ctr). Default is revenue."}
+            },
         }),
-        types.Tool(name="getBottomWebsites", description="Bottom N websites by revenue.", inputSchema={
+        types.Tool(name="getBottomWebsites", description="Bottom N websites by any metric.", inputSchema={
             **DATE_SCHEMA,
-            "properties": {**DATE_SCHEMA["properties"], "limit": {"type": "integer", "description": "Number of bottom websites (default 10)"}},
+            "properties": {
+                **DATE_SCHEMA["properties"],
+                "limit": {"type": "integer", "description": "Number of bottom websites (default 10)"},
+                "metric": {"type": "string", "description": "Metric to rank by (e.g., revenue, impressions, ctr). Default is revenue."}
+            },
         }),
         types.Tool(
             name="getWebsiteInventory",
