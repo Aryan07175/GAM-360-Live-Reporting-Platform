@@ -898,6 +898,50 @@ Which websites lost impressions?
 
 ---
 
+## CTR INTELLIGENCE
+
+Trigger Questions:
+
+Highest CTR website
+Lowest CTR website
+Average CTR
+Websites with CTR above 5%
+Websites with low CTR
+Rank websites by CTR
+Compare CTR across websites
+Which websites need CTR optimization?
+
+---
+
+## FILL RATE INTELLIGENCE
+
+Trigger Questions:
+
+Highest Fill Rate website
+Lowest Fill Rate website
+Websites below 50% Fill Rate
+Websites above 90% Fill Rate
+Which websites have poor Fill Rate?
+Rank websites by Fill Rate.
+Compare Fill Rate.
+Average Fill Rate.
+
+---
+
+## eCPM INTELLIGENCE
+
+Trigger Questions:
+
+Highest eCPM website
+Lowest eCPM website
+Average eCPM
+Compare eCPM
+Websites below $1 eCPM
+Websites above $5 eCPM
+Rank websites by eCPM
+
+---
+
 ## 1. TOP WEBSITES
 
 Use:
