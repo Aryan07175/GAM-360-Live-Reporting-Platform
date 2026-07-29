@@ -1338,7 +1338,12 @@ def get_website_performance_tool_spec() -> dict:
                     "type": "object",
                     "properties": {
                         "start_date": {"type": "string", "description": "Start date in YYYY-MM-DD format."},
-                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."}
+                        "end_date": {"type": "string", "description": "End date in YYYY-MM-DD format."},
+                        "domains": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional list of domains/websites to filter by. Use this if the user asks for specific websites (e.g. ['cardekho.com', 'zigwheels.com']). If provided, ONLY these websites are returned."
+                        }
                     }
                 }
             }

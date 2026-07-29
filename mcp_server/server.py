@@ -2689,7 +2689,8 @@ def _make_tool_executor(cached_df):
             if tool_name == "getWebsiteInventory":
                 return _compute_website_inventory(df, start_date, end_date)
             elif tool_name == "getWebsitePerformance":
-                return _compute_website_performance(df, start_date, end_date)
+                domains = input_dict.get("domains")
+                return _compute_website_performance(df, start_date, end_date, domains)
             elif tool_name == "getWebsiteHealth":
                 return _compute_website_health(df, start_date, end_date)
             elif tool_name == "getTopWebsites":
@@ -3488,7 +3489,7 @@ def _get_all_website_metrics(df: pd.DataFrame) -> list[dict]:
     return websites_perf
 
 
-def _compute_website_performance(df: pd.DataFrame, start: date, end: date) -> dict:
+def _compute_website_performance(df: pd.DataFrame, start: date, end: date, domains: list[str] = None) -> dict:
     if df.empty:
         return {"result": "Website inventory is available but performance metrics could not be retrieved."}
     
@@ -3496,6 +3497,15 @@ def _compute_website_performance(df: pd.DataFrame, start: date, end: date) -> di
     if not websites_perf:
         return {"result": "Website inventory is available but performance metrics could not be computed."}
     
+    if domains:
+        domains_lower = [d.lower() for d in domains]
+        filtered = []
+        for w in websites_perf:
+            w_name = w.get("website", "").lower()
+            if any(d in w_name or w_name in d for d in domains_lower):
+                filtered.append(w)
+        websites_perf = filtered
+
     sorted_perf = sorted(websites_perf, key=lambda x: x["revenue"], reverse=True)
     slimmed = slim_website_rows(sorted_perf, "revenue", max_rows=MAX_ROWS_DEFAULT)
     result_payload = {
