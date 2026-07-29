@@ -2248,7 +2248,7 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
 
     # ── Query Engine: enforce payload size budget ────────────────────────────
     # This is the final safety net — if rows are still too large, trim further.
-    result = guard_payload_size(result, metric)
+    result = guard_payload_size(result, "rows")
     log_payload_stats(f"query_gam_data/{dimension}/{metric}", result)
 
     log.info(
@@ -2430,7 +2430,7 @@ def _make_tool_executor(cached_df):
                 summary["insights"]  = insights
 
             log_payload_stats("getNetworkSummary", summary)
-            return guard_payload_size(summary, "revenue")
+            return guard_payload_size(summary, "anomalies")
 
         if tool_name == "getChildNetworkAnalytics":
             start_raw = input_dict.get("start_date", "").strip()
@@ -2500,7 +2500,7 @@ def _make_tool_executor(cached_df):
                 }
 
             log_payload_stats("getChildNetworkAnalytics", result)
-            return guard_payload_size(result, metric)
+            return guard_payload_size(result, "child_networks")
 
         if tool_name == "getMatchRateAnalytics":
             start_raw   = input_dict.get("start_date", "").strip()
@@ -2555,7 +2555,7 @@ def _make_tool_executor(cached_df):
             )
 
             log_payload_stats("getMatchRateAnalytics", result)
-            return guard_payload_size(result, "match_rate")
+            return guard_payload_size(result, "top_match_rate")
 
         # ── PHASE 10: TARGETING & RULES INTELLIGENCE ─────────────────────────
 
@@ -3051,7 +3051,7 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
         "top_websites_by_impressions": top_imp,
         "lowest_impression_websites": low_imp,
     }
-    return guard_payload_size(result_payload, "revenue")
+    return guard_payload_size(result_payload, "top_websites")
 
 
 def _get_all_website_metrics(df: pd.DataFrame) -> list[dict]:
@@ -3111,7 +3111,7 @@ def _compute_website_performance(df: pd.DataFrame, start: date, end: date) -> di
         "total_websites": len(sorted_perf),
         "performance": slimmed,
     }
-    return guard_payload_size(result_payload, "revenue")
+    return guard_payload_size(result_payload, "performance")
 
 
 def _compute_website_health(df: pd.DataFrame, start: date, end: date) -> dict:
@@ -3178,7 +3178,7 @@ def _compute_top_websites(df: pd.DataFrame, start: date, end: date, metric: str 
         "ranking": "top",
         "websites": slimmed,
     }
-    return guard_payload_size(result_payload, metric_key)
+    return guard_payload_size(result_payload, "websites")
 
 
 def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: str = "revenue", limit: int = 10) -> dict:
@@ -3205,7 +3205,7 @@ def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: s
         "ranking": "bottom",
         "websites": slimmed,
     }
-    return guard_payload_size(result_payload, metric_key)
+    return guard_payload_size(result_payload, "websites")
 
 
 

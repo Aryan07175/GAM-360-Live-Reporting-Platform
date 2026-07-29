@@ -237,32 +237,56 @@ def slim_website_rows(rows: list[dict], metric: str = "revenue",
 
 # ─── Payload Size Guard ───────────────────────────────────────────────────────
 
-def guard_payload_size(result: dict, metric: str = "revenue") -> dict:
+def guard_payload_size(result: dict | list, list_key: str = "rows") -> dict | list:
     """
     Ensure the tool result payload doesn't exceed MAX_RESULT_TOKENS.
-    If it does, progressively trim rows until it fits.
+    If it does, progressively trim the list stored under `list_key` until it fits.
+    If `result` is itself a list, trim the list directly.
     """
     tokens = estimate_tokens(result)
+    
+    if isinstance(result, list):
+        if tokens <= WARN_RESULT_TOKENS:
+            log.info("[QueryEngine] Payload OK — %d tokens (%d items in list)", tokens, len(result))
+            return result
+            
+        original_count = len(result)
+        while result and estimate_tokens(result) > MAX_RESULT_TOKENS:
+            result = result[:max(1, len(result) // 2)]
+            
+        log.warning(
+            "[QueryEngine] Payload trimmed %d -> %d items (%d tokens).",
+            original_count, len(result), estimate_tokens(result)
+        )
+        # Cannot easily inject _trimmed=True into a list without breaking schema
+        return result
+        
+    # Dict handling
     if tokens <= WARN_RESULT_TOKENS:
-        log.info("[QueryEngine] Payload OK — %d tokens (%d rows)",
-                 tokens, len(result.get("rows", [])))
+        log.info("[QueryEngine] Payload OK — %d tokens (%d rows in %r)",
+                 tokens, len(result.get(list_key, [])), list_key)
         return result
 
     if tokens > MAX_RESULT_TOKENS:
-        rows = result.get("rows", [])
+        rows = result.get(list_key, [])
+        if not isinstance(rows, list):
+            log.warning("[QueryEngine] guard_payload_size failed: %r is not a list. payload is too large!", list_key)
+            return result
+            
         original_count = len(rows)
         while rows and estimate_tokens(result) > MAX_RESULT_TOKENS:
             rows = rows[:max(1, len(rows) // 2)]
-            result = {**result, "rows": rows}
+            result = {**result, list_key: rows}
+            
         log.warning(
-            "[QueryEngine] Payload trimmed %d -> %d rows (%d tokens). metric=%s",
-            original_count, len(rows), estimate_tokens(result), metric
+            "[QueryEngine] Payload trimmed %d -> %d rows (%d tokens). list_key=%s",
+            original_count, len(rows), estimate_tokens(result), list_key
         )
         result["_trimmed"] = True
     else:
         log.warning(
-            "[QueryEngine] Payload at %d tokens (>80%% of budget). metric=%s",
-            tokens, metric
+            "[QueryEngine] Payload at %d tokens (>80%% of budget). list_key=%s",
+            tokens, list_key
         )
     return result
 
