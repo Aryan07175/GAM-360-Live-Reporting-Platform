@@ -9,6 +9,7 @@ requests for the same date range during a single page load's Promise.all().
 
 import os
 import io
+import gc
 import gzip
 import asyncio
 import logging
@@ -24,6 +25,20 @@ log = logging.getLogger("gam_client")
 API_VERSION = os.getenv("GAM_API_VERSION", "v202602")
 REQUEST_TIMEOUT = int(os.getenv("GAM_REQUEST_TIMEOUT", "120"))  # seconds
 MAX_PARALLEL = int(os.getenv("GAM_MAX_PARALLEL_REQUESTS", "5"))
+
+# Global semaphore: cap total concurrent live GAM report fetches to 2.
+# This is the primary OOM guard — each live fetch builds a large pandas
+# DataFrame in memory; more than 2 concurrent fetches can exceed 512MB on
+# the Render free-tier instance and cause the process to be killed.
+MAX_LIVE_FETCH_CONCURRENT = int(os.getenv("GAM_MAX_LIVE_FETCH_CONCURRENT", "2"))
+_live_fetch_semaphore: asyncio.Semaphore | None = None  # lazily initialised
+
+def _get_live_fetch_semaphore() -> asyncio.Semaphore:
+    """Return (lazily creating) the module-level live-fetch semaphore."""
+    global _live_fetch_semaphore
+    if _live_fetch_semaphore is None:
+        _live_fetch_semaphore = asyncio.Semaphore(MAX_LIVE_FETCH_CONCURRENT)
+    return _live_fetch_semaphore
 
 # ─── Base columns always fetched ──────────────────────────────────────────────
 COLUMNS = [
@@ -373,19 +388,30 @@ class GAMClient:
         raw = raw.decode("utf-8")
 
         df = pd.read_csv(io.StringIO(raw))
+        # ── Free raw string immediately — it can be 10s of MBs ───────────────
+        del raw
+        gc.collect()
+
         df.columns = [
             c.strip().lower().replace(" ", "_").replace("dimension.", "").replace("column.", "")
             for c in df.columns
         ]
+
+        # ── Cast high-cardinality string columns to category (major memory saving) ──
+        for str_col in ("date", "ad_unit_name", "ad_unit_id", "hour", "week", "month_and_year"):
+            if str_col in df.columns:
+                df[str_col] = df[str_col].astype("category")
 
         # Ensure all channel columns exist (GAM omits them if channel has no data)
         for c in ALL_CHANNEL_COLS:
             if c not in df.columns:
                 df[c] = 0.0
 
-        # Convert all metric columns to numeric before summing
+        # Convert all metric columns to numeric, then downcast to float32 (~50% RAM saving)
         for c in ALL_CHANNEL_COLS:
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype("float32")
+
 
         # ── Combine channels based on Demand Channel Filter ──────────────────
         if demand_channel == "programmatic":
@@ -510,11 +536,40 @@ class GAMClient:
 
         df = df.fillna(0)
 
+        # ── Drop raw channel columns — no longer needed after aggregation ─────
+        # These make up the bulk of DataFrame memory and are never consumed
+        # downstream; dropping them before caching saves significant RAM.
+        _RAW_COLS_TO_DROP = [
+            # AdSense raw
+            "adsense_line_item_level_impressions", "adsense_line_item_level_clicks",
+            "adsense_line_item_level_revenue", "adsense_line_item_level_ctr",
+            "adsense_line_item_level_average_ecpm",
+            # AdX raw
+            "ad_exchange_line_item_level_impressions", "ad_exchange_line_item_level_clicks",
+            "ad_exchange_line_item_level_revenue", "ad_exchange_line_item_level_ctr",
+            "ad_exchange_line_item_level_average_ecpm",
+            # Total line-item raw duplicates
+            "total_line_item_level_targeted_impressions", "total_line_item_level_targeted_clicks",
+            "total_line_item_level_all_revenue", "total_line_item_level_with_cpd_average_ecpm",
+            "total_line_item_level_ctr",
+            # Active View intermediates (keep only the rates, not raw counts)
+            "total_active_view_eligible_impressions",
+            "total_active_view_measurable_impressions",
+            "total_active_view_viewable_impressions",
+            # Misc
+            "total_fill_rate", "total_code_served_count",
+        ]
+        cols_to_drop = [c for c in _RAW_COLS_TO_DROP if c in df.columns]
+        if cols_to_drop:
+            df.drop(columns=cols_to_drop, inplace=True)
+            gc.collect()
+            log.info("[MEM] Dropped %d raw columns after aggregation", len(cols_to_drop))
+
         # ── Diagnostic logging ──────────────────────────────────────────────
         total_rows = len(df)
         rev_sum = df["ad_server_cpm_and_cpc_revenue"].sum()
         imp_sum = df["ad_server_impressions"].sum()
-        adx_imp = df["adx_impressions"].sum()
+        adx_imp = df["adx_impressions"].sum() if "adx_impressions" in df.columns else 0
         adx_req = df["ad_server_ad_requests"].sum()
         adx_match = round((adx_imp / adx_req * 100), 2) if adx_req > 0 else 0
         ecpm_calc = (rev_sum / imp_sum * 1000) if imp_sum > 0 else 0
@@ -536,10 +591,12 @@ class GAMClient:
             "  Computed eCPM: %.6f\n"
             "  Unique Ad Units: %d\n"
             "  Date range: %s to %s\n"
-            "  Demand channel: %s",
+            "  Demand channel: %s\n"
+            "  DataFrame columns: %d | rows: %d",
             total_rows, dup_count, rev_sum, imp_sum,
             adx_imp, adx_match, ecpm_calc,
             unique_ad_units, date_min, date_max, demand_channel,
+            len(df.columns), total_rows,
         )
 
         return df
@@ -553,12 +610,16 @@ class GAMClient:
         Fetch LIVE data from Google Ad Manager. Always generates a new report.
 
         If force_refresh=False, uses request-scoped deduplication (30s window)
-        to avoid duplicate requests within a single page load's Promise.all().
+        to avoid duplicate requests within a single page load's Promise.all()
 
         If force_refresh=True, always generates a brand-new report.
 
         extra_dims: additional GAM dimension names (e.g. ["CHILD_NETWORK_CODE"])
         separate_report: if True, omit AD_UNIT_NAME/ID from dims (for advertiser/country)
+
+        The actual fetch is serialised behind a global semaphore
+        (GAM_MAX_LIVE_FETCH_CONCURRENT, default 2) to prevent concurrent
+        large DataFrames from exhausting the Render free-tier 512 MB RAM limit.
         """
         extra_suffix = "_".join(extra_dims) if extra_dims else ""
         sep_suffix = "_sep" if separate_report else ""
@@ -573,15 +634,22 @@ class GAMClient:
                     log.info(f"Dedup hit for {key} (within 30s window)")
                     return existing
 
-            log.info(f"Fetching LIVE data from GAM: {start} to {end} (extra_dims={extra_dims} separate={separate_report} omit_ad_units={omit_ad_units})")
-
-            job_id = await asyncio.to_thread(self.run_report, start, end, extra_dims, separate_report, omit_ad_units)
-            await self.wait_for_report(job_id)
-            df = await asyncio.to_thread(self.download_report, job_id, demand_channel)
+            log.info(
+                f"Fetching LIVE data from GAM: {start} to {end} "
+                f"(extra_dims={extra_dims} separate={separate_report} omit_ad_units={omit_ad_units})"
+            )
+            # ── Global concurrency guard: max 2 live fetches at a time ──────
+            # Prevents multiple concurrent large DataFrames from exhausting
+            # the Render free-tier 512 MB RAM limit.
+            async with _get_live_fetch_semaphore():
+                job_id = await asyncio.to_thread(self.run_report, start, end, extra_dims, separate_report, omit_ad_units)
+                await self.wait_for_report(job_id)
+                df = await asyncio.to_thread(self.download_report, job_id, demand_channel)
 
             _dedup.store(key, df)
             log.info(f"LIVE data fetched: {len(df)} rows ({start} to {end})")
             return df
+
 
     async def get_live_data_multi_day(
         self, start: date, end: date, force_refresh: bool = False,

@@ -102,6 +102,13 @@ from mcp_server.services.network_analytics import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("mcp_server")
 
+# ─── Hard safety limit: max rows/items returned by any ranking query ──────────
+# If the AI asks for more than this many rows, we clamp server-side and add a
+# note. This prevents OOM kills on the Render free-tier (512 MB RAM) when a
+# large GAM network produces thousands of rows per report.
+MAX_RESULT_LIMIT: int = int(os.getenv("GAM_MAX_RESULT_LIMIT", "50"))
+
+
 # Log Gmail credential presence at startup (values never printed)
 log_credential_status()
 
@@ -241,7 +248,13 @@ def execute_query_data(df: pd.DataFrame, operation: str, dimension: str = None,
         return {"result": "No data available for this query."}
 
     try:
+        # ── Hard safety cap: prevent OOM from returning thousands of rows ──────
+        if limit > MAX_RESULT_LIMIT:
+            log.warning("[OOM-GUARD] execute_query_data: limit=%d clamped to %d", limit, MAX_RESULT_LIMIT)
+            limit = MAX_RESULT_LIMIT
+
         work_df = df.copy()
+
 
         # Apply filters
         if filters:
@@ -2855,6 +2868,22 @@ async def handle_chat(request):
             },
         )
 
+    except MemoryError:
+        # The GAM DataFrame was too large for the available Render RAM.
+        # Return a graceful error instead of crashing the Uvicorn process.
+        log.error("[Chat] MemoryError: GAM query exceeded available RAM. "
+                  "Tell user to narrow date range.")
+        import gc as _gc; _gc.collect()
+        return JSONResponse(
+            {"error": (
+                "The requested query is too large to process on this instance. "
+                "Please narrow your date range (e.g. use 7 days instead of 90 days) "
+                "or request fewer items and try again."
+            )},
+            status_code=503,
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
+
     except Exception as e:
         log.exception("[Chat] Request error: %s", e)
         return JSONResponse(
@@ -3225,11 +3254,11 @@ def _compute_website_health(df: pd.DataFrame, start: date, end: date) -> dict:
 def _compute_top_websites(df: pd.DataFrame, start: date, end: date, metric: str = "revenue", limit: int = 10) -> dict:
     if df.empty:
         return {"result": "No websites were returned by Google Ad Manager."}
-    
+
     websites_perf = _get_all_website_metrics(df)
     if not websites_perf:
         return {"result": "No websites were returned by Google Ad Manager."}
-        
+
     metric_key = metric.lower()
     # Handle mapping to our keys if model passes slightly different names
     if metric_key in ["impressions", "impression"]: metric_key = "impressions"
@@ -3237,27 +3266,39 @@ def _compute_top_websites(df: pd.DataFrame, start: date, end: date, metric: str 
     elif metric_key in ["ctr"]: metric_key = "ctr"
     elif metric_key in ["fill_rate", "fill rate"]: metric_key = "fill_rate"
     elif metric_key in ["ecpm"]: metric_key = "ecpm"
-    else: metric_key = "revenue" # Default
-    
+    else: metric_key = "revenue"  # Default
+
+    # ── Hard safety cap: prevent OOM from returning thousands of rows ─────────
+    truncated_note = None
+    if limit > MAX_RESULT_LIMIT:
+        log.warning("[OOM-GUARD] getTopWebsites: requested limit=%d clamped to %d", limit, MAX_RESULT_LIMIT)
+        truncated_note = f"Results capped at {MAX_RESULT_LIMIT} (requested {limit}) to prevent memory overflow."
+        limit = MAX_RESULT_LIMIT
+
+    total_count = len(websites_perf)
     sorted_websites = sorted(websites_perf, key=lambda x: x.get(metric_key, 0), reverse=True)
     slimmed = slim_website_rows(sorted_websites[:limit], metric_key, max_rows=MAX_ROWS_TOP_N)
     result_payload = {
         "period": f"{start} to {end}",
         "metric": metric_key,
         "ranking": "top",
+        "total_websites": total_count,
+        "showing": len(slimmed),
         "websites": slimmed,
     }
+    if truncated_note:
+        result_payload["note"] = truncated_note
     return guard_payload_size(result_payload, "websites")
 
 
 def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: str = "revenue", limit: int = 10) -> dict:
     if df.empty:
         return {"result": "No websites were returned by Google Ad Manager."}
-        
+
     websites_perf = _get_all_website_metrics(df)
     if not websites_perf:
         return {"result": "No websites were returned by Google Ad Manager."}
-        
+
     metric_key = metric.lower()
     if metric_key in ["impressions", "impression"]: metric_key = "impressions"
     elif metric_key in ["clicks", "click"]: metric_key = "clicks"
@@ -3265,15 +3306,27 @@ def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: s
     elif metric_key in ["fill_rate", "fill rate"]: metric_key = "fill_rate"
     elif metric_key in ["ecpm"]: metric_key = "ecpm"
     else: metric_key = "revenue"
-    
+
+    # ── Hard safety cap: prevent OOM from returning thousands of rows ─────────
+    truncated_note = None
+    if limit > MAX_RESULT_LIMIT:
+        log.warning("[OOM-GUARD] getBottomWebsites: requested limit=%d clamped to %d", limit, MAX_RESULT_LIMIT)
+        truncated_note = f"Results capped at {MAX_RESULT_LIMIT} (requested {limit}) to prevent memory overflow."
+        limit = MAX_RESULT_LIMIT
+
+    total_count = len(websites_perf)
     sorted_websites = sorted(websites_perf, key=lambda x: x.get(metric_key, 0), reverse=False)
     slimmed = slim_website_rows(sorted_websites[:limit], metric_key, max_rows=MAX_ROWS_TOP_N)
     result_payload = {
         "period": f"{start} to {end}",
         "metric": metric_key,
         "ranking": "bottom",
+        "total_websites": total_count,
+        "showing": len(slimmed),
         "websites": slimmed,
     }
+    if truncated_note:
+        result_payload["note"] = truncated_note
     return guard_payload_size(result_payload, "websites")
 
 
