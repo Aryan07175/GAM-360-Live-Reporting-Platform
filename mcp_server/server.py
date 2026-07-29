@@ -1003,6 +1003,23 @@ Show all website IDs.
 
 ---
 
+## WEBSITE COMPARISON
+
+Trigger Questions:
+
+Compare cardekho.com vs zigwheels.com.
+Which website performs better?
+Which website has higher revenue?
+Which website has higher CTR?
+Which website has higher Fill Rate?
+Compare revenue over last 30 days.
+Compare impressions.
+Compare clicks.
+Compare eCPM.
+Compare health.
+
+---
+
 ## 1. TOP WEBSITES
 
 Use:
