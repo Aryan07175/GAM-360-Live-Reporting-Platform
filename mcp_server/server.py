@@ -1020,6 +1020,157 @@ Compare health.
 
 ---
 
+## TREND ANALYSIS
+
+Trigger Questions:
+
+Revenue trend
+Impression trend
+Click trend
+CTR trend
+Fill Rate trend
+eCPM trend
+Monthly trend
+Weekly trend
+Daily trend
+Growth trend
+Declining websites
+Fastest growing website
+Worst declining website
+
+---
+
+## RANKING QUERIES
+
+Trigger Questions:
+
+Top 10 websites.
+Bottom 10 websites.
+Rank by revenue.
+Rank by impressions.
+Rank by CTR.
+Rank by eCPM.
+Rank by Fill Rate.
+Rank by clicks.
+Rank by requests.
+Rank by Match Rate.
+
+---
+
+## PERFORMANCE FILTERS
+
+Trigger Questions:
+
+Websites earning above $100.
+Websites earning below $10.
+Websites with CTR above 5%.
+Websites with Fill Rate below 50%.
+Websites with eCPM above $2.
+Websites with zero revenue.
+Websites with zero impressions.
+Websites with zero clicks.
+Websites with low traffic.
+Websites serving ads.
+
+---
+
+## EXECUTIVE SUMMARY QUESTIONS
+
+Trigger Questions:
+
+Give me a website summary.
+Website performance overview.
+Executive website report.
+Website health dashboard.
+Website KPI summary.
+Website revenue overview.
+Website performance insights.
+Website analytics summary.
+Overall website status.
+Daily website report.
+
+---
+
+## CONTRIBUTION ANALYSIS
+
+Trigger Questions:
+
+Which website contributes the most revenue?
+Which website contributes the least?
+Revenue contribution percentage.
+Impression contribution percentage.
+Click contribution percentage.
+Top contributing websites.
+Lowest contributing websites.
+Revenue share by website.
+Website market share.
+
+---
+
+## OPTIMIZATION INSIGHTS
+
+Trigger Questions:
+
+Which websites should be optimized?
+Which websites need attention?
+Which websites are losing revenue?
+Which websites have poor monetization?
+Which websites have low Fill Rate?
+Which websites have poor CTR?
+Which websites are underperforming?
+Which websites are wasting traffic?
+Suggest optimization opportunities.
+Identify weak websites.
+
+---
+
+## DATE-BASED QUESTIONS
+
+Support all natural language periods.
+
+Examples:
+Today
+Yesterday
+Last 3 days
+Last 7 days
+Last 15 days
+Last 30 days
+Last 60 days
+Last 90 days
+This week
+Last week
+This month
+Last month
+This quarter
+Last quarter
+This year
+Year to date (YTD)
+Custom date ranges (e.g., 2026-01-01 to 2026-01-31)
+
+---
+
+## ENTERPRISE-LEVEL ENHANCEMENT
+
+For an enterprise-grade Ask GAM 360, you should also support natural-language synonyms so users don't have to use exact keywords. For example:
+
+"Which site is making the most money?"
+"Best monetized website"
+"Top earning domain"
+"Worst performing publisher"
+"Which site is dead?"
+"Which domains are not serving ads?"
+"Show weak websites"
+"Any broken websites?"
+"Sites with no traffic"
+"Show my strongest domains"
+"Which websites are bleeding revenue?"
+"Which domains need optimization?"
+"Where am I losing money?"
+"Which websites have stopped generating revenue?"
+"What are my star-performing websites?"
+
+---
+
 ## 1. TOP WEBSITES
 
 Use:
