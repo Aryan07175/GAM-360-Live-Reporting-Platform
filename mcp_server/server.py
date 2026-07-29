@@ -980,6 +980,26 @@ Which websites have stopped serving ads?
 Which websites have no impressions?
 Which websites have requests but no revenue?
 Which websites need attention?
+Website health score.
+Show unhealthy websites only.
+Health summary by website.
+
+---
+
+## INVENTORY INTELLIGENCE
+
+Trigger Questions:
+
+How many websites are connected?
+List all websites.
+Show active websites.
+Show inactive websites.
+Show recently added websites.
+Search for website "cardekho".
+Does website xyz exist?
+Find website by domain.
+Which websites belong to this publisher?
+Show all website IDs.
 
 ---
 
