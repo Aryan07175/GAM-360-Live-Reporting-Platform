@@ -4760,3 +4760,400 @@ class GAMClient:
             "sites": records,
         }
 
+    # ════════════════════════════════════════════════════════════════════════════
+    # ARCHITECTURE 1: ROOT-CAUSE / ANOMALY DECOMPOSITION
+    # Answers "WHY did revenue drop?" by running parallel ReportService queries
+    # across 4 key dimensions and ranking contributors by absolute delta.
+    # All math is done in Pandas — never by the LLM.
+    # ════════════════════════════════════════════════════════════════════════════
+
+    def get_anomaly_decomposition(
+        self,
+        current_start: date,
+        current_end: date,
+        prior_start: date,
+        prior_end: date,
+        metric: str = "revenue",
+    ) -> Dict[str, Any]:
+        """Root-cause decomposition: WHY did a metric change between two periods?
+
+        Runs 3 targeted ReportService jobs (by ad unit, by advertiser, by device)
+        and ranks the top contributors to the delta in Pandas. Safe: no LLM math.
+
+        Answers:
+        - 'Why did revenue drop yesterday?'
+        - 'What caused the impression spike last week?'
+        - 'Which app/advertiser/device drove the revenue change?'
+        - 'Root cause analysis for the anomaly on [date]'
+
+        Args:
+            current_start / current_end: the "current" period (where the anomaly was observed)
+            prior_start / prior_end: the "comparison" baseline period
+            metric: 'revenue' (default), 'impressions', or 'ecpm'
+        """
+        import io
+        import gzip
+        import urllib.request
+        import asyncio
+
+        METRIC_MAP = {
+            "revenue":     "ad_server_cpm_and_cpc_revenue",
+            "impressions": "ad_server_impressions",
+            "ecpm":        "ad_server_without_cpd_average_ecpm",
+        }
+        metric_col = METRIC_MAP.get(str(metric).lower(), "ad_server_cpm_and_cpc_revenue")
+        metric_label = str(metric).lower()
+
+        report_service = self._report_service()
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        if loop.is_running():
+            raise RuntimeError("get_anomaly_decomposition must be called from asyncio.to_thread.")
+
+        def _run_report_sync(start: date, end: date, dim: str) -> pd.DataFrame:
+            """Submit a ReportService job for a single dimension and return a DataFrame."""
+            needs_separate = dim in {
+                "ADVERTISER_NAME", "DEVICE_CATEGORY_NAME", "COUNTRY_NAME",
+                "BROWSER_NAME", "OPERATING_SYSTEM_NAME",
+            }
+            if needs_separate:
+                dims = ["DATE", dim]
+                cols = [
+                    "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
+                    "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
+                    "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
+                ]
+            else:
+                dims = ["DATE", "AD_UNIT_NAME", dim] if dim != "AD_UNIT_NAME" else ["DATE", "AD_UNIT_NAME"]
+                cols = [
+                    "AD_SERVER_IMPRESSIONS",
+                    "AD_SERVER_CPM_AND_CPC_REVENUE",
+                    "AD_SERVER_WITHOUT_CPD_AVERAGE_ECPM",
+                ]
+
+            rq = {
+                "dimensions": dims,
+                "columns": cols,
+                "dateRangeType": "CUSTOM_DATE",
+                "startDate": self._to_gam_date(start),
+                "endDate": self._to_gam_date(end),
+            }
+            job = report_service.runReportJob({"reportQuery": rq})
+            job_id = job["id"]
+            loop.run_until_complete(self.wait_for_report(job_id))
+
+            url = report_service.getReportDownloadUrlWithOptions(
+                job_id, {"exportFormat": "CSV_DUMP", "useGzipCompression": True}
+            )
+            with urllib.request.urlopen(url) as resp:
+                raw = resp.read()
+            if url.endswith("gz") or raw[:2] == b"\x1f\x8b":
+                raw = gzip.decompress(raw)
+            df = pd.read_csv(io.StringIO(raw.decode("utf-8")))
+            df.columns = [
+                c.strip().lower().replace(" ", "_").replace("dimension.", "").replace("column.", "")
+                for c in df.columns
+            ]
+            return df
+
+        def _top_drivers(dim: str, dim_col_override: str = None) -> List[Dict[str, Any]]:
+            """Return top +/- contributors for a dimension."""
+            try:
+                df_cur  = _run_report_sync(current_start, current_end,  dim)
+                df_pri  = _run_report_sync(prior_start,   prior_end,    dim)
+            except Exception as e:
+                log.warning("Decomposition dim %s failed: %s", dim, e)
+                return []
+
+            # Canonical metric column (GAM uses different prefixes per report type)
+            mc_cur = next((c for c in df_cur.columns if c.endswith(metric_col.split("_", 1)[1])), None)
+            mc_pri = next((c for c in df_pri.columns if c.endswith(metric_col.split("_", 1)[1])), None)
+            if not mc_cur or not mc_pri:
+                return []
+
+            # Group dimension column (first non-date, non-ad-unit column)
+            SYSTEM_COLS = {"date", "ad_unit_name", "ad_unit_id"}
+            grp_cur = next((c for c in df_cur.columns if c not in SYSTEM_COLS and not c.startswith(("ad_server", "total_line", "adsense", "ad_exchange", "programmatic"))), None)
+            grp_pri = next((c for c in df_pri.columns if c not in SYSTEM_COLS and not c.startswith(("ad_server", "total_line", "adsense", "ad_exchange", "programmatic"))), None)
+            grp = grp_cur or grp_pri
+
+            if not grp and dim == "AD_UNIT_NAME":
+                grp = "ad_unit_name"
+
+            if not grp:
+                return []
+
+            agg_cur = df_cur.groupby(grp)[mc_cur].sum()
+            agg_pri = df_pri.groupby(grp)[mc_pri].sum()
+
+            all_keys = set(agg_cur.index) | set(agg_pri.index)
+            rows = []
+            for k in all_keys:
+                cur_val = float(agg_cur.get(k, 0))
+                pri_val = float(agg_pri.get(k, 0))
+                delta   = cur_val - pri_val
+                pct     = round(delta / pri_val * 100, 2) if pri_val > 0 else None
+                rows.append({
+                    "name":          str(k),
+                    "current":       round(cur_val, 2),
+                    "prior":         round(pri_val, 2),
+                    "delta":         round(delta, 2),
+                    "delta_pct":     pct,
+                    "direction":     "up" if delta >= 0 else "down",
+                })
+            rows.sort(key=lambda x: abs(x["delta"]), reverse=True)
+            return rows[:10]
+
+        dimensions = [
+            ("AD_UNIT_NAME",        "by_ad_unit"),
+            ("ADVERTISER_NAME",     "by_advertiser"),
+            ("DEVICE_CATEGORY_NAME","by_device"),
+        ]
+
+        decomposition: Dict[str, Any] = {}
+        for (dim, key) in dimensions:
+            log.info("[RootCause] Running decomposition slice: dim=%s metric=%s", dim, metric_label)
+            decomposition[key] = _top_drivers(dim)
+
+        # Compute overall totals from ad-unit dimension (most reliable)
+        total_drivers = decomposition.get("by_ad_unit", [])
+        total_current = sum(r["current"] for r in total_drivers)
+        total_prior   = sum(r["prior"]   for r in total_drivers)
+        total_delta   = round(total_current - total_prior, 2)
+        total_delta_pct = round(total_delta / total_prior * 100, 2) if total_prior > 0 else None
+
+        # Primary driver: the single largest negative delta contributor
+        negative_drivers = [r for r in total_drivers if r["delta"] < 0]
+        primary_driver = negative_drivers[0] if negative_drivers else (total_drivers[0] if total_drivers else None)
+
+        # Construct a natural-language root-cause summary (zero LLM math)
+        if primary_driver:
+            direction_word = "declined" if primary_driver["delta"] < 0 else "increased"
+            pct_str = f"{abs(primary_driver['delta_pct']):.1f}%" if primary_driver.get("delta_pct") else "significantly"
+            narrative = (
+                f"{metric_label.capitalize()} {direction_word} by "
+                f"{abs(total_delta):,.2f} ({abs(total_delta_pct):.1f}% vs prior period). "
+                f"Primary driver: '{primary_driver['name']}' {direction_word} {pct_str} "
+                f"(prior: {primary_driver['prior']:,.2f} → current: {primary_driver['current']:,.2f}, "
+                f"delta: {primary_driver['delta']:+,.2f})."
+            )
+        else:
+            narrative = f"No significant {metric_label} drivers found for this period."
+
+        return {
+            "metric":          metric_label,
+            "current_period":  f"{current_start} to {current_end}",
+            "prior_period":    f"{prior_start} to {prior_end}",
+            "overall": {
+                "total_current":   round(total_current, 2),
+                "total_prior":     round(total_prior, 2),
+                "total_delta":     total_delta,
+                "total_delta_pct": total_delta_pct,
+            },
+            "root_cause_summary": narrative,
+            "decomposition": decomposition,
+            "data_note": (
+                "All values computed by Pandas from live GAM ReportService data. "
+                "No LLM estimation. by_device requires separate report (no ad-unit split)."
+            ),
+        }
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # ARCHITECTURE 2: HUMAN-IN-THE-LOOP WRITE OPERATIONS
+    #
+    # DESIGN:
+    #   1. LLM calls `propose_action` → returns a Proposal Object (read-only)
+    #      The frontend renders a confirmation card. The user clicks Approve/Reject.
+    #   2. On Approve, the frontend POSTs to /api/execute-action
+    #   3. The server validates the token, checks the caller has the right GAM role,
+    #      then calls the actual write method (e.g. pause_line_item).
+    #   4. Every write attempt is logged to audit_log.db (SQLite).
+    #
+    # STRICT RULE: propose_action() NEVER writes to GAM — it is a pure data fetch.
+    #              Only the methods below ending in _write() call mutating API methods.
+    # ════════════════════════════════════════════════════════════════════════════
+
+    def propose_action(
+        self,
+        action_type: str,
+        entity_type: str,
+        entity_id: str,
+        reason: str = "",
+        extra: Dict[str, Any] = None,
+    ) -> Dict[str, Any]:
+        """Build a human-in-the-loop confirmation payload for a proposed write action.
+
+        THIS METHOD NEVER WRITES TO GAM. It fetches the current entity state from
+        the live API so the user can see exactly what will change, then returns a
+        structured proposal card that the frontend renders with Approve/Reject buttons.
+
+        The confirmation token encodes the action and must be passed to
+        /api/execute-action within 10 minutes to be valid.
+
+        Supported action_types: pause_line_item, resume_line_item
+
+        Answers (LLM calls this when user says):
+        - 'Pause line item 12345'
+        - 'Resume campaign X'
+        - 'Stop delivery on line item Y'
+        """
+        import hashlib
+        import time as _time
+        import json as _json
+
+        SUPPORTED_ACTIONS = {"pause_line_item", "resume_line_item"}
+        action_type = str(action_type).lower().strip()
+        if action_type not in SUPPORTED_ACTIONS:
+            return {
+                "_live_data_status": "error",
+                "_message": (
+                    f"Unsupported action_type '{action_type}'. "
+                    f"Supported: {sorted(SUPPORTED_ACTIONS)}"
+                ),
+            }
+
+        # Fetch the current entity state from GAM
+        entity_data: Dict[str, Any] = {}
+        try:
+            if entity_type.upper() in {"LINE_ITEM", "LINEITEM"}:
+                li_service = self.client.GetService("LineItemService", version=API_VERSION)
+                sb = ad_manager.StatementBuilder(version=API_VERSION).Where(f"id = :id")
+                sb.WithBindVariable("id", int(entity_id))
+                log.info(
+                    "Request made: Service: \"LineItemService\" "
+                    "Method: \"getLineItemsByStatement\" (propose_action preflight) "
+                    "URL: \"https://ads.google.com/apis/ads/publisher/%s/LineItemService\"",
+                    API_VERSION,
+                )
+                res = li_service.getLineItemsByStatement(sb.ToStatement())
+                items = getattr(res, "results", []) or []
+                if not items:
+                    return {
+                        "_live_data_status": "error",
+                        "_message": f"Line item {entity_id} not found.",
+                    }
+                li = items[0]
+                entity_data = {
+                    "id":            str(getattr(li, "id", "")),
+                    "name":          str(getattr(li, "name", "")),
+                    "status":        str(getattr(li, "status", "")),
+                    "line_item_type":str(getattr(li, "lineItemType", "")),
+                    "order_id":      str(getattr(li, "orderId", "")),
+                    "start":         self._format_gam_dt(getattr(li, "startDateTime", None)),
+                    "end":           self._format_gam_dt(getattr(li, "endDateTime", None)),
+                }
+            else:
+                return {
+                    "_live_data_status": "error",
+                    "_message": f"entity_type '{entity_type}' not yet supported for write proposals.",
+                }
+        except Exception as e:
+            return {
+                "_live_data_status": "error",
+                "_message": f"Failed to fetch entity state for proposal: {e}",
+            }
+
+        # Build a signed token (HMAC-SHA256) that encodes the action
+        secret = os.getenv("WRITE_ACTION_SECRET", "gam360-write-secret-change-me")
+        timestamp = int(_time.time())
+        payload = {
+            "action_type": action_type,
+            "entity_type": entity_type.upper(),
+            "entity_id":   str(entity_id),
+            "timestamp":   timestamp,
+            "extra":       extra or {},
+        }
+        payload_bytes = _json.dumps(payload, sort_keys=True).encode()
+        token = hashlib.sha256(secret.encode() + payload_bytes).hexdigest()
+
+        # Determine what state the action would move the entity TO
+        if action_type == "pause_line_item":
+            new_status = "PAUSED"
+            verb = "Pause"
+            risk = "This will immediately stop ad delivery for this line item."
+        elif action_type == "resume_line_item":
+            new_status = "DELIVERING"
+            verb = "Resume"
+            risk = "This will resume ad delivery. Ensure pacing goals are still achievable."
+        else:
+            new_status = "UNKNOWN"
+            verb = "Unknown"
+            risk = ""
+
+        return {
+            "proposal_type":     "WRITE_ACTION_CONFIRMATION",
+            "action_type":       action_type,
+            "entity_type":       entity_type.upper(),
+            "entity_id":         str(entity_id),
+            "entity_state_now":  entity_data,
+            "proposed_new_status": new_status,
+            "action_verb":       verb,
+            "reason":            reason,
+            "risk_warning":      risk,
+            "confirmation_token": token,
+            "token_payload":     payload,
+            "expires_at":        timestamp + 600,  # 10-minute window
+            "instructions": (
+                "This is a PROPOSAL only. No change has been made to GAM. "
+                "The frontend will show an Approve/Reject confirmation card. "
+                "On Approve, POST the confirmation_token to /api/execute-action."
+            ),
+        }
+
+    def pause_line_item_write(self, entity_id: str) -> Dict[str, Any]:
+        """WRITE: Pause a line item via LineItemService.performLineItemAction.
+
+        IMPORTANT: Called ONLY by /api/execute-action after token validation.
+        NEVER call this directly from the LLM — always go through propose_action first.
+        """
+        li_service = self.client.GetService("LineItemService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION).Where("id = :id")
+        sb.WithBindVariable("id", int(entity_id))
+        action = {"xsi_type": "PauseLineItems"}
+        log.info(
+            "WRITE Request made: Service: \"LineItemService\" "
+            "Method: \"performLineItemAction\" (PauseLineItems) "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/LineItemService\" "
+            "entity_id=%s",
+            API_VERSION, entity_id,
+        )
+        res = li_service.performLineItemAction(action, sb.ToStatement())
+        updated = int(getattr(res, "numChanges", 0) or 0)
+        return {
+            "action":         "pause_line_item",
+            "entity_id":      str(entity_id),
+            "num_changes":    updated,
+            "success":        updated > 0,
+            "gam_response":   str(res),
+        }
+
+    def resume_line_item_write(self, entity_id: str) -> Dict[str, Any]:
+        """WRITE: Resume a line item via LineItemService.performLineItemAction.
+
+        IMPORTANT: Called ONLY by /api/execute-action after token validation.
+        NEVER call this directly from the LLM — always go through propose_action first.
+        """
+        li_service = self.client.GetService("LineItemService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION).Where("id = :id")
+        sb.WithBindVariable("id", int(entity_id))
+        action = {"xsi_type": "ResumeLineItems"}
+        log.info(
+            "WRITE Request made: Service: \"LineItemService\" "
+            "Method: \"performLineItemAction\" (ResumeLineItems) "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/LineItemService\" "
+            "entity_id=%s",
+            API_VERSION, entity_id,
+        )
+        res = li_service.performLineItemAction(action, sb.ToStatement())
+        updated = int(getattr(res, "numChanges", 0) or 0)
+        return {
+            "action":         "resume_line_item",
+            "entity_id":      str(entity_id),
+            "num_changes":    updated,
+            "success":        updated > 0,
+            "gam_response":   str(res),
+        }

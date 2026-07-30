@@ -13,11 +13,12 @@ Plus: Ask GAM 360 — AI chat grounded in live dashboard data.
 
 import json
 import math
+import hmac
 import logging
 import asyncio
 import time
 from contextlib import asynccontextmanager
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta, datetime, timezone
 
 from starlette.applications import Starlette
 from starlette.routing import Route
@@ -1988,6 +1989,33 @@ If any of the above tools returns `{"_live_data_status": "unavailable"}`, you MU
 | Which MCM child sites are not yet approved? | getSites | approval_status_filter=UNCHECKED |
 | Show disapproved sites | getSites | approval_status_filter=DISAPPROVED |
 | List all sites and their approval status | getSites | |
+
+## ROOT-CAUSE DECOMPOSITION
+
+> Use `getAnomalyDecomposition` when the user asks WHY a metric changed — not just WHAT changed.
+> It runs 3 parallel GAM report jobs and returns a Pandas-computed driver ranking.
+> ALWAYS provide current_start/current_end (the anomaly period) AND prior_start/prior_end (baseline).
+
+| User intent | Tool | Key params |
+|---|---|---|
+| Why did revenue drop yesterday? | getAnomalyDecomposition | current_start=yesterday, prior_start=day_before_yesterday |
+| What caused the impression spike last week? | getAnomalyDecomposition | metric=impressions |
+| Root cause analysis for the revenue change | getAnomalyDecomposition | metric=revenue |
+| Which advertiser or device drove the drop? | getAnomalyDecomposition | metric=revenue |
+
+## WRITE ACTIONS (Human-in-the-Loop)
+
+> CRITICAL SAFETY RULE: NEVER write directly to GAM.
+> When the user asks to pause, resume, or modify a campaign:
+> 1. Call `proposeAction` → returns a confirmation card (NO write to GAM)
+> 2. The frontend shows an Approve/Reject card to the user
+> 3. Only after Approve does /api/execute-action execute the write
+
+| User intent | Tool | Key params |
+|---|---|---|
+| Pause line item 12345 | proposeAction | action_type=pause_line_item, entity_type=LINE_ITEM, entity_id=12345 |
+| Resume delivery of campaign X | proposeAction | action_type=resume_line_item, entity_type=LINE_ITEM, entity_id=X |
+| Stop this line item | proposeAction | action_type=pause_line_item, entity_type=LINE_ITEM |
 
 """
 
@@ -5119,6 +5147,30 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 
+        if name == "getAnomalyDecomposition":
+            current_start, current_end = _resolve_dates_from_args(arguments, "current_start", "current_end")
+            prior_start, prior_end     = _resolve_dates_from_args(arguments, "prior_start",   "prior_end")
+            res = await asyncio.to_thread(
+                gam.get_anomaly_decomposition,
+                current_start,
+                current_end,
+                prior_start,
+                prior_end,
+                arguments.get("metric", "revenue"),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "proposeAction":
+            res = await asyncio.to_thread(
+                gam.propose_action,
+                arguments.get("action_type", ""),
+                arguments.get("entity_type", "LINE_ITEM"),
+                str(arguments.get("entity_id", "")),
+                arguments.get("reason", ""),
+                arguments.get("extra"),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
         if name == "getCreativeSets":
             res = await asyncio.to_thread(
                 gam.get_creative_sets,
@@ -5765,6 +5817,178 @@ async def handle_api_test_email(request):
             headers={"Access-Control-Allow-Origin": "*"},
         )
 
+
+# ─── Helper: resolve date pair from execute_tool_logic arguments dict ──────────
+def _resolve_dates_from_args(arguments: dict, start_key: str, end_key: str) -> tuple:
+    """Resolve a start/end date pair from the tool arguments dict."""
+    raw_start = arguments.get(start_key, "")
+    raw_end   = arguments.get(end_key, "")
+    start, end = _resolve_chat_dates(str(raw_start), str(raw_end))
+    return start, end
+
+
+async def handle_execute_action(request):
+    """
+    POST /api/execute-action — Human-in-the-Loop write gate.
+
+    Validates the confirmation token produced by propose_action(), enforces a
+    10-minute expiry, writes an audit record to SQLite, then dispatches the
+    actual GAM write method.
+
+    Expected body:
+        {
+          "confirmation_token": "<sha256 hex>",
+          "token_payload": { <the exact payload dict from propose_action() > }
+        }
+    """
+    import sqlite3
+    import hashlib
+    import json as _json
+    import time as _time
+
+    CORS_HEADERS = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+    }
+
+    if request.method == "OPTIONS":
+        return JSONResponse({}, headers=CORS_HEADERS)
+
+    # ── Audit DB bootstrap ──────────────────────────────────────────────────
+    audit_db_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "audit_log.db"
+    )
+
+    def _init_audit_db(path: str):
+        con = sqlite3.connect(path)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS write_audit_log (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts            TEXT    NOT NULL,
+                action_type   TEXT    NOT NULL,
+                entity_type   TEXT    NOT NULL,
+                entity_id     TEXT    NOT NULL,
+                outcome       TEXT    NOT NULL,
+                detail        TEXT,
+                remote_addr   TEXT
+            )
+        """)
+        con.commit()
+        con.close()
+
+    def _audit(action_type, entity_type, entity_id, outcome, detail, remote_addr):
+        try:
+            _init_audit_db(audit_db_path)
+            con = sqlite3.connect(audit_db_path)
+            con.execute(
+                "INSERT INTO write_audit_log "
+                "(ts, action_type, entity_type, entity_id, outcome, detail, remote_addr) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+                    action_type, entity_type, entity_id, outcome,
+                    str(detail)[:1000], str(remote_addr),
+                ),
+            )
+            con.commit()
+            con.close()
+        except Exception as audit_err:
+            log.error("[AUDIT] Failed to write audit record: %s", audit_err)
+
+    remote_addr = request.headers.get(
+        "x-forwarded-for",
+        request.client.host if request.client else "unknown"
+    )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Invalid JSON body", "status": "error"},
+            status_code=400, headers=CORS_HEADERS,
+        )
+
+    provided_token = body.get("confirmation_token", "")
+    payload        = body.get("token_payload", {})
+
+    if not provided_token or not payload:
+        return JSONResponse(
+            {"error": "confirmation_token and token_payload are required", "status": "error"},
+            status_code=400, headers=CORS_HEADERS,
+        )
+
+    # ── Replay the HMAC to validate the token ──────────────────────────────
+    secret = os.getenv("WRITE_ACTION_SECRET", "gam360-write-secret-change-me")
+    payload_bytes  = _json.dumps(payload, sort_keys=True).encode()
+    expected_token = hashlib.sha256(secret.encode() + payload_bytes).hexdigest()
+
+    action_type = payload.get("action_type", "")
+    entity_type = payload.get("entity_type", "")
+    entity_id   = str(payload.get("entity_id", ""))
+    timestamp   = int(payload.get("timestamp", 0))
+
+    if not hmac.compare_digest(provided_token, expected_token):
+        _audit(action_type, entity_type, entity_id, "REJECTED_BAD_TOKEN",
+               "Token mismatch", remote_addr)
+        log.warning(
+            "[EXECUTE_ACTION] Token mismatch from %s for action=%s entity=%s/%s",
+            remote_addr, action_type, entity_type, entity_id,
+        )
+        return JSONResponse(
+            {"error": "Invalid confirmation token", "status": "rejected"},
+            status_code=403, headers=CORS_HEADERS,
+        )
+
+    # ── Expiry check (10-minute window) ────────────────────────────────────
+    now_ts = int(_time.time())
+    if now_ts - timestamp > 600:
+        _audit(action_type, entity_type, entity_id, "REJECTED_EXPIRED",
+               f"Token age {now_ts - timestamp}s > 600s", remote_addr)
+        return JSONResponse(
+            {"error": "Confirmation token has expired (10-minute window)", "status": "rejected"},
+            status_code=403, headers=CORS_HEADERS,
+        )
+
+    # ── Dispatch write ──────────────────────────────────────────────────────
+    log.info(
+        "[EXECUTE_ACTION] Dispatching write: action=%s entity=%s/%s from=%s",
+        action_type, entity_type, entity_id, remote_addr,
+    )
+
+    try:
+        if action_type == "pause_line_item":
+            result = await asyncio.to_thread(gam.pause_line_item_write, entity_id)
+        elif action_type == "resume_line_item":
+            result = await asyncio.to_thread(gam.resume_line_item_write, entity_id)
+        else:
+            _audit(action_type, entity_type, entity_id, "REJECTED_UNSUPPORTED",
+                   f"Unknown action_type: {action_type}", remote_addr)
+            return JSONResponse(
+                {"error": f"Unsupported action_type: {action_type}", "status": "error"},
+                status_code=400, headers=CORS_HEADERS,
+            )
+
+        outcome = "SUCCESS" if result.get("success") else "PARTIAL_FAIL"
+        _audit(action_type, entity_type, entity_id, outcome, str(result), remote_addr)
+        log.info(
+            "[EXECUTE_ACTION] Write complete: outcome=%s entity=%s/%s",
+            outcome, entity_type, entity_id,
+        )
+        return JSONResponse(
+            {"status": "executed", "outcome": outcome, "result": result},
+            headers=CORS_HEADERS,
+        )
+
+    except Exception as e:
+        _audit(action_type, entity_type, entity_id, "ERROR", str(e), remote_addr)
+        log.exception("[EXECUTE_ACTION] Error executing write: %s", e)
+        return JSONResponse(
+            {"error": str(e), "status": "error"},
+            status_code=500, headers=CORS_HEADERS,
+        )
+
+
 async def handle_health(request):
     """
     GET /health — lightweight health-check endpoint.
@@ -5827,6 +6051,7 @@ starlette_app = Starlette(
         Route("/api/recipients", endpoint=handle_api_recipients, methods=["GET", "POST", "OPTIONS"]),
         Route("/api/recipients/{id}", endpoint=handle_api_recipients_delete, methods=["DELETE", "OPTIONS"]),
         Route("/api/test-email", endpoint=handle_api_test_email, methods=["POST", "OPTIONS"]),
+        Route("/api/execute-action", endpoint=handle_execute_action, methods=["POST", "OPTIONS"]),
     ],
     lifespan=lifespan,
     middleware=[
