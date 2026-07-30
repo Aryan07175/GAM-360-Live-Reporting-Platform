@@ -1867,6 +1867,23 @@ If any of the above tools returns `{"_live_data_status": "unavailable"}`, you MU
 3. NEVER estimate, approximate, or infer numbers from context.
 4. NEVER say "likely" or "probably" about any metric.
 
+## UNIFIED PRICING RULES (Floor Pricing)
+
+> IMPORTANT: There are TWO separate pricing rule tools with different purposes:
+> - `getPricingRules` → Legacy **AdRuleService** (frequency caps, scheduling). NOT for floor prices.
+> - `getUnifiedPricingRules` → **UnifiedPricingRuleService** (modern CPM floor prices in GAM 360). Use this for ALL floor price questions.
+
+| User intent | Tool | Key params |
+|---|---|---|
+| What are my floor prices? | getUnifiedPricingRules | status_filter=ACTIVE |
+| Show me all Unified Pricing Rules | getUnifiedPricingRules | limit |
+| What is the floor price for [inventory]? | getUnifiedPricingRules | name_filter |
+| Which UPRs target Connected TV / Mobile / Desktop? | getUnifiedPricingRules | name_filter |
+| Do I have any floor rules above $X CPM? | getUnifiedPricingRules | status_filter=ACTIVE |
+| Show me inactive or archived pricing rules | getUnifiedPricingRules | status_filter=INACTIVE |
+| What is my minimum CPM floor? | getUnifiedPricingRules | status_filter=ACTIVE |
+| Floor pricing configuration | getUnifiedPricingRules | |
+
 """
 
 
@@ -4985,6 +5002,15 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 arguments.get("name_filter") or None,
                 arguments.get("role_filter") or None,
                 bool(arguments.get("active_only", True)),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getUnifiedPricingRules":
+            res = await asyncio.to_thread(
+                gam.get_unified_pricing_rules,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter") or None,
+                arguments.get("status_filter") or None,
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 

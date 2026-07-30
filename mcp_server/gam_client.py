@@ -3098,4 +3098,180 @@ class GAMClient:
         }
 
 
+    # ── GAP: UNIFIED PRICING RULES (UPR) ─────────────────────────────────────
+    # UnifiedPricingRuleService is the MODERN floor pricing system in GAM 360.
+    # It is entirely separate from AdRuleService (legacy frequency/scheduling rules)
+    # which get_pricing_rules() already calls. This tool closes the gap.
+
+    def get_unified_pricing_rules(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        status_filter: str = None,
+    ) -> Dict[str, Any]:
+        """Fetch Unified Pricing Rules (UPRs) from UnifiedPricingRuleService.
+
+        UPRs are the modern floor pricing mechanism in Google Ad Manager 360.
+        They define minimum CPM floors per inventory segment, device, geo, etc.
+        This is DIFFERENT from AdRuleService (which handles legacy ad rules /
+        frequency caps). The existing getPricingRules tool calls AdRuleService —
+        this tool calls the correct modern service.
+
+        Answers questions like:
+        - What are my current floor prices?
+        - Show me all active Unified Pricing Rules
+        - What is the floor price for Mobile Banner inventory?
+        - Which pricing rules target Connected TV?
+        - Do I have any rules set above $X CPM?
+        - Show me pricing rules by status / type
+        """
+        import zeep
+
+        upr_service = self.client.GetService(
+            "UnifiedPricingRuleService", version=API_VERSION
+        )
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions: List[str] = []
+
+        if status_filter:
+            conditions.append("status = :st")
+            sb.WithBindVariable("st", status_filter.upper())
+        if name_filter:
+            conditions.append("name LIKE :nm")
+            sb.WithBindVariable("nm", f"%{name_filter}%")
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"UnifiedPricingRuleService\" "
+            "Method: \"getUnifiedPricingRulesByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/UnifiedPricingRuleService\"",
+            API_VERSION,
+        )
+        res = upr_service.getUnifiedPricingRulesByStatement(sb.ToStatement())
+
+        rules: List[Dict[str, Any]] = []
+        for upr in getattr(res, "results", []) or []:
+            raw = zeep.helpers.serialize_object(upr)
+
+            # ── Floor price extraction ────────────────────────────────────────
+            # UPR floor is a Money object: {microAmount: int, currencyCode: str}
+            floor_obj = raw.get("floor") or {}
+            floor_micro = int(floor_obj.get("microAmount", 0) or 0)
+            floor_usd = round(floor_micro / 1_000_000, 4)
+            currency = str(floor_obj.get("currencyCode", "USD") or "USD")
+
+            # ── Targeting summary (human-readable, no math) ───────────────────
+            targeting = raw.get("targeting") or {}
+            targeting_summary: List[str] = []
+
+            # Inventory targeting
+            inv_tgt = targeting.get("inventoryTargeting") or {}
+            targeted_units = inv_tgt.get("targetedAdUnits") or []
+            if targeted_units:
+                targeting_summary.append(
+                    f"{len(targeted_units)} ad unit(s) targeted"
+                )
+
+            # Geo targeting
+            geo_tgt = targeting.get("geoTargeting") or {}
+            targeted_locs = geo_tgt.get("targetedLocations") or []
+            if targeted_locs:
+                loc_names = [
+                    str(loc.get("displayName", loc.get("id", "?")))
+                    for loc in targeted_locs[:5]
+                ]
+                targeting_summary.append(f"Geo: {', '.join(loc_names)}")
+
+            # Device targeting
+            device_tgt = targeting.get("deviceCategoryTargeting") or {}
+            targeted_devices = device_tgt.get("targetedDeviceCategories") or []
+            if targeted_devices:
+                device_names = [
+                    str(d.get("name", d.get("id", "?")))
+                    for d in targeted_devices
+                ]
+                targeting_summary.append(f"Device: {', '.join(device_names)}")
+
+            # Custom criteria (KV targeting)
+            custom_tgt = targeting.get("customTargeting") or {}
+            if custom_tgt:
+                targeting_summary.append("Custom targeting applied")
+
+            # Size targeting
+            size_tgt = targeting.get("technologyTargeting") or {}
+            if size_tgt:
+                targeting_summary.append("Technology targeting applied")
+
+            # Start / end dates
+            start_dt = raw.get("startTime")
+            end_dt = raw.get("endTime")
+            start_str = (
+                f"{start_dt['date']['year']}-{start_dt['date']['month']:02d}-{start_dt['date']['day']:02d}"
+                if start_dt and start_dt.get("date") else "Always"
+            )
+            end_str = (
+                f"{end_dt['date']['year']}-{end_dt['date']['month']:02d}-{end_dt['date']['day']:02d}"
+                if end_dt and end_dt.get("date") else "No end date"
+            )
+
+            rules.append({
+                "id": str(raw.get("id", "")),
+                "name": str(raw.get("name", "")),
+                "status": str(raw.get("status", "")),
+                "pricing_rule_type": str(raw.get("pricingRuleType", "")),
+                "floor_price_usd": floor_usd,
+                "floor_currency": currency,
+                "floor_price_formatted": f"${floor_usd:.4f} CPM ({currency})",
+                "targeting_summary": (
+                    "; ".join(targeting_summary) if targeting_summary
+                    else "Network-wide (no specific targeting)"
+                ),
+                "start_date": start_str,
+                "end_date": end_str,
+            })
+
+        if not rules:
+            return {
+                "_live_data_status": "unavailable",
+                "_message": (
+                    "I couldn't retrieve live data for this. "
+                    "Google Ad Manager returned no Unified Pricing Rules matching the request. "
+                    "Verify that the network has UPRs configured and that the service account "
+                    "has UnifiedPricingRuleService read permissions. "
+                    "This is not an estimate — no real numbers are available."
+                ),
+                "rules": [],
+            }
+
+        # ── Pandas summary — all arithmetic here, never by the LLM ──────────
+        df_rules = pd.DataFrame(rules)
+
+        status_counts = df_rules["status"].value_counts().to_dict()
+        type_counts = df_rules["pricing_rule_type"].value_counts().to_dict()
+        floors = df_rules["floor_price_usd"]
+        floor_stats = {
+            "min_floor_usd": round(float(floors.min()), 4),
+            "max_floor_usd": round(float(floors.max()), 4),
+            "median_floor_usd": round(float(floors.median()), 4),
+            "mean_floor_usd": round(float(floors.mean()), 4),
+            "rules_above_1usd": int((floors > 1.0).sum()),
+            "rules_above_0_5usd": int((floors > 0.5).sum()),
+            "rules_at_zero": int((floors == 0.0).sum()),
+        }
+
+        return {
+            "total_rules": len(rules),
+            "status_breakdown": status_counts,
+            "type_breakdown": type_counts,
+            "floor_price_stats": floor_stats,
+            # Sorted by floor price descending so highest floors are first
+            "rules": sorted(rules, key=lambda x: x["floor_price_usd"], reverse=True),
+            "data_source": "UnifiedPricingRuleService (modern GAM 360 floor pricing)",
+            "note": (
+                "These are Unified Pricing Rules — the modern floor pricing system. "
+                "For legacy Ad Rules (frequency caps, scheduling), use getPricingRules instead."
+            ),
+        }
 
