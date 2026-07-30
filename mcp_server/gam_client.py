@@ -821,6 +821,20 @@ class GAMClient:
         d = dt.date
         return f"{getattr(d, 'year', 0):04d}-{getattr(d, 'month', 0):02d}-{getattr(d, 'day', 0):02d} {getattr(dt, 'hour', 0):02d}:{getattr(dt, 'minute', 0):02d} ({getattr(dt, 'timeZoneId', '')})"
 
+    @staticmethod
+    def _extract_raw_date(dt: Any) -> Optional[str]:
+        """Extract a YYYY-MM-DD string from a GAM DateTime object, or None if unavailable.
+        Used by get_delivery_progress for time-aware pacing calculations."""
+        if not dt or not hasattr(dt, "date") or not getattr(dt, "date", None):
+            return None
+        d = dt.date
+        year = getattr(d, "year", 0)
+        month = getattr(d, "month", 0)
+        day = getattr(d, "day", 0)
+        if year and month and day:
+            return f"{year:04d}-{month:02d}-{day:02d}"
+        return None
+
     def get_orders(
         self,
         limit: int = 100,
@@ -919,6 +933,9 @@ class GAMClient:
                 "viewable_impressions_delivered": int(getattr(stats_obj, "viewableImpressionsDelivered", None) or 0) if stats_obj else 0,
                 "start_date_time": self._format_gam_dt(getattr(li, "startDateTime", None)),
                 "end_date_time": self._format_gam_dt(getattr(li, "endDateTime", None)),
+                # Raw ISO dates for time-aware pacing calculations in get_delivery_progress
+                "start_date_raw": self._extract_raw_date(getattr(li, "startDateTime", None)),
+                "end_date_raw": self._extract_raw_date(getattr(li, "endDateTime", None)),
             })
         return results
 
@@ -928,25 +945,74 @@ class GAMClient:
         order_id: str = None,
         status_filter: str = "DELIVERING"
     ) -> List[Dict[str, Any]]:
-        """Compute Delivery Progress and Pacing Diagnostics for Line Items."""
+        """Compute time-aware Delivery Progress and Pacing Diagnostics for Line Items.
+
+        Pacing is evaluated relative to how far the line item is through its flight,
+        not just as a raw percentage of total goal delivered. A line item on Day 3 of
+        a 30-day flight that has delivered 8% of goal is ON TRACK (expected ~10%).
+        """
         line_items = self.get_line_items(limit=limit, order_id=order_id, status_filter=status_filter)
+        today = date.today()
         diagnostics = []
         for li in line_items:
             contracted = li["contracted_units_bought"]
             delivered = li["impressions_delivered"]
             ltype = li["line_item_type"]
+            start_raw = li.get("start_date_raw")
+            end_raw = li.get("end_date_raw")
+
             if contracted > 0:
                 delivery_pct = round((delivered / contracted) * 100.0, 2)
-                if delivery_pct < 85.0:
-                    pacing_status = "Under Pacing (< 85% of goal delivered)"
-                elif delivery_pct > 110.0:
-                    pacing_status = "Over Pacing (> 110% of goal delivered)"
+
+                # ── Time-aware pacing ─────────────────────────────────────────
+                # Compute how far through the flight we are, then check if
+                # actual delivery is lagging behind the expected linear rate.
+                flight_elapsed_pct: Optional[float] = None
+                expected_delivery_pct: Optional[float] = None
+                try:
+                    if start_raw and end_raw:
+                        start_dt = date.fromisoformat(start_raw)
+                        end_dt = date.fromisoformat(end_raw)
+                        total_flight_days = max(1, (end_dt - start_dt).days + 1)
+                        elapsed_days = max(0, (today - start_dt).days + 1)
+                        flight_elapsed_pct = round(min(100.0, elapsed_days / total_flight_days * 100.0), 1)
+                        # Linear delivery expectation: by X% through the flight, X% should be delivered
+                        expected_delivery_pct = flight_elapsed_pct
+                except (ValueError, TypeError, AttributeError):
+                    pass  # Fall back to simple pacing if date parsing fails
+
+                if expected_delivery_pct is not None:
+                    # Time-aware: compare actual vs expected delivery at current point in flight
+                    under_threshold = expected_delivery_pct * 0.85
+                    over_threshold = min(110.0, expected_delivery_pct * 1.15)
+                    if delivery_pct < under_threshold:
+                        pacing_status = (
+                            f"Under Pacing — {delivery_pct:.1f}% delivered, "
+                            f"expected ≥{under_threshold:.1f}% at {flight_elapsed_pct:.1f}% through flight"
+                        )
+                    elif delivery_pct > over_threshold and expected_delivery_pct > 0:
+                        pacing_status = (
+                            f"Over Pacing — {delivery_pct:.1f}% delivered vs "
+                            f"{expected_delivery_pct:.1f}% expected at this point in flight"
+                        )
+                    else:
+                        pacing_status = (
+                            f"On Track — {delivery_pct:.1f}% delivered "
+                            f"({flight_elapsed_pct:.1f}% through flight)"
+                        )
                 else:
-                    pacing_status = "On Track (Optimal Pacing)"
+                    # Fallback: simple threshold pacing (no flight dates available)
+                    if delivery_pct < 85.0:
+                        pacing_status = "Under Pacing (< 85% of goal delivered — flight dates unavailable for time-aware check)"
+                    elif delivery_pct > 110.0:
+                        pacing_status = "Over Pacing (> 110% of goal delivered)"
+                    else:
+                        pacing_status = "On Track (Optimal Pacing)"
             else:
                 delivery_pct = 100.0 if delivered > 0 else 0.0
+                flight_elapsed_pct = None
                 pacing_status = f"Programmatic / Share of Voice ({ltype} — no absolute unit cap)"
-            
+
             diagnostics.append({
                 "line_item_id": li["id"],
                 "line_item_name": li["name"],
@@ -959,7 +1025,9 @@ class GAMClient:
                 "delivered_impressions": delivered,
                 "delivered_clicks": li["clicks_delivered"],
                 "delivery_completion_pct": f"{delivery_pct}%",
+                "flight_elapsed_pct": f"{flight_elapsed_pct:.1f}%" if flight_elapsed_pct is not None else "N/A",
                 "pacing_status": pacing_status,
+                "flight_start": li.get("start_date_time", "N/A"),
                 "flight_end": li["end_date_time"]
             })
         return diagnostics
@@ -1224,7 +1292,15 @@ class GAMClient:
                 "missing_primary_contact_count": missing_contacts,
                 "crm_external_id_mapped_count": with_external_id
             },
-            "sample_companies": companies[:10]
+            "sample_companies": companies[:10],
+            # IMPORTANT: This data comes from CompanyService only.
+            # It contains company types and credit status — NO live revenue or impression data.
+            # For revenue rankings by advertiser, use getAdvertiserRankings instead.
+            "data_source_note": (
+                "Portfolio data from CompanyService only. "
+                "No revenue or impression metrics are included here. "
+                "Use getAdvertiserRankings for live advertiser revenue data."
+            ),
         }
 
     def get_advertiser_rankings(
@@ -1761,18 +1837,22 @@ class GAMClient:
         }
         target_dim = dim_map.get(level_clean, "COUNTRY_NAME")
         df = self.get_live_data_sync(start_date, end_date, extra_dims=[target_dim], separate_report=True)
-        
-        if df.empty or target_dim.lower() not in df.columns:
-            return []
-            
+
+        if df.empty:
+            log.warning("[live_data_unavailable] GAM returned no data for %s geography report (%s to %s)", level_clean, start_date, end_date)
+            return [{"_live_data_status": "unavailable", "_message": f"I couldn't retrieve live data for this. Google Ad Manager returned no {level_clean} geography data for the requested period ({start_date} to {end_date}). This is not an estimate — no real numbers are available."}]
+        if target_dim.lower() not in df.columns:
+            log.warning("[dimension_missing] '%s' not in GAM geography response columns", target_dim)
+            return [{"_live_data_status": "unavailable", "_message": f"The '{level_clean}' geographic dimension was not included in the GAM report response for this period. Live data unavailable — no numbers can be provided."}]
+
         grouped = df.groupby(target_dim.lower(), as_index=False).agg({
             "total_line_item_level_impressions": "sum",
             "total_line_item_level_clicks": "sum",
             "total_line_item_level_cpm_and_cpc_revenue": "sum"
         })
         grouped = grouped.sort_values(by="total_line_item_level_impressions", ascending=False)
-        
-        total_imp = float(grouped["total_line_item_level_impressions"].sum()) or 1.0
+
+        total_imp = float(grouped["total_line_item_level_impressions"].sum())
         results = []
         for _, row in grouped.head(limit).iterrows():
             imp = int(row["total_line_item_level_impressions"])
@@ -1780,7 +1860,7 @@ class GAMClient:
             rev = float(row["total_line_item_level_cpm_and_cpc_revenue"])
             ecpm = (rev / imp * 1000.0) if imp > 0 else 0.0
             ctr = (clk / imp * 100.0) if imp > 0 else 0.0
-            share_pct = (imp / total_imp) * 100.0
+            share_pct = (imp / total_imp * 100.0) if total_imp > 0 else 0.0
             results.append({
                 level_clean: str(row[target_dim.lower()]),
                 "impressions": imp,
@@ -1806,18 +1886,22 @@ class GAMClient:
         }
         target_dim = dim_map.get(dim_clean, "DEVICE_CATEGORY_NAME")
         df = self.get_live_data_sync(start_date, end_date, extra_dims=[target_dim], separate_report=True)
-        
-        if df.empty or target_dim.lower() not in df.columns:
-            return []
-            
+
+        if df.empty:
+            log.warning("[live_data_unavailable] GAM returned no data for %s technology report (%s to %s)", dim_clean, start_date, end_date)
+            return [{"_live_data_status": "unavailable", "_message": f"I couldn't retrieve live data for this. Google Ad Manager returned no {dim_clean} technology breakdown data for the requested period ({start_date} to {end_date}). This is not an estimate — no real numbers are available."}]
+        if target_dim.lower() not in df.columns:
+            log.warning("[dimension_missing] '%s' not in GAM technology response columns", target_dim)
+            return [{"_live_data_status": "unavailable", "_message": f"The '{dim_clean}' technology dimension was not included in the GAM report response for this period. Live data unavailable — no numbers can be provided."}]
+
         grouped = df.groupby(target_dim.lower(), as_index=False).agg({
             "total_line_item_level_impressions": "sum",
             "total_line_item_level_clicks": "sum",
             "total_line_item_level_cpm_and_cpc_revenue": "sum"
         })
         grouped = grouped.sort_values(by="total_line_item_level_impressions", ascending=False)
-        
-        total_imp = float(grouped["total_line_item_level_impressions"].sum()) or 1.0
+
+        total_imp = float(grouped["total_line_item_level_impressions"].sum())
         results = []
         for _, row in grouped.head(limit).iterrows():
             imp = int(row["total_line_item_level_impressions"])
@@ -1825,7 +1909,7 @@ class GAMClient:
             rev = float(row["total_line_item_level_cpm_and_cpc_revenue"])
             ecpm = (rev / imp * 1000.0) if imp > 0 else 0.0
             ctr = (clk / imp * 100.0) if imp > 0 else 0.0
-            share_pct = (imp / total_imp) * 100.0
+            share_pct = (imp / total_imp * 100.0) if total_imp > 0 else 0.0
             results.append({
                 dim_clean: str(row[target_dim.lower()]),
                 "impressions": imp,
@@ -1842,18 +1926,22 @@ class GAMClient:
         Analyze traffic and monetization across mobile apps.
         """
         df = self.get_live_data_sync(start_date, end_date, extra_dims=["MOBILE_APP_NAME"], separate_report=True)
-        
-        if df.empty or "mobile_app_name" not in df.columns:
-            return []
-            
+
+        if df.empty:
+            log.warning("[live_data_unavailable] GAM returned no data for mobile app traffic report (%s to %s)", start_date, end_date)
+            return [{"_live_data_status": "unavailable", "_message": f"I couldn't retrieve live data for this. Google Ad Manager returned no mobile app traffic data for the requested period ({start_date} to {end_date}). This is not an estimate — no real numbers are available."}]
+        if "mobile_app_name" not in df.columns:
+            log.warning("[dimension_missing] 'MOBILE_APP_NAME' not in GAM mobile app response columns")
+            return [{"_live_data_status": "unavailable", "_message": "The mobile app name dimension was not included in the GAM report response for this period. Live data unavailable — no numbers can be provided."}]
+
         grouped = df.groupby("mobile_app_name", as_index=False).agg({
             "total_line_item_level_impressions": "sum",
             "total_line_item_level_clicks": "sum",
             "total_line_item_level_cpm_and_cpc_revenue": "sum"
         })
         grouped = grouped.sort_values(by="total_line_item_level_impressions", ascending=False)
-        
-        total_imp = float(grouped["total_line_item_level_impressions"].sum()) or 1.0
+
+        total_imp = float(grouped["total_line_item_level_impressions"].sum())
         results = []
         for _, row in grouped.head(limit).iterrows():
             imp = int(row["total_line_item_level_impressions"])
@@ -1861,7 +1949,7 @@ class GAMClient:
             rev = float(row["total_line_item_level_cpm_and_cpc_revenue"])
             ecpm = (rev / imp * 1000.0) if imp > 0 else 0.0
             ctr = (clk / imp * 100.0) if imp > 0 else 0.0
-            share_pct = (imp / total_imp) * 100.0
+            share_pct = (imp / total_imp * 100.0) if total_imp > 0 else 0.0
             results.append({
                 "mobile_app_name": str(row["mobile_app_name"]),
                 "impressions": imp,
@@ -1887,18 +1975,22 @@ class GAMClient:
         }
         target_dim = dim_map.get(src_clean, "DOMAIN")
         df = self.get_live_data_sync(start_date, end_date, extra_dims=[target_dim], separate_report=True)
-        
-        if df.empty or target_dim.lower() not in df.columns:
-            return []
-            
+
+        if df.empty:
+            log.warning("[live_data_unavailable] GAM returned no data for %s traffic source report (%s to %s)", src_clean, start_date, end_date)
+            return [{"_live_data_status": "unavailable", "_message": f"I couldn't retrieve live data for this. Google Ad Manager returned no {src_clean} traffic source data for the requested period ({start_date} to {end_date}). This is not an estimate — no real numbers are available."}]
+        if target_dim.lower() not in df.columns:
+            log.warning("[dimension_missing] '%s' not in GAM traffic source response columns", target_dim)
+            return [{"_live_data_status": "unavailable", "_message": f"The '{src_clean}' traffic source dimension was not included in the GAM report response for this period. Live data unavailable — no numbers can be provided."}]
+
         grouped = df.groupby(target_dim.lower(), as_index=False).agg({
             "total_line_item_level_impressions": "sum",
             "total_line_item_level_clicks": "sum",
             "total_line_item_level_cpm_and_cpc_revenue": "sum"
         })
         grouped = grouped.sort_values(by="total_line_item_level_impressions", ascending=False)
-        
-        total_imp = float(grouped["total_line_item_level_impressions"].sum()) or 1.0
+
+        total_imp = float(grouped["total_line_item_level_impressions"].sum())
         results = []
         for _, row in grouped.head(limit).iterrows():
             imp = int(row["total_line_item_level_impressions"])
@@ -1906,7 +1998,7 @@ class GAMClient:
             rev = float(row["total_line_item_level_cpm_and_cpc_revenue"])
             ecpm = (rev / imp * 1000.0) if imp > 0 else 0.0
             ctr = (clk / imp * 100.0) if imp > 0 else 0.0
-            share_pct = (imp / total_imp) * 100.0
+            share_pct = (imp / total_imp * 100.0) if total_imp > 0 else 0.0
             results.append({
                 src_clean: str(row[target_dim.lower()]),
                 "impressions": imp,
@@ -2317,7 +2409,7 @@ class GAMClient:
         def _summarise(frame) -> Dict[str, Any]:
             if frame is None or frame.empty:
                 return {"revenue": 0, "impressions": 0, "clicks": 0,
-                        "fill_rate": 0, "ecpm": 0, "ctr": 0, "requests": 0}
+                        "fill_rate": 0, "ecpm": 0, "ctr": 0, "requests": 0, "match_rate": 0}
             rev  = float(frame["ad_server_cpm_and_cpc_revenue"].sum())
             imp  = int(frame["ad_server_impressions"].sum())
             clks = int(frame["ad_server_clicks"].sum()) if "ad_server_clicks" in frame.columns else 0
@@ -2326,6 +2418,11 @@ class GAMClient:
                 if col in frame.columns:
                     v = int(frame[col].sum())
                     if v > 0: req = v; break
+            matched = 0
+            for col in ["matched_requests", "total_responses_served", "programmatic_responses_served"]:
+                if col in frame.columns:
+                    v = int(frame[col].sum())
+                    if v > 0: matched = v; break
             return {
                 "revenue": round(rev, 2),
                 "impressions": imp,
@@ -2334,6 +2431,7 @@ class GAMClient:
                 "fill_rate": _pct(imp, req),
                 "ecpm": _ecpm(rev, imp),
                 "ctr": _ctr(clks, imp),
+                "match_rate": _pct(matched, req),
             }
 
         curr = _summarise(df)
@@ -2362,7 +2460,7 @@ class GAMClient:
         # Anomalies
         anomalies = _detect_entity_anomalies(
             {"revenue_usd": curr["revenue"], "impressions": curr["impressions"],
-             "fill_rate_pct": curr["fill_rate"], "match_rate_pct": 0,
+             "fill_rate_pct": curr["fill_rate"], "match_rate_pct": curr.get("match_rate", 0),
              "ctr_pct": curr["ctr"], "ad_requests": curr["requests"]},
             label="Network"
         )
@@ -2580,6 +2678,424 @@ class GAMClient:
         }
 
 
+    # ── GAP A: LINE ITEM CREATIVE ASSOCIATIONS (LICA) ─────────────────────────
+
+    def get_line_item_creative_associations(
+        self,
+        limit: int = 200,
+        line_item_id: str = None,
+        creative_id: str = None,
+        status_filter: str = None,
+    ) -> Dict[str, Any]:
+        """Fetch Line Item – Creative Associations (LICAs) from LineItemCreativeAssociationService.
+
+        Answers questions like:
+        - Which line items have creatives attached?
+        - Which creatives are associated with which campaigns?
+        - Are there active line items with no creative associations?
+        """
+        lica_service = self.client.GetService(
+            "LineItemCreativeAssociationService", version=API_VERSION
+        )
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions: List[str] = []
+        if line_item_id:
+            conditions.append("lineItemId = :liid")
+            sb.WithBindVariable("liid", int(line_item_id))
+        if creative_id:
+            conditions.append("creativeId = :cid")
+            sb.WithBindVariable("cid", int(creative_id))
+        if status_filter:
+            conditions.append("status = :st")
+            sb.WithBindVariable("st", status_filter.upper())
+        else:
+            # Default: only active associations
+            conditions.append("status = :st")
+            sb.WithBindVariable("st", "ACTIVE")
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"LineItemCreativeAssociationService\" "
+            "Method: \"getLineItemCreativeAssociationsByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/LineItemCreativeAssociationService\"",
+            API_VERSION,
+        )
+        res = lica_service.getLineItemCreativeAssociationsByStatement(sb.ToStatement())
+
+        associations: List[Dict[str, Any]] = []
+        for lica in getattr(res, "results", []) or []:
+            start_dt_obj = getattr(lica, "startDateTime", None)
+            end_dt_obj = getattr(lica, "endDateTime", None)
+            associations.append({
+                "line_item_id": str(getattr(lica, "lineItemId", "")),
+                "creative_id": str(getattr(lica, "creativeId", "")),
+                "creative_set_id": str(getattr(lica, "creativeSetId", "") or ""),
+                "status": str(getattr(lica, "status", "")),
+                "start_date_time": self._format_gam_dt(start_dt_obj),
+                "end_date_time": self._format_gam_dt(end_dt_obj),
+                "destination_url": str(getattr(lica, "destinationUrl", "") or ""),
+                "rotation_type": str(getattr(lica, "rotation", {}).rotationType if hasattr(getattr(lica, "rotation", None) or {}, "rotationType") else ""),
+            })
+
+        # Build per-line-item summary: how many creatives per line item
+        li_creative_count: Dict[str, int] = {}
+        for a in associations:
+            li_id = a["line_item_id"]
+            li_creative_count[li_id] = li_creative_count.get(li_id, 0) + 1
+
+        return {
+            "total_associations": len(associations),
+            "unique_line_items": len(li_creative_count),
+            "unique_creatives": len({a["creative_id"] for a in associations}),
+            "associations": associations,
+            "creatives_per_line_item": [
+                {"line_item_id": li_id, "creative_count": cnt}
+                for li_id, cnt in sorted(li_creative_count.items(), key=lambda x: x[1])
+            ],
+        }
+
+    def get_orphan_line_items(
+        self,
+        limit: int = 100,
+        status_filter: str = "DELIVERING",
+    ) -> Dict[str, Any]:
+        """Find active line items that have NO creative associations.
+
+        Answers: 'Which line items are running without creatives attached?'
+        Cross-joins LineItemService with LineItemCreativeAssociationService.
+        All computation is done in Python — the LLM receives the pre-computed result.
+        """
+        # Fetch delivering line items
+        line_items = self.get_line_items(limit=limit, status_filter=status_filter)
+        if not line_items:
+            return {
+                "_live_data_status": "unavailable",
+                "_message": (
+                    "I couldn't retrieve live data for this. "
+                    "Google Ad Manager returned no line items with status "
+                    f"'{status_filter}'. Cannot determine orphan status."
+                ),
+                "orphan_line_items": [],
+            }
+
+        # Fetch LICA records for those line items
+        all_li_ids = {li["id"] for li in line_items}
+        lica_service = self.client.GetService(
+            "LineItemCreativeAssociationService", version=API_VERSION
+        )
+        # Fetch active associations — we only need the lineItemId column
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        sb.Where("status = :st").WithBindVariable("st", "ACTIVE").Limit(2000)
+        log.info(
+            "Request made: Service: \"LineItemCreativeAssociationService\" "
+            "Method: \"getLineItemCreativeAssociationsByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/LineItemCreativeAssociationService\"",
+            API_VERSION,
+        )
+        lica_res = lica_service.getLineItemCreativeAssociationsByStatement(sb.ToStatement())
+        li_ids_with_creatives: set = set()
+        for lica in getattr(lica_res, "results", []) or []:
+            li_ids_with_creatives.add(str(getattr(lica, "lineItemId", "")))
+
+        # Identify orphans — delivering line items with zero creative associations
+        orphans = [
+            {
+                "line_item_id": li["id"],
+                "line_item_name": li["name"],
+                "order_name": li["order_name"],
+                "status": li["status"],
+                "type": li["line_item_type"],
+                "priority": li["priority"],
+                "contracted_units": li["contracted_units_bought"],
+                "delivered_impressions": li["impressions_delivered"],
+                "flight_start": li.get("start_date_time", "N/A"),
+                "flight_end": li.get("end_date_time", "N/A"),
+                "issue": "No active creative association found — ads cannot serve",
+            }
+            for li in line_items
+            if li["id"] not in li_ids_with_creatives
+        ]
+
+        return {
+            "status_filter_used": status_filter,
+            "line_items_checked": len(line_items),
+            "orphan_count": len(orphans),
+            "orphan_line_items": orphans,
+            "summary": (
+                f"{len(orphans)} line item(s) with status '{status_filter}' "
+                "have no active creative associations and cannot serve ads."
+                if orphans else
+                f"All {len(line_items)} '{status_filter}' line items have at least one active creative."
+            ),
+        }
+
+    # ── GAP B: AUDIENCE SEGMENT INTELLIGENCE ──────────────────────────────────
+
+    def get_audience_segments(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        type_filter: str = None,
+        status_filter: str = None,
+    ) -> Dict[str, Any]:
+        """Fetch first-party and third-party Audience Segments from AudienceSegmentService.
+
+        Answers questions like:
+        - List all audience segments
+        - Which audience segment has the most users?
+        - What is the size of the Sports audience segment?
+        - Show first-party vs third-party segment breakdown
+        """
+        import zeep
+        seg_service = self.client.GetService(
+            "AudienceSegmentService", version=API_VERSION
+        )
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions: List[str] = []
+        if status_filter:
+            conditions.append("status = :st")
+            sb.WithBindVariable("st", status_filter.upper())
+        if name_filter:
+            conditions.append("name LIKE :nm")
+            sb.WithBindVariable("nm", f"%{name_filter}%")
+        if type_filter:
+            conditions.append("type = :tp")
+            sb.WithBindVariable("tp", type_filter.upper())
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"AudienceSegmentService\" "
+            "Method: \"getAudienceSegmentsByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/AudienceSegmentService\"",
+            API_VERSION,
+        )
+        res = seg_service.getAudienceSegmentsByStatement(sb.ToStatement())
+
+        segments: List[Dict[str, Any]] = []
+        for seg in getattr(res, "results", []) or []:
+            sd = zeep.helpers.serialize_object(seg)
+            segments.append({
+                "id": str(sd.get("id", "")),
+                "name": str(sd.get("name", "")),
+                "description": str(sd.get("description", "") or ""),
+                "status": str(sd.get("status", "")),
+                "type": str(sd.get("type", "")),
+                "size": int(sd.get("size", 0) or 0),
+                "size_in_pixels": int(sd.get("sizeInPixels", 0) or 0),
+                "data_provider_name": str(
+                    (sd.get("dataProvider") or {}).get("name", "") or ""
+                ),
+                "category_labels": [
+                    str(lbl.get("name", "")) for lbl in (sd.get("categoryLabels") or [])
+                ],
+            })
+
+        if not segments:
+            return {
+                "_live_data_status": "unavailable",
+                "_message": (
+                    "I couldn't retrieve live data for this. "
+                    "Google Ad Manager returned no audience segments matching the request. "
+                    "This is not an estimate — no real numbers are available."
+                ),
+                "segments": [],
+            }
+
+        # Pandas summary — all arithmetic done here, not by the LLM
+        df_segs = pd.DataFrame(segments)
+        type_counts = df_segs["type"].value_counts().to_dict()
+        total_reach = int(df_segs["size"].sum())
+        largest_segment = df_segs.loc[df_segs["size"].idxmax(), "name"] if not df_segs.empty else "N/A"
+
+        return {
+            "total_segments": len(segments),
+            "type_breakdown": type_counts,
+            "total_combined_reach_users": total_reach,
+            "largest_segment_by_size": largest_segment,
+            "segments": sorted(segments, key=lambda x: x["size"], reverse=True),
+        }
+
+    # ── GAP C: NETWORK USERS & ROLES ──────────────────────────────────────────
+
+    def get_network_users(
+        self,
+        limit: int = 100,
+        name_filter: str = None,
+        role_filter: str = None,
+        active_only: bool = True,
+    ) -> Dict[str, Any]:
+        """Fetch network users and their roles from UserService.
+
+        Answers questions like:
+        - Who has admin access to my network?
+        - List all users with trafficking rights
+        - Which users have API access?
+        - Show all active network users
+        """
+        import zeep
+        user_service = self.client.GetService("UserService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions: List[str] = []
+        if active_only:
+            conditions.append("isActive = :active")
+            sb.WithBindVariable("active", True)
+        if name_filter:
+            conditions.append("name LIKE :nm")
+            sb.WithBindVariable("nm", f"%{name_filter}%")
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"UserService\" "
+            "Method: \"getUsersByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/UserService\"",
+            API_VERSION,
+        )
+        res = user_service.getUsersByStatement(sb.ToStatement())
+
+        users: List[Dict[str, Any]] = []
+        for u in getattr(res, "results", []) or []:
+            ud = zeep.helpers.serialize_object(u)
+            role_name = str(ud.get("roleName", "") or "")
+            # Optional role filter (applied client-side since UserService doesn't support it in AWQL)
+            if role_filter and role_filter.lower() not in role_name.lower():
+                continue
+            users.append({
+                "id": str(ud.get("id", "")),
+                "name": str(ud.get("name", "")),
+                "email": str(ud.get("email", "")),
+                "role_id": str(ud.get("roleId", "")),
+                "role_name": role_name,
+                "is_active": bool(ud.get("isActive", True)),
+                "is_external": bool(ud.get("isExternallyManaged", False)),
+                "preferred_locale": str(ud.get("preferredLocale", "") or ""),
+            })
+
+        if not users:
+            return {
+                "_live_data_status": "unavailable",
+                "_message": (
+                    "I couldn't retrieve live data for this. "
+                    "Google Ad Manager returned no users matching the request. "
+                    "Verify that the service account has UserService read permissions."
+                ),
+                "users": [],
+            }
+
+        # Pandas — compute role distribution, never by the LLM
+        df_users = pd.DataFrame(users)
+        role_counts = df_users["role_name"].value_counts().to_dict()
+
+        return {
+            "total_users": len(users),
+            "active_only_filter": active_only,
+            "role_breakdown": role_counts,
+            "users": users,
+        }
+
+    # ── GAP D: CUSTOM TARGETING PERFORMANCE BY REPORTING DIMENSION ────────────
+
+    def get_custom_targeting_performance(
+        self,
+        start_date: date,
+        end_date: date,
+        limit: int = 25,
+    ) -> Dict[str, Any]:
+        """Analyze which Custom Targeting Key-Values drive the most impressions and revenue.
+
+        Runs a live GAM report grouped by CUSTOM_TARGETING_VALUE_ID dimension.
+        All aggregation (impressions, revenue, eCPM, share %) is done in Pandas.
+
+        Answers questions like:
+        - Which custom key-values are most used?
+        - What is the revenue by key-value targeting?
+        - Show traffic by custom targeting
+        - Top performing KV pairs by impressions or revenue
+        """
+        df = self.get_live_data_sync(
+            start_date, end_date,
+            extra_dims=["CUSTOM_TARGETING_VALUE_ID"],
+            separate_report=True,
+        )
+
+        if df.empty:
+            return {
+                "_live_data_status": "unavailable",
+                "_message": (
+                    f"I couldn't retrieve live data for this. "
+                    f"Google Ad Manager returned no custom targeting data for the period "
+                    f"{start_date} to {end_date}. This is not an estimate — no real numbers are available."
+                ),
+                "results": [],
+            }
+
+        # The column name after lowercasing is "custom_targeting_value_id"
+        dim_col = "custom_targeting_value_id"
+        if dim_col not in df.columns:
+            return {
+                "_live_data_status": "unavailable",
+                "_message": (
+                    "The CUSTOM_TARGETING_VALUE_ID dimension was not returned by GAM for this period. "
+                    "This dimension may not be enabled for your network. Live data unavailable."
+                ),
+                "results": [],
+            }
+
+        # Determine available metric columns
+        rev_col = "total_line_item_level_all_revenue" if "total_line_item_level_all_revenue" in df.columns else "ad_server_cpm_and_cpc_revenue"
+        imp_col = "total_line_item_level_impressions" if "total_line_item_level_impressions" in df.columns else "ad_server_impressions"
+        clk_col = "total_line_item_level_clicks" if "total_line_item_level_clicks" in df.columns else (
+            "ad_server_clicks" if "ad_server_clicks" in df.columns else None
+        )
+
+        agg_map: Dict[str, str] = {rev_col: "sum", imp_col: "sum"}
+        if clk_col and clk_col in df.columns:
+            agg_map[clk_col] = "sum"
+
+        grouped = df.groupby(dim_col, as_index=False).agg(agg_map)
+        grouped = grouped.sort_values(by=imp_col, ascending=False)
+
+        total_imp = float(grouped[imp_col].sum())
+        total_rev = float(grouped[rev_col].sum())
+
+        results: List[Dict[str, Any]] = []
+        for rank, row in enumerate(grouped.head(int(limit)).to_dict("records"), 1):
+            imp = int(row.get(imp_col, 0))
+            rev = float(row.get(rev_col, 0.0))
+            clk = int(row.get(clk_col, 0)) if clk_col else 0
+            ecpm = round(rev / imp * 1000.0, 2) if imp > 0 else 0.0
+            ctr = round(clk / imp * 100.0, 4) if imp > 0 else 0.0
+            imp_share = round(imp / total_imp * 100.0, 2) if total_imp > 0 else 0.0
+            rev_share = round(rev / total_rev * 100.0, 2) if total_rev > 0 else 0.0
+            results.append({
+                "rank": rank,
+                "custom_targeting_value_id": str(row[dim_col]),
+                "impressions": imp,
+                "revenue_usd": round(rev, 4),
+                "clicks": clk,
+                "ecpm_usd": ecpm,
+                "ctr_pct": ctr,
+                "impression_share_pct": imp_share,
+                "revenue_share_pct": rev_share,
+            })
+
+        return {
+            "date_range": f"{start_date} to {end_date}",
+            "total_kv_combinations": len(grouped),
+            "total_impressions": int(total_imp),
+            "total_revenue_usd": round(total_rev, 2),
+            "top_results_shown": len(results),
+            "note": (
+                "Results are grouped by CUSTOM_TARGETING_VALUE_ID. "
+                "The value ID maps back to your Custom Targeting key-value definitions in GAM."
+            ),
+            "results": results,
+        }
 
 
 

@@ -1815,6 +1815,58 @@ Example: If asked "Why is fill rate different from match rate?"
 
 You do NOT need to call a tool if the user is purely asking for a definition or explanation of a GAM concept.
 
+==================================================
+GAP COVERAGE TOOLS  [NEW — ADDITIVE]
+==================================================
+
+## CREATIVE ASSOCIATIONS & ORPHAN LINE ITEMS
+
+| User intent | Tool | Key params |
+|---|---|---|
+| Which creatives are attached to a line item? | getLineItemCreativeAssociations | line_item_id, status_filter |
+| Which line items have no creatives attached? | getOrphanLineItems | status_filter (default: DELIVERING) |
+| Are there active campaigns missing creatives? | getOrphanLineItems | status_filter=DELIVERING |
+| Show creative-to-line-item mapping | getLineItemCreativeAssociations | line_item_id |
+| Which line items cannot serve (no creative)? | getOrphanLineItems | status_filter |
+
+## AUDIENCE SEGMENTS
+
+| User intent | Tool | Key params |
+|---|---|---|
+| List all audience segments | getAudienceSegments | name_filter, type_filter, limit |
+| Which audience segment has the most users? | getAudienceSegments | limit |
+| Audience segment size / reach | getAudienceSegments | name_filter |
+| First-party vs third-party segment breakdown | getAudienceSegments | type_filter=FIRST_PARTY or THIRD_PARTY |
+| Show Sports / Tech / Finance audience segment | getAudienceSegments | name_filter |
+
+## NETWORK USERS & ACCESS
+
+| User intent | Tool | Key params |
+|---|---|---|
+| Who has admin access to my network? | getNetworkUsers | role_filter=Admin |
+| List all users with trafficking rights | getNetworkUsers | role_filter=Trafficker |
+| Which users have API access? | getNetworkUsers | active_only=true |
+| Show all active network users | getNetworkUsers | active_only=true |
+| Who can manage line items? | getNetworkUsers | role_filter |
+
+## CUSTOM TARGETING PERFORMANCE
+
+| User intent | Tool | Key params |
+|---|---|---|
+| Which custom key-values are most used? | getCustomTargetingPerformance | start_date, end_date, limit |
+| What is the revenue by key-value targeting? | getCustomTargetingPerformance | start_date, end_date |
+| Show traffic by custom targeting | getCustomTargetingPerformance | start_date, end_date |
+| Top performing KV pairs by impressions | getCustomTargetingPerformance | start_date, end_date, limit |
+| Which targeting values drive the most revenue? | getCustomTargetingPerformance | start_date, end_date |
+
+## CRITICAL: Zero-Hallucination Rule for New Tools
+
+If any of the above tools returns `{"_live_data_status": "unavailable"}`, you MUST:
+1. Say explicitly: "I couldn't retrieve live data for this."
+2. State the reason from the `_message` field.
+3. NEVER estimate, approximate, or infer numbers from context.
+4. NEVER say "likely" or "probably" about any metric.
+
 """
 
 
@@ -4887,6 +4939,54 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             res = await asyncio.to_thread(gam.get_optimization_opportunities, s_date, e_date)
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 
+
+        if name == "getCustomTargetingPerformance":
+            s_date, e_date, _, _ = _resolve_dates(arguments)
+            res = await asyncio.to_thread(
+                gam.get_custom_targeting_performance,
+                s_date,
+                e_date,
+                int(arguments.get("limit", 25)),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getLineItemCreativeAssociations":
+            res = await asyncio.to_thread(
+                gam.get_line_item_creative_associations,
+                int(arguments.get("limit", 200)),
+                arguments.get("line_item_id") or None,
+                arguments.get("creative_id") or None,
+                arguments.get("status_filter") or None,
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getOrphanLineItems":
+            res = await asyncio.to_thread(
+                gam.get_orphan_line_items,
+                int(arguments.get("limit", 100)),
+                arguments.get("status_filter", "DELIVERING"),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getAudienceSegments":
+            res = await asyncio.to_thread(
+                gam.get_audience_segments,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter") or None,
+                arguments.get("type_filter") or None,
+                arguments.get("status_filter") or None,
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getNetworkUsers":
+            res = await asyncio.to_thread(
+                gam.get_network_users,
+                int(arguments.get("limit", 100)),
+                arguments.get("name_filter") or None,
+                arguments.get("role_filter") or None,
+                bool(arguments.get("active_only", True)),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 
         start_date, end_date, start_hour, end_hour = _resolve_dates(arguments)
 
