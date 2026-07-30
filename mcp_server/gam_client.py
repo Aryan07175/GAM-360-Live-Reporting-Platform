@@ -4040,3 +4040,723 @@ class GAMClient:
             "orders": results,
         }
 
+    # ════════════════════════════════════════════════════════════════════════════
+    # MEDIUM PRIORITY GAPS — M1 through M11
+    # ════════════════════════════════════════════════════════════════════════════
+
+    # ── M1: CREATIVE SETS ─────────────────────────────────────────────────────
+
+    def get_creative_sets(
+        self,
+        limit: int = 50,
+        name_filter: str = None,
+    ) -> Dict[str, Any]:
+        """List Creative Sets (companion ad groupings) via CreativeSetService.
+
+        Answers:
+        - 'Show me all companion creative sets'
+        - 'Which creatives are grouped in a creative set?'
+        - 'List creative sets for companion ads'
+        """
+        from zeep.helpers import serialize_object
+
+        cs_service = self.client.GetService("CreativeSetService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        if name_filter:
+            sb.Where("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"CreativeSetService\" "
+            "Method: \"getCreativeSetsByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/CreativeSetService\"",
+            API_VERSION,
+        )
+        res = cs_service.getCreativeSetsByStatement(sb.ToStatement())
+
+        records: List[Dict[str, Any]] = []
+        for item in getattr(res, "results", []) or []:
+            rd = serialize_object(item)
+            companion_ids = rd.get("companionCreativeIds") or []
+            if not isinstance(companion_ids, list):
+                companion_ids = [companion_ids]
+            records.append({
+                "id":                   str(rd.get("id", "")),
+                "name":                 str(rd.get("name", "") or ""),
+                "master_creative_id":   str(rd.get("masterCreativeId", "") or ""),
+                "companion_creative_ids": [str(c) for c in companion_ids if c],
+                "companion_count":      len(companion_ids),
+            })
+
+        return {
+            "total_creative_sets": len(records),
+            "creative_sets": records,
+        }
+
+    # ── M2: TEAMS ─────────────────────────────────────────────────────────────
+
+    def get_teams(
+        self,
+        limit: int = 50,
+        name_filter: str = None,
+    ) -> Dict[str, Any]:
+        """List Teams and their managed inventory/users via TeamService.
+
+        Answers:
+        - 'Which team manages ad unit X?'
+        - 'Show me all teams in the network'
+        - 'Which users belong to team Y?'
+        """
+        from zeep.helpers import serialize_object
+
+        team_service = self.client.GetService("TeamService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        if name_filter:
+            sb.Where("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"TeamService\" "
+            "Method: \"getTeamsByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/TeamService\"",
+            API_VERSION,
+        )
+        res = team_service.getTeamsByStatement(sb.ToStatement())
+
+        records: List[Dict[str, Any]] = []
+        for item in getattr(res, "results", []) or []:
+            rd = serialize_object(item)
+            records.append({
+                "id":             str(rd.get("id", "")),
+                "name":           str(rd.get("name", "") or ""),
+                "description":    str(rd.get("description", "") or ""),
+                "has_all_inventory": bool(rd.get("hasAllInventory", False)),
+                "team_access_type": str(rd.get("teamAccessType", "") or ""),
+            })
+
+        return {
+            "total_teams": len(records),
+            "teams": records,
+        }
+
+    # ── M3: AD UNIT FORMAT / ENVIRONMENT FILTER ───────────────────────────────
+
+    def get_ad_unit_formats(
+        self,
+        limit: int = 100,
+        environment_filter: str = None,
+    ) -> Dict[str, Any]:
+        """List ad units with environment type (BROWSER, VIDEO_PLAYER, etc.) for format filtering.
+
+        Distinct from getAdUnits (general inventory listing). This tool focuses
+        specifically on the environmentType field to answer:
+        - 'Show me all video-only ad units'
+        - 'Which ad units are video players vs display?'
+        - 'Filter ad units by environment type'
+        """
+        inv_service = self.client.GetService("InventoryService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = ["parentId != :pid"]
+        sb.WithBindVariable("pid", 0)
+        if environment_filter:
+            conditions.append("environmentType = :env")
+            sb.WithBindVariable("env", str(environment_filter).upper())
+        sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"InventoryService\" "
+            "Method: \"getAdUnitsByStatement\" (format/env filter) "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/InventoryService\"",
+            API_VERSION,
+        )
+        res = inv_service.getAdUnitsByStatement(sb.ToStatement())
+
+        records: List[Dict[str, Any]] = []
+        for u in getattr(res, "results", []) or []:
+            env_type = str(getattr(u, "environmentType", "") or "")
+            records.append({
+                "id":               str(getattr(u, "id", "")),
+                "name":             str(getattr(u, "name", "")),
+                "ad_unit_code":     str(getattr(u, "adUnitCode", "") or ""),
+                "environment_type": env_type,
+                "status":           str(getattr(u, "status", "")),
+            })
+
+        # Pandas summary by environment type
+        if records:
+            df_au = pd.DataFrame(records)
+            env_summary = df_au["environment_type"].value_counts().to_dict()
+        else:
+            env_summary = {}
+
+        return {
+            "total_ad_units": len(records),
+            "environment_type_summary": env_summary,
+            "environment_filter_applied": environment_filter,
+            "ad_units": records,
+        }
+
+    # ── M4: REACH FORECAST ────────────────────────────────────────────────────
+
+    def get_reach_forecast(
+        self,
+        ad_unit_id: str,
+        days: int = 7,
+        line_item_type: str = "STANDARD",
+    ) -> Dict[str, Any]:
+        """Estimate unique user reach for a prospective line item via ForecastService.getReachForecast.
+
+        Distinct from getInventoryAvailabilityForecast (which returns impression units)
+        and getImpactForecast (which returns contention data).
+        This tool specifically answers:
+        - 'How many unique users will this campaign reach?'
+        - 'What is the estimated reach for ad unit X over 7 days?'
+        - 'Reach forecast for a Standard line item'
+        """
+        forecast_service = self.client.GetService("ForecastService", version=API_VERSION)
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=2)
+        end = now + timedelta(days=int(days))
+
+        prospective = {
+            "lineItem": {
+                "lineItemType": line_item_type.upper(),
+                "costType": "CPM",
+                "priority": 8,
+                "startDateTimeType": "USE_START_DATE_TIME",
+                "startDateTime": {
+                    "date": {"year": now.year, "month": now.month, "day": now.day},
+                    "hour": 0, "minute": 0, "second": 0,
+                    "timeZoneId": "America/New_York",
+                },
+                "endDateTime": {
+                    "date": {"year": end.year, "month": end.month, "day": end.day},
+                    "hour": 23, "minute": 59, "second": 59,
+                    "timeZoneId": "America/New_York",
+                },
+                "primaryGoal": {
+                    "goalType": "LIFETIME",
+                    "unitType": "IMPRESSIONS",
+                    "units": 100000,
+                },
+                "targeting": {
+                    "inventoryTargeting": {
+                        "targetedAdUnits": [
+                            {"adUnitId": str(ad_unit_id), "includeDescendants": True}
+                        ]
+                    }
+                },
+            }
+        }
+
+        log.info(
+            "Request made: Service: \"ForecastService\" "
+            "Method: \"getReachForecast\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/ForecastService\"",
+            API_VERSION,
+        )
+        try:
+            res = forecast_service.getReachForecast(prospective, {})
+        except Exception as e:
+            log.error("getReachForecast failed: %s", e)
+            return {"_live_data_status": "unavailable", "_message": f"Reach forecast error: {e}"}
+
+        unique_users = int(getattr(res, "uniqueReachForecast", None) and
+                          getattr(getattr(res, "uniqueReachForecast", None), "reachForecast", 0) or 0)
+        # Different API versions return different field names
+        if unique_users == 0:
+            unique_users = int(getattr(res, "uniqueUsers", 0) or 0)
+        if unique_users == 0:
+            unique_users = int(getattr(res, "reach", 0) or 0)
+
+        return {
+            "ad_unit_id":      str(ad_unit_id),
+            "forecast_days":   int(days),
+            "start_date":      now.strftime("%Y-%m-%d"),
+            "end_date":        end.strftime("%Y-%m-%d"),
+            "line_item_type":  line_item_type.upper(),
+            "unique_users_reached": unique_users,
+            "note": (
+                "Reach forecast estimates unique users (cookies/device IDs) that would "
+                "see an ad. Availability (inventory impressions) is a separate metric — "
+                "use getInventoryAvailabilityForecast for impression availability."
+            ),
+        }
+
+    # ── M5: CUSTOM FIELDS ─────────────────────────────────────────────────────
+
+    def get_custom_fields(
+        self,
+        limit: int = 50,
+        entity_type_filter: str = None,
+        active_only: bool = True,
+    ) -> Dict[str, Any]:
+        """List Custom Field definitions via CustomFieldService.
+
+        NOTE: Custom Fields are DIFFERENT from Custom Targeting Keys (CustomTargetingService).
+        Custom Fields are internal CRM-style metadata fields attached to orders/line items/creatives
+        (e.g., 'Internal PO Number', 'Campaign Priority', 'Sales Rep').
+
+        Answers:
+        - 'Show me all internal metadata fields configured in our network'
+        - 'What custom fields are attached to line items?'
+        - 'List order-level custom fields'
+        """
+        from zeep.helpers import serialize_object
+
+        cf_service = self.client.GetService("CustomFieldService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions: List[str] = []
+        if active_only:
+            conditions.append("isActive = :active")
+            sb.WithBindVariable("active", True)
+        if entity_type_filter:
+            conditions.append("entityType = :et")
+            sb.WithBindVariable("et", str(entity_type_filter).upper())
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"CustomFieldService\" "
+            "Method: \"getCustomFieldsByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/CustomFieldService\"",
+            API_VERSION,
+        )
+        res = cf_service.getCustomFieldsByStatement(sb.ToStatement())
+
+        records: List[Dict[str, Any]] = []
+        for item in getattr(res, "results", []) or []:
+            rd = serialize_object(item)
+            records.append({
+                "id":          str(rd.get("id", "")),
+                "name":        str(rd.get("name", "") or ""),
+                "description": str(rd.get("description", "") or ""),
+                "entity_type": str(rd.get("entityType", "") or ""),
+                "data_type":   str(rd.get("dataType", "") or ""),
+                "is_active":   bool(rd.get("isActive", True)),
+                "visibility":  str(rd.get("visibility", "") or ""),
+            })
+
+        if records:
+            df_cf = pd.DataFrame(records)
+            by_entity = df_cf["entity_type"].value_counts().to_dict()
+            by_type   = df_cf["data_type"].value_counts().to_dict()
+        else:
+            by_entity = by_type = {}
+
+        return {
+            "total_custom_fields": len(records),
+            "summary": {
+                "by_entity_type": by_entity,
+                "by_data_type":   by_type,
+            },
+            "custom_fields": records,
+        }
+
+    # ── M6: PROPOSAL WORKFLOW ─────────────────────────────────────────────────
+
+    def get_proposals(
+        self,
+        limit: int = 50,
+        status_filter: str = None,
+        name_filter: str = None,
+    ) -> Dict[str, Any]:
+        """Fetch Proposals and their approval workflow status via ProposalService.
+
+        Distinct from ProposalLineItemService (which is already implemented).
+        ProposalService exposes the parent Proposal entity with approval workflow fields.
+
+        Answers:
+        - 'Show me all proposals pending approval'
+        - 'Which proposals have been rejected?'
+        - 'List draft proposals'
+        - 'Proposals awaiting my approval'
+        """
+        prop_service = self.client.GetService("ProposalService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions: List[str] = []
+        if status_filter:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", str(status_filter).upper())
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"ProposalService\" "
+            "Method: \"getProposalsByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/ProposalService\"",
+            API_VERSION,
+        )
+        res = prop_service.getProposalsByStatement(sb.ToStatement())
+
+        records: List[Dict[str, Any]] = []
+        for p in getattr(res, "results", []) or []:
+            records.append({
+                "id":           str(getattr(p, "id", "")),
+                "name":         str(getattr(p, "name", "") or ""),
+                "status":       str(getattr(p, "status", "") or ""),
+                "advertiser_id":str(getattr(p, "advertiserId", "") or ""),
+                "is_archived":  bool(getattr(p, "isArchived", False)),
+                "last_modified_by_app": str(getattr(p, "lastModifiedByApp", "") or ""),
+                "last_modified_date_time": self._format_gam_dt(getattr(p, "lastModifiedDateTime", None)),
+            })
+
+        if records:
+            df_p = pd.DataFrame(records)
+            status_summary = df_p["status"].value_counts().to_dict()
+        else:
+            status_summary = {}
+
+        return {
+            "total_proposals": len(records),
+            "status_summary":  status_summary,
+            "proposals": records,
+        }
+
+    # ── M7: SUGGESTED AD UNITS ────────────────────────────────────────────────
+
+    def get_suggested_ad_units(
+        self,
+        limit: int = 50,
+        min_requests: int = 0,
+    ) -> Dict[str, Any]:
+        """Fetch auto-detected Suggested Ad Units via SuggestedAdUnitService.
+
+        Suggested Ad Units are ad unit slots that have received real ad requests
+        but have never been formally created in GAM. They represent 'phantom'
+        inventory that is being tagged but not monetized.
+
+        Answers:
+        - 'What new ad unit slots are appearing in my tag traffic?'
+        - 'Which suggested ad units have the most requests?'
+        - 'Are there unmonetized inventory tags firing on my pages?'
+        - 'Show me suggested ad units with more than 1000 requests'
+        """
+        su_service = self.client.GetService("SuggestedAdUnitService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        if min_requests > 0:
+            sb.Where("numRequests >= :min_req")
+            sb.WithBindVariable("min_req", int(min_requests))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"SuggestedAdUnitService\" "
+            "Method: \"getSuggestedAdUnitsByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/SuggestedAdUnitService\"",
+            API_VERSION,
+        )
+        res = su_service.getSuggestedAdUnitsByStatement(sb.ToStatement())
+
+        records: List[Dict[str, Any]] = []
+        for item in getattr(res, "results", []) or []:
+            path = getattr(item, "path", None) or []
+            if not isinstance(path, list):
+                path = [path]
+            records.append({
+                "id":              str(getattr(item, "id", "")),
+                "num_requests":    int(getattr(item, "numRequests", 0) or 0),
+                "path":            [str(p) for p in path if p],
+                "parent_path":     str(getattr(item, "parentPath", "") or ""),
+                "target_window":   str(getattr(item, "targetWindow", "") or ""),
+            })
+
+        records.sort(key=lambda x: x["num_requests"], reverse=True)
+
+        total_requests = sum(r["num_requests"] for r in records)
+        return {
+            "total_suggested_ad_units": len(records),
+            "total_unhandled_requests": total_requests,
+            "note": (
+                "These are real ad slots receiving traffic but never formally created in GAM. "
+                "Creating them will allow you to monetize this inventory."
+            ),
+            "suggested_ad_units": records,
+        }
+
+    # ── M8: LABEL APPLICATION QUERY ───────────────────────────────────────────
+
+    def get_line_items_by_label(
+        self,
+        label_id: str = None,
+        label_name_filter: str = None,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Find line items that have specific labels applied (via LineItemService).
+
+        The existing getLabels() lists label definitions but cannot answer
+        'which line items have label X applied?' This tool closes that gap by
+        extracting the appliedLabels field from LineItem objects.
+
+        Answers:
+        - 'Which line items have the Sports exclusion label?'
+        - 'Show me all line items with frequency cap labels'
+        - 'Find campaigns tagged with competitive exclusion label X'
+        """
+        li_service = self.client.GetService("LineItemService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions = ["status != :arch"]
+        sb.WithBindVariable("arch", "ARCHIVED")
+        sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"LineItemService\" "
+            "Method: \"getLineItemsByStatement\" (label application query) "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/LineItemService\"",
+            API_VERSION,
+        )
+        res = li_service.getLineItemsByStatement(sb.ToStatement())
+
+        # Filter to only line items that have applied labels
+        records: List[Dict[str, Any]] = []
+        for li in getattr(res, "results", []) or []:
+            applied = getattr(li, "appliedLabels", None) or []
+            if not isinstance(applied, list):
+                applied = [applied] if applied else []
+            if not applied:
+                continue  # skip line items with no labels
+
+            applied_label_data = []
+            for lbl in applied:
+                lid = str(getattr(lbl, "labelId", "") or "")
+                is_negated = bool(getattr(lbl, "isNegated", False))
+                # filter by label_id if specified
+                if label_id and lid != str(label_id):
+                    continue
+                applied_label_data.append({"label_id": lid, "is_negated": is_negated})
+
+            if not applied_label_data and label_id:
+                continue  # label_id filter excluded this line item
+
+            records.append({
+                "line_item_id":    str(getattr(li, "id", "")),
+                "name":            str(getattr(li, "name", "") or ""),
+                "status":          str(getattr(li, "status", "") or ""),
+                "order_id":        str(getattr(li, "orderId", "") or ""),
+                "line_item_type":  str(getattr(li, "lineItemType", "") or ""),
+                "applied_labels":  applied_label_data,
+                "applied_label_count": len(applied_label_data),
+            })
+
+        label_id_counts: Dict[str, int] = {}
+        for r in records:
+            for lbl in r["applied_labels"]:
+                lid = lbl["label_id"]
+                label_id_counts[lid] = label_id_counts.get(lid, 0) + 1
+
+        return {
+            "total_labelled_line_items": len(records),
+            "filter_applied": {
+                "label_id":          label_id,
+                "label_name_filter": label_name_filter,
+            },
+            "label_usage_summary": label_id_counts,
+            "line_items": records,
+        }
+
+    # ── M9: NATIVE AD STYLES ──────────────────────────────────────────────────
+
+    def get_native_styles(
+        self,
+        limit: int = 50,
+        name_filter: str = None,
+    ) -> Dict[str, Any]:
+        """List Native Ad Style definitions via NativeStyleService.
+
+        IMPORTANT: NativeStyleService is SEPARATE from CreativeTemplateService.
+        - CreativeTemplateService → templates with isNativeEligible flag (already covered)
+        - NativeStyleService → actual visual rendering configs (CSS/HTML) for native formats
+
+        Answers:
+        - 'Show me all native ad styles configured in our network'
+        - 'Which native style templates are we using?'
+        - 'List native rendering configurations'
+        """
+        from zeep.helpers import serialize_object
+
+        ns_service = self.client.GetService("NativeStyleService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        if name_filter:
+            sb.Where("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"NativeStyleService\" "
+            "Method: \"getNativeStylesByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/NativeStyleService\"",
+            API_VERSION,
+        )
+        res = ns_service.getNativeStylesByStatement(sb.ToStatement())
+
+        records: List[Dict[str, Any]] = []
+        for item in getattr(res, "results", []) or []:
+            rd = serialize_object(item)
+            records.append({
+                "id":           str(rd.get("id", "")),
+                "name":         str(rd.get("name", "") or ""),
+                "creative_template_id": str(rd.get("creativeTemplateId", "") or ""),
+                "status":       str(rd.get("status", "") or ""),
+                "style":        str(rd.get("css", "") or "")[:200],  # truncate CSS
+                "html_snippet_truncated": str(rd.get("htmlSnippet", "") or "")[:200],
+            })
+
+        return {
+            "total_native_styles": len(records),
+            "native_styles": records,
+        }
+
+    # ── M10: VIDEO CONTENT AND CONTENT BUNDLES ────────────────────────────────
+
+    def get_video_content(
+        self,
+        limit: int = 50,
+        name_filter: str = None,
+        status_filter: str = None,
+    ) -> Dict[str, Any]:
+        """List video content entities and bundles via ContentService and ContentBundleService.
+
+        Answers:
+        - 'List all video content in my network'
+        - 'Show me active video content for targeting'
+        - 'What content bundles are configured?'
+        - 'Which content is available for DAI targeting?'
+        """
+        from zeep.helpers import serialize_object
+
+        content_service = self.client.GetService("ContentService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        conditions: List[str] = []
+        if status_filter:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", str(status_filter).upper())
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"ContentService\" "
+            "Method: \"getContentByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/ContentService\"",
+            API_VERSION,
+        )
+        content_res = content_service.getContentByStatement(sb.ToStatement())
+
+        content_records: List[Dict[str, Any]] = []
+        for item in getattr(content_res, "results", []) or []:
+            rd = serialize_object(item)
+            content_records.append({
+                "id":     str(rd.get("id", "")),
+                "name":   str(rd.get("name", "") or ""),
+                "status": str(rd.get("status", "") or ""),
+                "cms_source_id": str(rd.get("cmsSourceId", "") or ""),
+            })
+
+        # Also fetch content bundles
+        try:
+            bundle_service = self.client.GetService("ContentBundleService", version=API_VERSION)
+            sb2 = ad_manager.StatementBuilder(version=API_VERSION)
+            sb2.Limit(int(limit))
+            log.info(
+                "Request made: Service: \"ContentBundleService\" "
+                "Method: \"getContentBundlesByStatement\" "
+                "URL: \"https://ads.google.com/apis/ads/publisher/%s/ContentBundleService\"",
+                API_VERSION,
+            )
+            bundle_res = bundle_service.getContentBundlesByStatement(sb2.ToStatement())
+            bundle_records: List[Dict[str, Any]] = []
+            for item in getattr(bundle_res, "results", []) or []:
+                rd = serialize_object(item)
+                bundle_records.append({
+                    "id":     str(rd.get("id", "")),
+                    "name":   str(rd.get("name", "") or ""),
+                    "status": str(rd.get("status", "") or ""),
+                })
+        except Exception as e:
+            log.warning("ContentBundleService call failed (may not be enabled): %s", e)
+            bundle_records = []
+
+        return {
+            "total_content":        len(content_records),
+            "total_content_bundles": len(bundle_records),
+            "content":              content_records,
+            "content_bundles":      bundle_records,
+        }
+
+    # ── M11: SITE APPROVAL STATUS ─────────────────────────────────────────────
+
+    def get_sites(
+        self,
+        limit: int = 50,
+        approval_status_filter: str = None,
+    ) -> Dict[str, Any]:
+        """List sites and their approval status via SiteService (primarily for MCM networks).
+
+        Answers:
+        - 'Which of my MCM child sites are not yet approved?'
+        - 'Show me all disapproved sites'
+        - 'List sites pending Google review'
+        - 'What is the approval status of site X?'
+
+        NOTE: ads.txt file crawl status is NOT available via API (UI only).
+        This tool returns site approval status (APPROVED/DISAPPROVED/UNCHECKED/DRAFT).
+        """
+        from zeep.helpers import serialize_object
+
+        site_service = self.client.GetService("SiteService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+        if approval_status_filter:
+            sb.Where("approvalStatus = :status")
+            sb.WithBindVariable("status", str(approval_status_filter).upper())
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"SiteService\" "
+            "Method: \"getSitesByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/SiteService\"",
+            API_VERSION,
+        )
+        res = site_service.getSitesByStatement(sb.ToStatement())
+
+        records: List[Dict[str, Any]] = []
+        for item in getattr(res, "results", []) or []:
+            rd = serialize_object(item)
+            disapproval_reasons = rd.get("disapprovalReasons") or []
+            if isinstance(disapproval_reasons, str):
+                disapproval_reasons = [disapproval_reasons]
+            records.append({
+                "id":               str(rd.get("id", "")),
+                "url":              str(rd.get("url", "") or ""),
+                "approval_status":  str(rd.get("approvalStatus", "") or ""),
+                "child_network_code": str(rd.get("childNetworkCode", "") or ""),
+                "disapproval_reasons": [str(r) for r in disapproval_reasons if r],
+            })
+
+        if records:
+            df_s = pd.DataFrame(records)
+            status_summary = df_s["approval_status"].value_counts().to_dict()
+        else:
+            status_summary = {}
+
+        return {
+            "total_sites":     len(records),
+            "status_summary":  status_summary,
+            "filter_applied":  approval_status_filter,
+            "ads_txt_note": (
+                "ads.txt file verification status is not available via the GAM SOAP API. "
+                "This tool returns site approval status only (APPROVED/DISAPPROVED/UNCHECKED/DRAFT)."
+            ),
+            "sites": records,
+        }
+

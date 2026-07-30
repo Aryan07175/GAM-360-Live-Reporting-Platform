@@ -1940,6 +1940,55 @@ If any of the above tools returns `{"_live_data_status": "unavailable"}`, you MU
 | Sales portfolio breakdown by rep | getOrdersWithTeam | |
 | Which trafficker manages the most active campaigns? | getOrdersWithTeam | status_filter=DELIVERING |
 
+## CREATIVE SETS (Companion Ads)
+| Show me all companion creative sets | getCreativeSets | |
+| Which creatives are grouped in a creative set? | getCreativeSets | name_filter=X |
+
+## TEAMS
+| Show me all teams | getTeams | |
+| Which team manages my inventory? | getTeams | name_filter=X |
+
+## AD UNIT FORMATS (Environment Type)
+| Show me all video-only ad units | getAdUnitFormats | environment_filter=VIDEO_PLAYER |
+| Which ad units are video players vs display? | getAdUnitFormats | |
+
+## REACH FORECAST (Unique Users)
+> Use `getReachForecast` for unique user reach. Use `getInventoryAvailabilityForecast` for impression availability. Use `getImpactForecast` for contention.
+| How many unique users will this campaign reach? | getReachForecast | ad_unit_id |
+| Reach estimate for ad unit X | getReachForecast | ad_unit_id, days |
+
+## CUSTOM FIELDS (Internal CRM Metadata)
+> Custom Fields are DIFFERENT from Custom Targeting Keys. These are internal CRM fields (PO numbers, priorities, etc.)
+| Show me internal metadata fields for line items | getCustomFields | entity_type_filter=LINE_ITEM |
+| What custom fields exist in our network? | getCustomFields | |
+
+## PROPOSAL WORKFLOW
+| Show me proposals pending approval | getProposals | status_filter=PENDING_APPROVAL |
+| List rejected proposals | getProposals | status_filter=REJECTED |
+| Draft proposals | getProposals | status_filter=DRAFT |
+
+## SUGGESTED AD UNITS (Unmonetized Inventory)
+| What new ad unit slots are firing in my tags? | getSuggestedAdUnits | |
+| Show suggested ad units with more than 1000 requests | getSuggestedAdUnits | min_requests=1000 |
+
+## LABEL APPLICATION (Which Line Items Have Which Labels)
+| Which line items have the Sports exclusion label? | getLineItemsByLabel | label_id=X |
+| Find line items with competitive exclusion labels | getLineItemsByLabel | |
+
+## NATIVE AD STYLES
+| Show me all native ad styles | getNativeStyles | |
+| Which native style templates are we using? | getNativeStyles | name_filter=X |
+
+## VIDEO CONTENT
+| List all video content in my network | getVideoContent | |
+| Show active video content for targeting | getVideoContent | status_filter=ACTIVE |
+| What content bundles are configured? | getVideoContent | |
+
+## SITE APPROVAL STATUS (MCM Networks)
+| Which MCM child sites are not yet approved? | getSites | approval_status_filter=UNCHECKED |
+| Show disapproved sites | getSites | approval_status_filter=DISAPPROVED |
+| List all sites and their approval status | getSites | |
+
 """
 
 
@@ -5067,6 +5116,99 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 int(arguments.get("limit", 100)),
                 arguments.get("name_filter") or None,
                 arguments.get("status_filter") or None,
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getCreativeSets":
+            res = await asyncio.to_thread(
+                gam.get_creative_sets,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getTeams":
+            res = await asyncio.to_thread(
+                gam.get_teams,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getAdUnitFormats":
+            res = await asyncio.to_thread(
+                gam.get_ad_unit_formats,
+                int(arguments.get("limit", 100)),
+                arguments.get("environment_filter"),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getReachForecast":
+            res = await asyncio.to_thread(
+                gam.get_reach_forecast,
+                arguments.get("ad_unit_id", ""),
+                int(arguments.get("days", 7)),
+                arguments.get("line_item_type", "STANDARD"),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getCustomFields":
+            res = await asyncio.to_thread(
+                gam.get_custom_fields,
+                int(arguments.get("limit", 50)),
+                arguments.get("entity_type_filter"),
+                bool(arguments.get("active_only", True)),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getProposals":
+            res = await asyncio.to_thread(
+                gam.get_proposals,
+                int(arguments.get("limit", 50)),
+                arguments.get("status_filter"),
+                arguments.get("name_filter"),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getSuggestedAdUnits":
+            res = await asyncio.to_thread(
+                gam.get_suggested_ad_units,
+                int(arguments.get("limit", 50)),
+                int(arguments.get("min_requests", 0)),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getLineItemsByLabel":
+            res = await asyncio.to_thread(
+                gam.get_line_items_by_label,
+                arguments.get("label_id"),
+                arguments.get("label_name_filter"),
+                int(arguments.get("limit", 50)),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getNativeStyles":
+            res = await asyncio.to_thread(
+                gam.get_native_styles,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getVideoContent":
+            res = await asyncio.to_thread(
+                gam.get_video_content,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+                arguments.get("status_filter"),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getSites":
+            res = await asyncio.to_thread(
+                gam.get_sites,
+                int(arguments.get("limit", 50)),
+                arguments.get("approval_status_filter"),
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 
