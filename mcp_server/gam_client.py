@@ -3640,3 +3640,403 @@ class GAMClient:
         }
 
 
+    # ── GAP H3: DAI DELIVERY ANALYTICS ───────────────────────────────────────
+    # Dynamic Ad Insertion (DAI) reporting is NOT a separate API — it uses the
+    # exact same ReportService with DAI-specific dimensions and metrics.
+    # Upgraded from "Out of Scope" to Buildable in the Step 2 audit.
+
+    def get_dai_analytics(
+        self,
+        start_date: date,
+        end_date: date,
+        breakdown_dimension: str = "VIDEO_CONTENT_NAME",
+    ) -> Dict[str, Any]:
+        """Dynamic Ad Insertion (DAI) analytics — stream type, content, and error breakdown.
+
+        Runs a ReportService job with DAI-specific dimensions and metrics, then
+        computes all rates in Pandas (zero-hallucination).
+
+        Answers:
+        - 'Show me DAI impressions by content'
+        - 'Which stream type (VOD vs Live) performs better?'
+        - 'What is the DAI error rate for my content?'
+        - 'DAI revenue by video content'
+
+        Args:
+            breakdown_dimension: VIDEO_CONTENT_NAME (default), STREAM_TYPE, VIDEO_AD_TYPE
+        """
+        import io
+        import gzip
+        import urllib.request
+        import asyncio
+
+        report_service = self._report_service()
+
+        # Validate dimension — only GAM-accepted DAI dimensions
+        VALID_DIMS = {"VIDEO_CONTENT_NAME", "STREAM_TYPE", "VIDEO_AD_TYPE"}
+        dim = str(breakdown_dimension).upper().strip()
+        if dim not in VALID_DIMS:
+            dim = "VIDEO_CONTENT_NAME"
+
+        report_query = {
+            "dimensions": ["DATE", dim],
+            "columns": [
+                "AD_SERVER_IMPRESSIONS",
+                "AD_SERVER_CPM_AND_CPC_REVENUE",
+                "VIDEO_VIEWERSHIP_START",
+                "VIDEO_VIEWERSHIP_COMPLETE",
+                "VIDEO_ERRORS",
+            ],
+            "dateRangeType": "CUSTOM_DATE",
+            "startDate": self._to_gam_date(start_date),
+            "endDate": self._to_gam_date(end_date),
+        }
+        report_job = {"reportQuery": report_query}
+
+        try:
+            log.info(
+                "Request made: Service: \"ReportService\" "
+                "Method: \"runReportJob\" (DAI Analytics, dim=%s) "
+                "URL: \"https://ads.google.com/apis/ads/publisher/%s/ReportService\"",
+                dim, API_VERSION,
+            )
+            report_job = report_service.runReportJob(report_job)
+            job_id = report_job["id"]
+        except Exception as e:
+            log.error("Failed to run DAI analytics report: %s", e)
+            return {"_live_data_status": "unavailable", "_message": f"GAM API Error: {e}"}
+
+        # Poll (must be in a thread, not the async loop)
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        if loop.is_running():
+            raise RuntimeError(
+                "get_dai_analytics must be called from asyncio.to_thread, not from the async loop directly."
+            )
+        success = loop.run_until_complete(self.wait_for_report(job_id))
+        if not success:
+            return {"_live_data_status": "unavailable", "_message": "Report timeout or failed."}
+
+        # Download
+        try:
+            report_url = report_service.getReportDownloadUrlWithOptions(
+                job_id, {"exportFormat": "CSV_DUMP", "useGzipCompression": True}
+            )
+            with urllib.request.urlopen(report_url) as resp:
+                raw = resp.read()
+            if report_url.endswith("gz") or raw[:2] == b"\x1f\x8b":
+                raw = gzip.decompress(raw)
+            raw = raw.decode("utf-8")
+            df = pd.read_csv(io.StringIO(raw))
+            del raw
+            import gc; gc.collect()
+        except Exception as e:
+            return {"_live_data_status": "unavailable", "_message": f"Failed to download DAI report: {e}"}
+
+        df.columns = [
+            c.strip().lower().replace(" ", "_").replace("dimension.", "").replace("column.", "")
+            for c in df.columns
+        ]
+
+        if df.empty:
+            return {"_live_data_status": "unavailable", "_message": "No DAI data available for this time period."}
+
+        # Identify the breakdown column dynamically
+        METRIC_COLS = {
+            "ad_server_impressions", "ad_server_cpm_and_cpc_revenue",
+            "video_viewership_start", "video_viewership_complete", "video_errors", "date",
+        }
+        dim_col = next((c for c in df.columns if c not in METRIC_COLS), None) or dim.lower()
+
+        # ── Pandas aggregation (all math here, never by LLM) ─────────────────
+        def _safe_int(series: pd.Series) -> int:
+            return int(series.fillna(0).astype("float64").sum())
+
+        def _safe_float(series: pd.Series) -> float:
+            return float(series.fillna(0).astype("float64").sum())
+
+        results: List[Dict[str, Any]] = []
+        for name, grp in df.groupby(dim_col):
+            imps     = _safe_int(grp.get("ad_server_impressions",   pd.Series(dtype=float)))
+            starts   = _safe_int(grp.get("video_viewership_start",   pd.Series(dtype=float)))
+            completes= _safe_int(grp.get("video_viewership_complete", pd.Series(dtype=float)))
+            errors   = _safe_int(grp.get("video_errors",             pd.Series(dtype=float)))
+            rev      = _safe_float(grp.get("ad_server_cpm_and_cpc_revenue", pd.Series(dtype=float)))
+
+            if imps == 0:
+                continue
+
+            completion_rate = round(completes / starts * 100, 2) if starts > 0 else 0.0
+            error_rate      = round(errors / imps * 100, 2)
+
+            results.append({
+                dim_col:            str(name),
+                "impressions":      imps,
+                "starts":           starts,
+                "completes":        completes,
+                "completion_rate_pct": completion_rate,
+                "errors":           errors,
+                "error_rate_pct":   error_rate,
+                "revenue_usd":      round(rev, 2),
+            })
+
+        results.sort(key=lambda x: x["impressions"], reverse=True)
+
+        if not results:
+            return {"_live_data_status": "unavailable", "_message": "No DAI impressions found for this period."}
+
+        # Network totals via Pandas (never by LLM)
+        total_imps     = sum(r["impressions"]  for r in results)
+        total_starts   = sum(r["starts"]       for r in results)
+        total_completes= sum(r["completes"]    for r in results)
+        total_errors   = sum(r["errors"]       for r in results)
+        total_rev      = sum(r["revenue_usd"]  for r in results)
+
+        return {
+            "period":              f"{start_date} to {end_date}",
+            "breakdown_dimension": dim,
+            "totals": {
+                "impressions":         total_imps,
+                "starts":              total_starts,
+                "completes":           total_completes,
+                "completion_rate_pct": round(total_completes / total_starts * 100, 2) if total_starts > 0 else 0.0,
+                "errors":              total_errors,
+                "error_rate_pct":      round(total_errors / total_imps * 100, 2),
+                "revenue_usd":         round(total_rev, 2),
+            },
+            "analytics": results[:25],
+        }
+
+    # ── GAP H4: CHANGE HISTORY / AUDIT TRAIL ─────────────────────────────────
+    # ChangeHistoryService.getChangeHistoryByStatement is confirmed available
+    # in v202602 and completely unimplemented. Answers "who changed X and when?"
+
+    def get_change_history(
+        self,
+        entity_type: str = None,
+        entity_id: str = None,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Fetch audit trail for changes made to GAM entities via ChangeHistoryService.
+
+        Answers:
+        - 'Who changed line item 12345?'
+        - 'What changed in the last 24 hours?'
+        - 'Show me all changes to orders today'
+        - 'Audit trail for creative X'
+        - 'Who made changes to our network recently?'
+
+        Args:
+            entity_type: optional filter — ORDER, LINE_ITEM, CREATIVE, AD_UNIT, PLACEMENT, etc.
+            entity_id: optional specific entity ID to filter by
+            limit: max records to return (default 50)
+        """
+        from zeep.helpers import serialize_object
+
+        ch_service = self.client.GetService("ChangeHistoryService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+
+        conditions: List[str] = []
+        if entity_type:
+            et = str(entity_type).upper().strip()
+            conditions.append("entityType = :et")
+            sb.WithBindVariable("et", et)
+        if entity_id:
+            conditions.append("entityId = :eid")
+            sb.WithBindVariable("eid", int(entity_id))
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"ChangeHistoryService\" "
+            "Method: \"getChangeHistoryByStatement\" "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/ChangeHistoryService\"",
+            API_VERSION,
+        )
+        response = ch_service.getChangeHistoryByStatement(sb.ToStatement())
+
+        records: List[Dict[str, Any]] = []
+        for item in getattr(response, "results", []) or []:
+            rd = serialize_object(item)
+            # Parse datetime from GAM's nested DateTime structure
+            dt_obj = rd.get("changeDateTime") or {}
+            if isinstance(dt_obj, dict):
+                d = dt_obj.get("date") or {}
+                change_ts = (
+                    f"{d.get('year', '')}-{str(d.get('month', '')).zfill(2)}-"
+                    f"{str(d.get('day', '')).zfill(2)} "
+                    f"{str(dt_obj.get('hour', 0)).zfill(2)}:"
+                    f"{str(dt_obj.get('minute', 0)).zfill(2)}:"
+                    f"{str(dt_obj.get('second', 0)).zfill(2)} "
+                    f"{dt_obj.get('timeZoneId', 'UTC')}"
+                )
+            else:
+                change_ts = str(dt_obj or "")
+
+            # Fields changed (only present for FIELDS_CHANGED type)
+            field_paths = rd.get("fieldPathsChanged") or []
+            if isinstance(field_paths, str):
+                field_paths = [field_paths]
+
+            records.append({
+                "change_datetime":    change_ts,
+                "entity_type":        str(rd.get("entityType", "") or ""),
+                "entity_id":          str(rd.get("entityId", "") or ""),
+                "entity_name":        str(rd.get("entityName", "") or ""),
+                "change_type":        str(rd.get("changeType", "") or ""),  # CREATED / DELETED / FIELDS_CHANGED
+                "changed_by":         str(rd.get("changedBy", "") or ""),
+                "fields_changed":     [str(f) for f in field_paths],
+                "network_code":       str(rd.get("networkCode", "") or ""),
+            })
+
+        # Pandas — group by entity type and change type for summary
+        if records:
+            df_ch = pd.DataFrame(records)
+            type_summary  = df_ch["entity_type"].value_counts().to_dict()
+            change_summary= df_ch["change_type"].value_counts().to_dict()
+            user_summary  = df_ch["changed_by"].value_counts().head(10).to_dict()
+        else:
+            type_summary = change_summary = user_summary = {}
+
+        return {
+            "total_changes":   len(records),
+            "filters_applied": {
+                "entity_type": entity_type,
+                "entity_id":   entity_id,
+            },
+            "summary": {
+                "by_entity_type":  type_summary,
+                "by_change_type":  change_summary,
+                "most_active_users": user_summary,
+            },
+            "change_log": records,
+        }
+
+    # ── GAP H5: SALESPERSON / TRAFFICKER ON ORDERS ────────────────────────────
+    # The existing get_orders() method returns core campaign data but NEVER
+    # extracts salesperson, trafficker, or secondaryTrafficker from the Order
+    # object — even though OrderService already returns them. This is a purely
+    # additive new tool. get_orders() is untouched.
+
+    def get_orders_with_team(
+        self,
+        limit: int = 50,
+        name_filter: str = None,
+        status_filter: str = None,
+        advertiser_id: str = None,
+    ) -> Dict[str, Any]:
+        """Fetch Orders with full CRM/team ownership data (salesperson, trafficker).
+
+        Uses the same OrderService as get_orders() but additionally extracts
+        the salesperson, trafficker, and secondaryTrafficker fields that
+        link commercial responsibility to specific users.
+
+        Answers:
+        - 'Which salesperson owns the most revenue?'
+        - 'Show me orders with their assigned traffickers'
+        - 'Who is responsible for order X?'
+        - 'Sales portfolio: how many orders does each rep own?'
+        - 'Which trafficker manages the most active line items?'
+        """
+        ord_service = self.client.GetService("OrderService", version=API_VERSION)
+        sb = ad_manager.StatementBuilder(version=API_VERSION)
+
+        conditions: List[str] = []
+        if status_filter:
+            conditions.append("status = :status")
+            sb.WithBindVariable("status", status_filter.upper())
+        if name_filter:
+            conditions.append("name LIKE :name")
+            sb.WithBindVariable("name", f"%{name_filter}%")
+        if advertiser_id:
+            conditions.append("advertiserId = :adv_id")
+            sb.WithBindVariable("adv_id", int(advertiser_id))
+        if conditions:
+            sb.Where(" AND ".join(conditions))
+        sb.Limit(int(limit))
+
+        log.info(
+            "Request made: Service: \"OrderService\" "
+            "Method: \"getOrdersByStatement\" (team/CRM view) "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/OrderService\"",
+            API_VERSION,
+        )
+        res = ord_service.getOrdersByStatement(sb.ToStatement())
+
+        results: List[Dict[str, Any]] = []
+        for o in getattr(res, "results", []):
+            budget_obj = getattr(o, "totalBudget", None)
+            budget_amt = getattr(budget_obj, "microAmount", 0) / 1_000_000.0 if budget_obj else 0.0
+            currency   = getattr(budget_obj, "currencyCode", "USD") if budget_obj else "USD"
+
+            # ── CRM / team fields (the whole point of this method) ────────────
+            salesperson_id   = str(getattr(o, "salespersonId", "") or "")
+            trafficker_id    = str(getattr(o, "traffickerId", "") or "")
+            sec_trafficker_ids = []
+            raw_sec = getattr(o, "secondaryTraffickerIds", None) or []
+            if raw_sec:
+                sec_trafficker_ids = [str(x) for x in (raw_sec if isinstance(raw_sec, list) else [raw_sec])]
+
+            results.append({
+                "id":              str(getattr(o, "id", "")),
+                "name":            str(getattr(o, "name", "")),
+                "status":          str(getattr(o, "status", "")),
+                "advertiser_id":   str(getattr(o, "advertiserId", "")),
+                "total_budget":    f"{budget_amt:.2f} {currency}",
+                "impressions_delivered": int(getattr(o, "totalImpressionsDelivered", None) or 0),
+                "clicks_delivered":     int(getattr(o, "totalClicksDelivered", None) or 0),
+                "start_date_time": self._format_gam_dt(getattr(o, "startDateTime", None)),
+                "end_date_time":   self._format_gam_dt(getattr(o, "endDateTime", None)),
+                "is_programmatic": bool(getattr(o, "isProgrammatic", False)),
+                # ── CRM / team ownership ──────────────────────────────────────
+                "salesperson_id":          salesperson_id,
+                "trafficker_id":           trafficker_id,
+                "secondary_trafficker_ids": sec_trafficker_ids,
+                "notes":          str(getattr(o, "notes", "") or ""),
+            })
+
+        if not results:
+            return {
+                "_live_data_status": "unavailable",
+                "_message": "No orders found matching the given filters.",
+            }
+
+        # ── Pandas — CRM summary stats (never by LLM) ────────────────────────
+        df_o = pd.DataFrame(results)
+
+        # Revenue by salesperson_id (best proxy without resolving user names)
+        sp_summary: List[Dict] = []
+        if "salesperson_id" in df_o.columns:
+            sp_counts = df_o["salesperson_id"].value_counts().head(10)
+            for sp_id, cnt in sp_counts.items():
+                sp_summary.append({"salesperson_id": sp_id, "order_count": int(cnt)})
+
+        # Active orders by trafficker
+        tr_summary: List[Dict] = []
+        if "trafficker_id" in df_o.columns:
+            tr_counts = df_o["trafficker_id"].value_counts().head(10)
+            for tr_id, cnt in tr_counts.items():
+                tr_summary.append({"trafficker_id": tr_id, "order_count": int(cnt)})
+
+        return {
+            "total_orders":    len(results),
+            "filters_applied": {
+                "name_filter":     name_filter,
+                "status_filter":   status_filter,
+                "advertiser_id":   advertiser_id,
+            },
+            "team_summary": {
+                "top_salespersons_by_order_count": sp_summary,
+                "top_traffickers_by_order_count":  tr_summary,
+                "note": (
+                    "salesperson_id and trafficker_id are GAM User IDs. "
+                    "Use getNetworkUsers to resolve IDs to names."
+                ),
+            },
+            "orders": results,
+        }
+

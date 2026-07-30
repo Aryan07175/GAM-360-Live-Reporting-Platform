@@ -1908,6 +1908,38 @@ If any of the above tools returns `{"_live_data_status": "unavailable"}`, you MU
 | Video drop off by content | getVideoAnalytics | breakdown_dimension=CONTENT_NAME |
 | Which video ad types have the highest completion rate? | getVideoAnalytics | breakdown_dimension=VIDEO_AD_TYPE |
 
+## DAI DELIVERY ANALYTICS
+
+| User intent | Tool | Key params |
+|---|---|---|
+| Show me DAI impressions by content | getDaiAnalytics | breakdown_dimension=VIDEO_CONTENT_NAME |
+| Which stream type performs better, VOD or Live? | getDaiAnalytics | breakdown_dimension=STREAM_TYPE |
+| DAI error rate by video ad type | getDaiAnalytics | breakdown_dimension=VIDEO_AD_TYPE |
+| DAI revenue breakdown | getDaiAnalytics | |
+
+## CHANGE HISTORY / AUDIT TRAIL
+
+| User intent | Tool | Key params |
+|---|---|---|
+| Who changed line item 12345? | getChangeHistory | entity_type=LINE_ITEM, entity_id=12345 |
+| Show me all changes in the last 50 records | getChangeHistory | limit=50 |
+| What changed to our orders recently? | getChangeHistory | entity_type=ORDER |
+| Audit trail for creative X | getChangeHistory | entity_type=CREATIVE, entity_id=X |
+| Who made changes to the network recently? | getChangeHistory | |
+
+## ORDERS WITH TEAM / CRM OWNERSHIP
+
+> Use `getOrdersWithTeam` when the question involves salesperson, trafficker, or order ownership.
+> Use `getOrders` for standard order listing without CRM context.
+
+| User intent | Tool | Key params |
+|---|---|---|
+| Which salesperson owns the most orders? | getOrdersWithTeam | |
+| Show me orders with their assigned traffickers | getOrdersWithTeam | |
+| Who is responsible for order X? | getOrdersWithTeam | name_filter=X |
+| Sales portfolio breakdown by rep | getOrdersWithTeam | |
+| Which trafficker manages the most active campaigns? | getOrdersWithTeam | status_filter=DELIVERING |
+
 """
 
 
@@ -5035,6 +5067,34 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 int(arguments.get("limit", 100)),
                 arguments.get("name_filter") or None,
                 arguments.get("status_filter") or None,
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getDaiAnalytics":
+            res = await asyncio.to_thread(
+                gam.get_dai_analytics,
+                start_date,
+                end_date,
+                arguments.get("breakdown_dimension", "VIDEO_CONTENT_NAME")
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getChangeHistory":
+            res = await asyncio.to_thread(
+                gam.get_change_history,
+                arguments.get("entity_type"),
+                arguments.get("entity_id"),
+                int(arguments.get("limit", 50)),
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getOrdersWithTeam":
+            res = await asyncio.to_thread(
+                gam.get_orders_with_team,
+                int(arguments.get("limit", 50)),
+                arguments.get("name_filter"),
+                arguments.get("status_filter"),
+                arguments.get("advertiser_id"),
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 
