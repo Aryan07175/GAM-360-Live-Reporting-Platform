@@ -3679,6 +3679,8 @@ def _get_all_website_metrics(df: pd.DataFrame) -> list[dict]:
         
         websites_perf.append({
             "website": name,
+            "name": name,
+            "domain": name,
             "ad_requests": req,
             "matched_requests": matched,
             "impressions": imp,

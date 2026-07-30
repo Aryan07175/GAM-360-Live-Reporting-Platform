@@ -574,8 +574,8 @@ class GAMClient:
         adx_match = round((adx_imp / adx_req * 100), 2) if adx_req > 0 else 0
         ecpm_calc = (rev_sum / imp_sum * 1000) if imp_sum > 0 else 0
         unique_ad_units = df["ad_unit_name"].nunique() if "ad_unit_name" in df.columns else 0
-        date_min = df["date"].min() if "date" in df.columns else "N/A"
-        date_max = df["date"].max() if "date" in df.columns else "N/A"
+        date_min = df["date"].astype(str).min() if "date" in df.columns else "N/A"
+        date_max = df["date"].astype(str).max() if "date" in df.columns else "N/A"
 
         # Duplicate check
         dedup_cols = [c for c in ["date", "ad_unit_id"] if c in df.columns]
