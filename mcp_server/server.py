@@ -1884,6 +1884,22 @@ If any of the above tools returns `{"_live_data_status": "unavailable"}`, you MU
 | What is my minimum CPM floor? | getUnifiedPricingRules | status_filter=ACTIVE |
 | Floor pricing configuration | getUnifiedPricingRules | |
 
+## IMPACT FORECASTING (Contention Analysis)
+
+> IMPORTANT: TWO different forecasting tools exist — use the correct one:
+> - `getInventoryAvailabilityForecast` → "Is there enough inventory for X impressions on ad unit Y?" — checks availability ONLY, no contention analysis
+> - `getImpactForecast` → "If I add this campaign, which EXISTING campaigns will be hurt?" — uses contendingLineItemIds to surface displacement risk
+
+| User intent | Tool | Key params |
+|---|---|---|
+| If I add a new line item targeting X, which campaigns will be affected? | getImpactForecast | ad_unit_id, units, days |
+| Will adding this campaign hurt my existing guaranteed delivery? | getImpactForecast | ad_unit_id, units |
+| What is the contention risk for ad unit Y? | getImpactForecast | ad_unit_id |
+| Which campaigns compete for inventory on [ad unit]? | getImpactForecast | ad_unit_id |
+| Show me contending line items for this prospective campaign | getImpactForecast | ad_unit_id, units, contending_line_item_ids |
+| Impact of adding a Sponsorship / Standard / Bulk line item | getImpactForecast | ad_unit_id, line_item_type, priority |
+| Can I safely add a 500K impression campaign on [ad unit]? | getImpactForecast | ad_unit_id, units=500000 |
+
 """
 
 
@@ -5011,6 +5027,19 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 int(arguments.get("limit", 100)),
                 arguments.get("name_filter") or None,
                 arguments.get("status_filter") or None,
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getImpactForecast":
+            res = await asyncio.to_thread(
+                gam.get_impact_forecast,
+                arguments.get("ad_unit_id", ""),
+                int(arguments.get("units", 100000)),
+                int(arguments.get("days", 7)),
+                # contending_line_item_ids: accept comma-separated string or list
+                [str(x).strip() for x in arguments["contending_line_item_ids"].split(",")] if isinstance(arguments.get("contending_line_item_ids"), str) else (arguments.get("contending_line_item_ids") or None),
+                arguments.get("line_item_type", "STANDARD"),
+                int(arguments.get("priority", 8)),
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 

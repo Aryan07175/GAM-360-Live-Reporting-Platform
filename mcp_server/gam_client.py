@@ -3275,3 +3275,201 @@ class GAMClient:
             ),
         }
 
+    # ── GAP H1: IMPACT FORECASTING ───────────────────────────────────────────
+    # The existing get_inventory_availability_forecast checks availability for a
+    # prospective line item in isolation. This method adds ForecastOptions with
+    # contendingLineItemIds so the response includes WHICH EXISTING CAMPAIGNS
+    # would compete for inventory if the new line item is added.
+
+    def get_impact_forecast(
+        self,
+        ad_unit_id: str,
+        units: int = 100_000,
+        days: int = 7,
+        contending_line_item_ids: List[str] = None,
+        line_item_type: str = "STANDARD",
+        priority: int = 8,
+    ) -> Dict[str, Any]:
+        """Model the impact of adding a new line item on existing campaigns.
+
+        Calls ForecastService.getAvailabilityForecast with a prospective line item
+        and ForecastOptions.contendingLineItemIds. The API returns both:
+        - Inventory availability for the prospective campaign
+        - How much each contending existing campaign would be displaced
+
+        Answers questions like:
+        - If I add a new 100K impression campaign on ad unit X, which campaigns will be hurt?
+        - Will adding this line item affect my existing guaranteed delivery?
+        - What is the contention risk for ad unit Y over the next 7 days?
+        - Show me the impact forecast for a new Standard line item on [ad_unit_id]
+
+        Args:
+            ad_unit_id: GAM ad unit ID to forecast for
+            units: target impression goal for the prospective line item
+            contending_line_item_ids: optional list of specific line item IDs to check
+                impact against. If None, GAM auto-detects contending campaigns.
+            line_item_type: type of prospective line item (STANDARD, SPONSORSHIP, etc.)
+            priority: delivery priority (1-16, lower = higher priority)
+        """
+        forecast_service = self.client.GetService(
+            "ForecastService", version=API_VERSION
+        )
+
+        # Start 2 days from now (GAM forecast requirement: start must be future)
+        now = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=2)
+        end = now + timedelta(days=int(days))
+
+        prospective_line_item = {
+            "lineItem": {
+                "lineItemType": line_item_type.upper(),
+                "costType": "CPM",
+                "priority": int(priority),
+                "startDateTimeType": "USE_START_DATE_TIME",
+                "startDateTime": {
+                    "date": {"year": now.year, "month": now.month, "day": now.day},
+                    "hour": 0, "minute": 0, "second": 0,
+                    "timeZoneId": "America/New_York",
+                },
+                "endDateTime": {
+                    "date": {"year": end.year, "month": end.month, "day": end.day},
+                    "hour": 23, "minute": 59, "second": 59,
+                    "timeZoneId": "America/New_York",
+                },
+                "primaryGoal": {
+                    "goalType": "LIFETIME",
+                    "unitType": "IMPRESSIONS",
+                    "units": int(units),
+                },
+                "targeting": {
+                    "inventoryTargeting": {
+                        "targetedAdUnits": [
+                            {"adUnitId": str(ad_unit_id), "includeDescendants": True}
+                        ]
+                    }
+                },
+            }
+        }
+
+        # ForecastOptions — pass contending IDs if specified, else GAM auto-detects
+        forecast_options: Dict[str, Any] = {}
+        if contending_line_item_ids:
+            forecast_options["contendingLineItemIds"] = [
+                int(lid) for lid in contending_line_item_ids
+                if str(lid).strip().isdigit()
+            ]
+
+        log.info(
+            "Request made: Service: \"ForecastService\" "
+            "Method: \"getAvailabilityForecast\" (impact mode, contendingLineItemIds=%s) "
+            "URL: \"https://ads.google.com/apis/ads/publisher/%s/ForecastService\"",
+            len(forecast_options.get("contendingLineItemIds", [])),
+            API_VERSION,
+        )
+        res = forecast_service.getAvailabilityForecast(
+            prospective_line_item, forecast_options
+        )
+
+        # ── Availability numbers (all Python arithmetic, not LLM) ─────────────
+        avail    = int(getattr(res, "availableUnits",  0) or 0)
+        matched  = int(getattr(res, "matchedUnits",    0) or 0)
+        possible = int(getattr(res, "possibleUnits",   0) or 0)
+        reserved = int(getattr(res, "reservedUnits",   0) or 0)
+        avail_pct   = round(avail / matched * 100.0, 2) if matched > 0 else 0.0
+        can_fulfill = avail >= int(units)
+        shortfall   = max(0, int(units) - avail)
+
+        # ── Contending campaigns ──────────────────────────────────────────────
+        # GAM returns ContendingLineItem: lineItemId, name, contention (0–1 float)
+        raw_contending = getattr(res, "contendingLineItems", []) or []
+        contending_data: List[Dict[str, Any]] = []
+        for cli in raw_contending:
+            cli_id         = str(getattr(cli, "lineItemId", "") or "")
+            cli_name       = str(getattr(cli, "name", "") or "")
+            cli_contention = float(getattr(cli, "contention", 0.0) or 0.0)
+            contention_pct = round(cli_contention * 100.0, 2)
+            risk = (
+                "HIGH"   if cli_contention > 0.30 else
+                "MEDIUM" if cli_contention > 0.10 else
+                "LOW"
+            )
+            contending_data.append({
+                "line_item_id":   cli_id,
+                "name":           cli_name,
+                "contention_pct": contention_pct,
+                "risk_level":     risk,
+                "interpretation": (
+                    f"This campaign shares {contention_pct:.1f}% of the same inventory. "
+                    f"Adding the prospective line item may reduce its delivery."
+                ),
+            })
+
+        # Pandas — sort by contention descending (never by the LLM)
+        if contending_data:
+            df_c = pd.DataFrame(contending_data).sort_values(
+                "contention_pct", ascending=False
+            )
+            contending_data = df_c.to_dict("records")
+
+        high_risk_count   = sum(1 for c in contending_data if c["risk_level"] == "HIGH")
+        medium_risk_count = sum(1 for c in contending_data if c["risk_level"] == "MEDIUM")
+        low_risk_count    = len(contending_data) - high_risk_count - medium_risk_count
+
+        # ── Recommendation string (pre-computed, LLM just quotes it) ──────────
+        if can_fulfill and not contending_data:
+            rec = (
+                f"Safe to add. Inventory is available ({avail:,} units) "
+                f"and no competing campaigns were detected."
+            )
+        elif can_fulfill and high_risk_count == 0:
+            rec = (
+                f"Inventory available ({avail:,} units). "
+                f"{len(contending_data)} low-to-medium risk campaign(s) detected — "
+                f"monitor delivery but risk is manageable."
+            )
+        elif can_fulfill and high_risk_count > 0:
+            rec = (
+                f"Inventory available but {high_risk_count} HIGH-risk campaign(s) "
+                f"compete heavily for this inventory. Adding this line item may cause "
+                f"under-delivery for those campaigns. Review priority and targeting."
+            )
+        else:
+            rec = (
+                f"Insufficient inventory. Target is {int(units):,} impressions "
+                f"but only {avail:,} are available (shortfall: {shortfall:,}). "
+                f"Do not add without adjusting targeting, dates, or goal."
+            )
+
+        return {
+            "ad_unit_id": str(ad_unit_id),
+            "prospective_line_item": {
+                "type":             line_item_type.upper(),
+                "priority":         int(priority),
+                "goal_impressions":  int(units),
+                "forecast_days":     int(days),
+                "start_date":        now.strftime("%Y-%m-%d"),
+                "end_date":          end.strftime("%Y-%m-%d"),
+            },
+            "availability": {
+                "available_impressions": avail,
+                "matched_impressions":   matched,
+                "possible_impressions":  possible,
+                "reserved_impressions":  reserved,
+                "availability_rate_pct": f"{avail_pct}%",
+                "can_fulfill":           can_fulfill,
+                "shortfall":             shortfall,
+            },
+            "contending_campaigns": {
+                "total_contending":  len(contending_data),
+                "high_risk_count":   high_risk_count,
+                "medium_risk_count": medium_risk_count,
+                "low_risk_count":    low_risk_count,
+                "campaigns":         contending_data,
+            },
+            "recommendation": rec,
+            "data_note": (
+                "Contention percentages represent inventory overlap between the "
+                "prospective line item and each existing campaign. Contention >30% "
+                "means that campaign may lose significant delivery if this line item is added."
+            ),
+        }
+
