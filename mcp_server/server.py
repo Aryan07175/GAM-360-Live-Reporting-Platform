@@ -1900,6 +1900,14 @@ If any of the above tools returns `{"_live_data_status": "unavailable"}`, you MU
 | Impact of adding a Sponsorship / Standard / Bulk line item | getImpactForecast | ad_unit_id, line_item_type, priority |
 | Can I safely add a 500K impression campaign on [ad unit]? | getImpactForecast | ad_unit_id, units=500000 |
 
+## VIDEO DELIVERY ANALYTICS
+
+| User intent | Tool | Key params |
+|---|---|---|
+| Show me video completion rates by ad position | getVideoAnalytics | breakdown_dimension=VIDEO_POSITION_NAME |
+| Video drop off by content | getVideoAnalytics | breakdown_dimension=CONTENT_NAME |
+| Which video ad types have the highest completion rate? | getVideoAnalytics | breakdown_dimension=VIDEO_AD_TYPE |
+
 """
 
 
@@ -5027,6 +5035,15 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                 int(arguments.get("limit", 100)),
                 arguments.get("name_filter") or None,
                 arguments.get("status_filter") or None,
+            )
+            return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
+
+        if name == "getVideoAnalytics":
+            res = await asyncio.to_thread(
+                gam.get_video_analytics,
+                start_date,
+                end_date,
+                arguments.get("breakdown_dimension", "VIDEO_POSITION_NAME")
             )
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 

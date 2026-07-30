@@ -3473,3 +3473,170 @@ class GAMClient:
             ),
         }
 
+    # ── GAP H2: VIDEO DELIVERY ANALYTICS ─────────────────────────────────────
+    
+    def get_video_analytics(
+        self,
+        start_date: date,
+        end_date: date,
+        breakdown_dimension: str = "VIDEO_POSITION_NAME",
+    ) -> Dict[str, Any]:
+        """Deep analytics for video viewership, drop-off, and pod performance.
+        
+        Fetches Video metrics using ReportService and processes them in Pandas.
+        Answers: 'Show me video completion rates by ad position' or 'Video drop off by content'.
+        
+        Args:
+            breakdown_dimension: VIDEO_POSITION_NAME (default), CONTENT_NAME, or VIDEO_AD_TYPE
+        """
+        import asyncio
+        import io
+        import gzip
+        import urllib.request
+        
+        report_service = self._report_service()
+        
+        # Enforce valid video dimensions
+        dim = str(breakdown_dimension).upper().strip()
+        if dim not in ["VIDEO_POSITION_NAME", "CONTENT_NAME", "VIDEO_AD_TYPE", "VIDEO_PLACEMENT_NAME"]:
+            dim = "VIDEO_POSITION_NAME" # Fallback
+            
+        report_query = {
+            "dimensions": ["DATE", dim],
+            "columns": [
+                "AD_SERVER_IMPRESSIONS",
+                "AD_SERVER_CPM_AND_CPC_REVENUE",
+                "VIDEO_VIEWERSHIP_START",
+                "VIDEO_VIEWERSHIP_FIRST_QUARTILE",
+                "VIDEO_VIEWERSHIP_MIDPOINT",
+                "VIDEO_VIEWERSHIP_THIRD_QUARTILE",
+                "VIDEO_VIEWERSHIP_COMPLETE",
+                "VIDEO_ERRORS"
+            ],
+            "dateRangeType": "CUSTOM_DATE",
+            "startDate": self._to_gam_date(start_date),
+            "endDate": self._to_gam_date(end_date),
+        }
+        report_job = {"reportQuery": report_query}
+        
+        try:
+            log.info(f"Request made: Service: \"ReportService\" Method: \"runReportJob\" (Video Analytics, dim={dim})")
+            report_job = report_service.runReportJob(report_job)
+            job_id = report_job["id"]
+        except Exception as e:
+            log.error("Failed to run video analytics report: %s", e)
+            return {"error": f"GAM API Error: {e}"}
+
+        # Wait for the report (we are running in a sync thread)
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        if loop.is_running():
+            raise RuntimeError("Cannot block in the main async loop. Ensure this is run in a thread.")
+            
+        success = loop.run_until_complete(self.wait_for_report(job_id))
+        if not success:
+            return {"error": "Report timeout or failed."}
+
+        # Download report
+        try:
+            report_url = report_service.getReportDownloadUrlWithOptions(
+                job_id, {"exportFormat": "CSV_DUMP", "useGzipCompression": True}
+            )
+            with urllib.request.urlopen(report_url) as resp:
+                raw = resp.read()
+            if report_url.endswith("gz") or raw[:2] == b"\x1f\x8b":
+                raw = gzip.decompress(raw)
+            raw = raw.decode("utf-8")
+            df = pd.read_csv(io.StringIO(raw))
+            del raw
+            import gc; gc.collect()
+        except Exception as e:
+            return {"error": f"Failed to download video report: {e}"}
+
+        # Standardize columns
+        df.columns = [
+            c.strip().lower().replace(" ", "_").replace("dimension.", "").replace("column.", "")
+            for c in df.columns
+        ]
+        
+        if df.empty:
+            return {"_live_data_status": "unavailable", "_message": "No video delivery data available for this time period."}
+
+        # Find the dimension column dynamically in the CSV
+        known_metrics = {
+            "ad_server_impressions", "ad_server_cpm_and_cpc_revenue",
+            "video_viewership_start", "video_viewership_first_quartile",
+            "video_viewership_midpoint", "video_viewership_third_quartile",
+            "video_viewership_complete", "video_errors"
+        }
+        dim_col = None
+        for c in df.columns:
+            if c not in known_metrics and c != "date":
+                dim_col = c
+                break
+                
+        if not dim_col:
+            dim_col = dim.lower() # Fallback if empty csv somehow bypassed empty check
+            
+        # ── Zero-Hallucination Math via Pandas ───────────────────────────────
+        results = []
+        for name, grp in df.groupby(dim_col):
+            imps = int(grp.get("ad_server_impressions", pd.Series([0])).sum())
+            if imps == 0:
+                continue
+            starts = int(grp.get("video_viewership_start", pd.Series([0])).sum())
+            q1 = int(grp.get("video_viewership_first_quartile", pd.Series([0])).sum())
+            mid = int(grp.get("video_viewership_midpoint", pd.Series([0])).sum())
+            q3 = int(grp.get("video_viewership_third_quartile", pd.Series([0])).sum())
+            completes = int(grp.get("video_viewership_complete", pd.Series([0])).sum())
+            rev = float(grp.get("ad_server_cpm_and_cpc_revenue", pd.Series([0])).sum())
+            errors = int(grp.get("video_errors", pd.Series([0])).sum())
+            
+            completion_rate = round(completes / starts * 100, 2) if starts > 0 else 0.0
+            error_rate = round(errors / imps * 100, 2) if imps > 0 else 0.0
+            
+            results.append({
+                dim_col: str(name),
+                "impressions": imps,
+                "starts": starts,
+                "first_quartile": q1,
+                "midpoint": mid,
+                "third_quartile": q3,
+                "completes": completes,
+                "completion_rate_pct": completion_rate,
+                "revenue_usd": round(rev, 2),
+                "errors": errors,
+                "error_rate_pct": error_rate
+            })
+
+        results.sort(key=lambda x: x["impressions"], reverse=True)
+        
+        # Aggregate totals
+        total_imps = sum(r["impressions"] for r in results)
+        total_starts = sum(r["starts"] for r in results)
+        total_completes = sum(r["completes"] for r in results)
+        total_rev = sum(r["revenue_usd"] for r in results)
+        total_errors = sum(r["errors"] for r in results)
+        
+        if total_imps == 0:
+            return {"_live_data_status": "unavailable", "_message": "No video impression data available for this time period."}
+
+        return {
+            "period": f"{start_date} to {end_date}",
+            "breakdown_dimension": dim,
+            "totals": {
+                "impressions": total_imps,
+                "starts": total_starts,
+                "completes": total_completes,
+                "completion_rate_pct": round(total_completes / total_starts * 100, 2) if total_starts > 0 else 0.0,
+                "revenue_usd": round(total_rev, 2),
+                "errors": total_errors,
+            },
+            "analytics": results[:20]
+        }
+
+
