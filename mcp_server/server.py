@@ -352,6 +352,30 @@ def execute_query_data(df: pd.DataFrame, operation: str, dimension: str = None,
         log.exception(f"query_data failed: {e}")
         return {"error": str(e)}
 
+def _check_suspicious_variance(items: list[dict]) -> dict:
+    """
+    Validation guard: if a Pandas computation produces identical non-zero values 
+    across more than 2 rows in a ranked/comparison list, flag it internally as a likely calculation bug.
+    """
+    if len(items) <= 2:
+        return {}
+        
+    metrics_to_check = ["ad_server_fill_rate", "fill_rate", "ecpm", "ctr", "ctr_pct"]
+    warnings = []
+    
+    for metric in metrics_to_check:
+        if metric in items[0]:
+            vals = [item.get(metric) for item in items if isinstance(item.get(metric), (int, float))]
+            if len(vals) > 2:
+                first_val = vals[0]
+                if first_val > 0 and all(abs(v - first_val) < 1e-6 for v in vals):
+                    log.warning("[calculation_bug] Identical %s (%.4f) detected across %d items!", metric, first_val, len(vals))
+                    warnings.append(f"Identical {metric} ({first_val}) across all items. This is likely a calculation or broadcast anomaly.")
+    
+    if warnings:
+        return {"_data_warning": " | ".join(warnings)}
+    return {}
+
 
 # ─── Chat System Prompt ──────────────────────────────────────────────────────
 
@@ -385,6 +409,7 @@ NEVER use cached, mocked, static, demo, placeholder, or hardcoded data.
 NEVER invent or estimate numbers.
 If the required data is unavailable, explain exactly which data could not be retrieved.
 NEVER ask the user which API to use. Automatically choose the correct tool.
+NEVER fabricate narrative interpretations (e.g., "this is a positive signal", "indicates healthy demand") over ranked or comparative data. If numbers look suspicious (like identical values across a ranked list), you must state the numbers exactly as provided and flag the anomaly, never invent a reassuring explanation.
 
 ## INTELLIGENT TOOL ROUTING
 
@@ -5500,21 +5525,29 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             limit = int(arguments.get("limit", 10))
             apps = compute_revenue_by_app(df)
             result["apps"] = apps[:limit]
+            result.update(_check_suspicious_variance(result["apps"]))
 
         elif name == "getBottomApplications":
             limit = int(arguments.get("limit", 10))
             apps = compute_revenue_by_app(df)
             result["apps"] = list(reversed(apps[-limit:])) if len(apps) >= limit else list(reversed(apps))
+            result.update(_check_suspicious_variance(result["apps"]))
 
         elif name == "getTopWebsites":
             limit = int(arguments.get("limit", 10))
             metric = arguments.get("metric", "revenue")
-            result.update(_compute_top_websites(df, start_date, end_date, metric=metric, limit=limit))
+            top_res = _compute_top_websites(df, start_date, end_date, metric=metric, limit=limit)
+            if "performance" in top_res:
+                top_res.update(_check_suspicious_variance(top_res["performance"]))
+            result.update(top_res)
 
         elif name == "getBottomWebsites":
             limit = int(arguments.get("limit", 10))
             metric = arguments.get("metric", "revenue")
-            result.update(_compute_bottom_websites(df, start_date, end_date, metric=metric, limit=limit))
+            bot_res = _compute_bottom_websites(df, start_date, end_date, metric=metric, limit=limit)
+            if "performance" in bot_res:
+                bot_res.update(_check_suspicious_variance(bot_res["performance"]))
+            result.update(bot_res)
 
         elif name == "getWebsiteInventory":
             result.update(_compute_website_inventory(df, start_date, end_date))
