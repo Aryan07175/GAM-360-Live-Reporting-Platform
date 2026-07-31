@@ -3852,7 +3852,10 @@ def _compute_top_websites(df: pd.DataFrame, start: date, end: date, metric: str 
         limit = MAX_RESULT_LIMIT
 
     # Filter out completely inactive websites
-    active_websites = [w for w in websites_perf if w.get("ad_requests", 0) > 0 or w.get("impressions", 0) > 0]
+    if metric_key == "fill_rate":
+        active_websites = [w for w in websites_perf if w.get("ad_requests", 0) > 0]
+    else:
+        active_websites = [w for w in websites_perf if w.get("ad_requests", 0) > 0 or w.get("impressions", 0) > 0]
     
     total_count = len(active_websites)
     sorted_websites = sorted(active_websites, key=lambda x: x.get(metric_key, 0), reverse=True)
@@ -3894,7 +3897,10 @@ def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: s
         limit = MAX_RESULT_LIMIT
 
     # Filter out completely inactive websites
-    active_websites = [w for w in websites_perf if w.get("ad_requests", 0) > 0 or w.get("impressions", 0) > 0]
+    if metric_key == "fill_rate":
+        active_websites = [w for w in websites_perf if w.get("ad_requests", 0) > 0]
+    else:
+        active_websites = [w for w in websites_perf if w.get("ad_requests", 0) > 0 or w.get("impressions", 0) > 0]
 
     total_count = len(active_websites)
     sorted_websites = sorted(active_websites, key=lambda x: x.get(metric_key, 0), reverse=False)
@@ -4022,7 +4028,8 @@ def compute_revenue_by_app(df: pd.DataFrame) -> list[dict]:
     
     # Safely recalculate derived metrics — replace inf AND nan (both produced by division by 0)
     summary["ad_server_ctr"] = (summary["ad_server_clicks"] / summary["ad_server_impressions"] * 100).replace([np.inf, -np.inf], 0).fillna(0)
-    summary["ad_server_fill_rate"] = (summary["ad_server_impressions"] / summary["ad_server_ad_requests"] * 100).replace([np.inf, -np.inf], 0).fillna(0)
+    summary["ad_server_fill_rate"] = (summary["ad_server_impressions"] / summary["ad_server_ad_requests"] * 100).replace([np.inf, -np.inf], float('nan'))
+    summary["ad_server_fill_rate"] = summary["ad_server_fill_rate"].where(summary["ad_server_fill_rate"].notna(), None)
     summary["ad_server_without_cpd_average_ecpm"] = (summary["ad_server_cpm_and_cpc_revenue"] / summary["ad_server_impressions"] * 1000).replace([np.inf, -np.inf], 0).fillna(0)
     
     summary = summary.sort_values(by="ad_server_cpm_and_cpc_revenue", ascending=False)
@@ -5623,7 +5630,9 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                     "ad_server_impressions": "sum",
                     "ad_server_ad_requests": "sum",
                 }).reset_index()
-                by_app["fill_rate"] = (by_app["ad_server_impressions"] / by_app["ad_server_ad_requests"] * 100).where(by_app["ad_server_ad_requests"] > 0, 0)
+                # Filter out apps with 0 ad requests to prevent false 0% fill rates in rankings
+                by_app = by_app[by_app["ad_server_ad_requests"] > 0].copy()
+                by_app["fill_rate"] = (by_app["ad_server_impressions"] / by_app["ad_server_ad_requests"] * 100)
                 by_app = by_app.sort_values("fill_rate", ascending=False)
                 total_imp = int(df["ad_server_impressions"].sum())
                 total_req = int(df["ad_server_ad_requests"].sum())
