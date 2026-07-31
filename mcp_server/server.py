@@ -3623,7 +3623,8 @@ def compute_alerts(df: pd.DataFrame) -> list[dict]:
         req = int(row["ad_server_ad_requests"])
         clicks = int(row["ad_server_clicks"])
         
-        fill_rate = (imp / req * 100) if req > 0 else 0
+        matched = int(row.get("matched_requests", row.get("total_responses_served", imp)))
+        fill_rate = (matched / req * 100) if req > 0 else 0
         ctr = (clicks / imp * 100) if imp > 0 else 0
         ecpm = (rev / imp * 1000) if imp > 0 else 0
         
