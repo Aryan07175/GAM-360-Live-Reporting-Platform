@@ -392,10 +392,10 @@ NEVER ask the user which API to use. Automatically choose the correct tool.
 | "15 days" + "website" + ("lowest" OR "bottom" OR "worst") | `getBottomWebsites` with 15-day date range |
 | "30 days" + "website" + ("lowest" OR "bottom" OR "worst") | `getBottomWebsites` with 30-day date range |
 | "top website", "highest revenue website", "best website" | `getTopWebsites` with `metric=revenue` |
-| "lowest revenue" + ("7 days" AND "30 days") OR multiple periods | `getLowestRevenueWebsiteReport` — fetches all periods in one call |
-| "revenue of lowest" + multiple time periods | `getLowestRevenueWebsiteReport` |
+| "highest and lowest revenue" OR multiple periods | `getRevenueExtremesWebsiteReport` — fetches all periods in one call |
+| "revenue of lowest" + multiple time periods | `getRevenueExtremesWebsiteReport` |
 
-**⛔ NEVER call `getWebsiteInventory` when the user asks for "lowest", "worst", "bottom" websites. `getWebsiteInventory` only returns TOP performers. You MUST use `getBottomWebsites` or `getLowestRevenueWebsiteReport`.**
+**⛔ NEVER call `getWebsiteInventory` when the user asks for "lowest", "worst", "bottom" websites. `getWebsiteInventory` only returns TOP performers. You MUST use `getBottomWebsites` or `getRevenueExtremesWebsiteReport`.**
 
 1. **`getWebsiteInventory`**:
    - **Use when**: User asks for basic website details, statuses, list of all websites, or general inventory.
@@ -419,10 +419,10 @@ NEVER ask the user which API to use. Automatically choose the correct tool.
    - **Trigger words**: "lowest", "worst", "bottom", "underperforming", "least revenue", "minimum revenue"
    - **Supported Questions**: "Which website has the lowest revenue?", "Bottom 3 websites by eCPM", "Lowest fill rate websites", "Worst performing websites", "Website with lowest revenue yesterday", "Least revenue website this week".
    - **REQUIRED Parameters**: `start_date`, `end_date`, `metric` (default revenue), `limit` (default 10).
-6. **`getLowestRevenueWebsiteReport`** ← USE THIS when user asks for multiple time periods:
-   - **Use when**: User asks for lowest/worst website across MULTIPLE time windows (e.g., 7 days, 30 days, 90 days, 6 months).
-   - **Supported Questions**: "Revenue of lowest website across 7, 15, 30, 60, 90, 180 days", "Show worst website for past month, quarter, and 6 months", "Compare lowest website across time periods".
-   - **NO parameters required** — fetches all standard periods automatically (7/10/15/30/60/90/180 days).
+6. **`getRevenueExtremesWebsiteReport`** ← USE THIS when user asks for multiple time periods:
+   - **Use when**: User asks for highest and lowest website across MULTIPLE time windows (e.g., today, yesterday, 7 days, 15 days, 30 days, 45 days, 60 days, 90 days, 6 months).
+   - **Supported Questions**: "highest and lowest revenue website name for today, yesterday, 7 days...", "Compare lowest website across time periods".
+   - **NO parameters required** — fetches all standard periods automatically.
 7. **`getWebsiteTrend`**:
    - **Use when**: User asks for data over time, trends, historical performance, daily/weekly/monthly breakdowns.
    - **Supported Questions**: "Show daily revenue trend for the past 7 days", "Weekly impressions trend", "Monthly eCPM trend".
@@ -1240,23 +1240,23 @@ Worst websites this month
 
 ---
 
-## 3. LOWEST WEBSITE MULTI-PERIOD REPORT
+## 3. EXTREMES (HIGHEST & LOWEST) MULTI-PERIOD REPORT
 
 Use:
 
-getLowestRevenueWebsiteReport()
+getRevenueExtremesWebsiteReport()
 
 Trigger whenever the user asks:
 
 compare lowest websites
 lowest website over multiple periods
-worst website report
-lowest revenue across periods
+highest and lowest website report
+highest and lowest revenue across periods
 compare worst website
-lowest website 7 15 30 60 90
+highest and lowest website today yesterday 7 15 30 45 60 90
 
 Examples:
-Lowest website across 7 15 30 60 90 days
+Highest and lowest website across 7 15 30 45 60 90 days
 Compare worst website over 30 vs 90 days
 Worst performer quarterly
 
@@ -1526,7 +1526,7 @@ If a website cannot be found:
 
 Top Websites → getTopWebsites()
 Bottom Websites → getBottomWebsites()
-Lowest Website Comparison → getLowestRevenueWebsiteReport()
+Lowest Website Comparison → getRevenueExtremesWebsiteReport()
 Website Trends → getWebsiteTrend()
 Website Health → getWebsiteHealth()
 Website Metrics → getWebsitePerformance()
@@ -2907,15 +2907,17 @@ def _make_tool_executor(cached_df):
                 interval = input_dict.get("interval", "daily")
                 return _compute_website_trend(df, start_date, end_date, interval)
 
-        # ── getLowestRevenueWebsiteReport: multi-period bottom website analysis ────
-        if tool_name == "getLowestRevenueWebsiteReport":
+        # ── getRevenueExtremesWebsiteReport: multi-period top and bottom website analysis ────
+        if tool_name == "getRevenueExtremesWebsiteReport":
             today = date.today()
             yesterday = today - timedelta(days=1)
             periods = [
+                ("today", today, today),
+                ("yesterday", yesterday, yesterday),
                 ("7 days",  yesterday - timedelta(days=6),  yesterday),
-                ("10 days", yesterday - timedelta(days=9),  yesterday),
                 ("15 days", yesterday - timedelta(days=14), yesterday),
                 ("30 days", yesterday - timedelta(days=29), yesterday),
+                ("45 days", yesterday - timedelta(days=44), yesterday),
                 ("60 days", yesterday - timedelta(days=59), yesterday),
                 ("90 days", yesterday - timedelta(days=89), yesterday),
                 ("6 months", yesterday - timedelta(days=179), yesterday),
@@ -2926,17 +2928,21 @@ def _make_tool_executor(cached_df):
                     p_df = await gam.get_live_data_multi_day(
                         p_start, p_end, force_refresh=False, demand_channel="all"
                     )
+                    top = _compute_top_websites(p_df, p_start, p_end, metric="revenue", limit=5)
                     bottom = _compute_bottom_websites(p_df, p_start, p_end, metric="revenue", limit=5)
-                    websites = bottom.get("websites", [])
+                    top_websites = top.get("websites", [])
+                    bottom_websites = bottom.get("websites", [])
                     period_results.append({
                         "period": label,
                         "start": str(p_start),
                         "end": str(p_end),
-                        "lowest_websites": websites[:5],
-                        "lowest_single": websites[0] if websites else None,
+                        "highest_websites": top_websites[:5],
+                        "highest_single": top_websites[0] if top_websites else None,
+                        "lowest_websites": bottom_websites[:5],
+                        "lowest_single": bottom_websites[0] if bottom_websites else None,
                     })
                 except Exception as e:
-                    log.warning("[Chat:getLowestRevenueWebsiteReport] period %s failed: %s", label, e)
+                    log.warning("[Chat:getRevenueExtremesWebsiteReport] period %s failed: %s", label, e)
                     period_results.append({
                         "period": label,
                         "start": str(p_start),
@@ -2945,12 +2951,12 @@ def _make_tool_executor(cached_df):
                     })
 
             result = {
-                "report": "Lowest Revenue Website — Multi-Period Analysis",
+                "report": "Highest and Lowest Revenue Website — Multi-Period Analysis",
                 "metric": "revenue",
                 "generated_at": str(today),
                 "periods": period_results,
             }
-            log_payload_stats("getLowestRevenueWebsiteReport", result)
+            log_payload_stats("getRevenueExtremesWebsiteReport", result)
             return guard_payload_size(result, "periods")
 
         if tool_name == "query_data":
@@ -4335,13 +4341,13 @@ async def list_tools() -> list[types.Tool]:
             },
         }),
         types.Tool(
-            name="getLowestRevenueWebsiteReport",
+            name="getRevenueExtremesWebsiteReport",
             description=(
-                "Multi-period lowest revenue website analysis. "
-                "Fetches the bottom (lowest) revenue websites for ALL standard time windows: "
-                "7 days, 10 days, 15 days, 30 days, 60 days, 90 days, and 6 months (180 days) — in a single call. "
-                "USE THIS when the user asks for lowest/worst website revenue across multiple time periods. "
-                "Returns a comparison table showing which websites consistently underperform."
+                "Multi-period highest and lowest revenue website analysis. "
+                "Fetches the top (highest) and bottom (lowest) revenue websites for ALL standard time windows: "
+                "today, yesterday, 7 days, 15 days, 30 days, 45 days, 60 days, 90 days, and 6 months — in a single call. "
+                "USE THIS when the user asks for highest and lowest website revenue across multiple time periods. "
+                "Returns a comparison table showing which websites consistently overperform and underperform."
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
