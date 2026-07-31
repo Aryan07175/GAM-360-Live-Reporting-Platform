@@ -2952,10 +2952,10 @@ def _make_tool_executor(cached_df):
                         "period": label,
                         "start": str(p_start),
                         "end": str(p_end),
+                        "highest_website_name": top_websites[0].get("website", "Unknown") if top_websites else "None",
+                        "lowest_website_name": bottom_websites[0].get("website", "Unknown") if bottom_websites else "None",
                         "highest_websites": top_websites[:5],
-                        "highest_single": top_websites[0] if top_websites else None,
                         "lowest_websites": bottom_websites[:5],
-                        "lowest_single": bottom_websites[0] if bottom_websites else None,
                     })
                 except Exception as e:
                     log.warning("[Chat:getRevenueExtremesWebsiteReport] period %s failed: %s", label, e)

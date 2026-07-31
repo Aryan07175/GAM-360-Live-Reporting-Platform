@@ -228,8 +228,7 @@ def slim_website_rows(rows: list[dict], metric: str = "revenue",
     keep = WEBSITE_KEEP | METRIC_EXTRAS.get(metric, {"revenue", "impressions", "fill_rate", "ecpm"})
     slimmed = []
     for row in rows[:max_rows]:
-        slim = {k: v for k, v in row.items()
-                if k in keep and not (k != "name" and v == 0 and isinstance(v, (int, float)))}
+        slim = {k: v for k, v in row.items() if k in keep}
         if slim:
             slimmed.append(slim)
     return slimmed
