@@ -3815,8 +3815,11 @@ def _compute_top_websites(df: pd.DataFrame, start: date, end: date, metric: str 
         truncated_note = f"Results capped at {MAX_RESULT_LIMIT} (requested {limit}) to prevent memory overflow."
         limit = MAX_RESULT_LIMIT
 
-    total_count = len(websites_perf)
-    sorted_websites = sorted(websites_perf, key=lambda x: x.get(metric_key, 0), reverse=True)
+    # Filter out completely inactive websites
+    active_websites = [w for w in websites_perf if w.get("ad_requests", 0) > 0 or w.get("impressions", 0) > 0]
+    
+    total_count = len(active_websites)
+    sorted_websites = sorted(active_websites, key=lambda x: x.get(metric_key, 0), reverse=True)
     slimmed = slim_website_rows(sorted_websites[:limit], metric_key, max_rows=MAX_ROWS_TOP_N)
     result_payload = {
         "period": f"{start} to {end}",
@@ -3854,8 +3857,11 @@ def _compute_bottom_websites(df: pd.DataFrame, start: date, end: date, metric: s
         truncated_note = f"Results capped at {MAX_RESULT_LIMIT} (requested {limit}) to prevent memory overflow."
         limit = MAX_RESULT_LIMIT
 
-    total_count = len(websites_perf)
-    sorted_websites = sorted(websites_perf, key=lambda x: x.get(metric_key, 0), reverse=False)
+    # Filter out completely inactive websites
+    active_websites = [w for w in websites_perf if w.get("ad_requests", 0) > 0 or w.get("impressions", 0) > 0]
+
+    total_count = len(active_websites)
+    sorted_websites = sorted(active_websites, key=lambda x: x.get(metric_key, 0), reverse=False)
     slimmed = slim_website_rows(sorted_websites[:limit], metric_key, max_rows=MAX_ROWS_TOP_N)
     result_payload = {
         "period": f"{start} to {end}",
