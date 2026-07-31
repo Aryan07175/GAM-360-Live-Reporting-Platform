@@ -160,17 +160,22 @@ def build_data_summary(df: pd.DataFrame, start: date, end: date) -> dict:
     imp = int(df["ad_server_impressions"].sum())
     clicks = int(df["ad_server_clicks"].sum())
     ad_requests = int(df["ad_server_ad_requests"].sum())
+    matched_req = int(df["matched_requests"].sum()) if "matched_requests" in df.columns else imp
     ecpm = (rev / imp * 1000) if imp > 0 else 0.0
     ctr = (clicks / imp * 100) if imp > 0 else 0.0
-    fill_rate = (imp / ad_requests * 100) if ad_requests > 0 else 0.0
+    fill_rate = (matched_req / ad_requests * 100) if ad_requests > 0 else 0.0
     dau = ad_requests // 5 if ad_requests > 0 else 0
 
-    app_summary = df.groupby("ad_unit_name").agg({
+    agg_dict = {
         "ad_server_cpm_and_cpc_revenue": "sum",
         "ad_server_impressions": "sum",
         "ad_server_clicks": "sum",
         "ad_server_ad_requests": "sum",
-    }).reset_index()
+    }
+    if "matched_requests" in df.columns:
+        agg_dict["matched_requests"] = "sum"
+
+    app_summary = df.groupby("ad_unit_name").agg(agg_dict).reset_index()
     app_summary = app_summary.sort_values("ad_server_cpm_and_cpc_revenue", ascending=False)
 
     # Per-app metrics
@@ -180,6 +185,7 @@ def build_data_summary(df: pd.DataFrame, start: date, end: date) -> dict:
         a_rev = float(row["ad_server_cpm_and_cpc_revenue"])
         a_clicks = int(row["ad_server_clicks"])
         a_req = int(row["ad_server_ad_requests"])
+        a_matched = int(row.get("matched_requests", a_imp))
         fmt = _format_app_name(row["ad_unit_name"])
         all_apps.append({
             "name": fmt["app_name"],
@@ -191,7 +197,7 @@ def build_data_summary(df: pd.DataFrame, start: date, end: date) -> dict:
             "ad_requests": a_req,
             "ecpm_usd": round((a_rev / a_imp * 1000), 6) if a_imp > 0 else 0.0,
             "ctr_pct": round((a_clicks / a_imp * 100), 4) if a_imp > 0 else 0.0,
-            "fill_rate_pct": round((a_imp / a_req * 100), 2) if a_req > 0 else 0.0,
+            "fill_rate_pct": round((a_matched / a_req * 100), 2) if a_req > 0 else 0.0,
         })
 
 
@@ -4018,17 +4024,26 @@ def compute_revenue_by_app(df: pd.DataFrame) -> list[dict]:
     if df.empty:
         return []
         
-    # Sum only absolute metrics to avoid summing percentages mathematically incorrectly
-    summary = df.groupby(["ad_unit_name", "ad_unit_id"]).agg({
+    agg_dict = {
         "ad_server_cpm_and_cpc_revenue": "sum",
         "ad_server_impressions": "sum",
         "ad_server_clicks": "sum",
         "ad_server_ad_requests": "sum",
-    }).reset_index()
+    }
+    if "matched_requests" in df.columns:
+        agg_dict["matched_requests"] = "sum"
+
+    # Sum only absolute metrics to avoid summing percentages mathematically incorrectly
+    summary = df.groupby(["ad_unit_name", "ad_unit_id"]).agg(agg_dict).reset_index()
     
     # Safely recalculate derived metrics — replace inf AND nan (both produced by division by 0)
     summary["ad_server_ctr"] = (summary["ad_server_clicks"] / summary["ad_server_impressions"] * 100).replace([np.inf, -np.inf], 0).fillna(0)
-    summary["ad_server_fill_rate"] = (summary["ad_server_impressions"] / summary["ad_server_ad_requests"] * 100).replace([np.inf, -np.inf], float('nan'))
+    
+    if "matched_requests" in summary.columns:
+        summary["ad_server_fill_rate"] = (summary["matched_requests"] / summary["ad_server_ad_requests"] * 100).replace([np.inf, -np.inf], float('nan'))
+    else:
+        summary["ad_server_fill_rate"] = (summary["ad_server_impressions"] / summary["ad_server_ad_requests"] * 100).replace([np.inf, -np.inf], float('nan'))
+        
     summary["ad_server_fill_rate"] = summary["ad_server_fill_rate"].where(summary["ad_server_fill_rate"].notna(), None)
     summary["ad_server_without_cpd_average_ecpm"] = (summary["ad_server_cpm_and_cpc_revenue"] / summary["ad_server_impressions"] * 1000).replace([np.inf, -np.inf], 0).fillna(0)
     
@@ -5626,17 +5641,29 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
 
         elif name == "getFillRate":
             if not df.empty:
-                by_app = df.groupby("ad_unit_name").agg({
+                agg_dict = {
                     "ad_server_impressions": "sum",
                     "ad_server_ad_requests": "sum",
-                }).reset_index()
+                }
+                if "matched_requests" in df.columns:
+                    agg_dict["matched_requests"] = "sum"
+                    
+                by_app = df.groupby("ad_unit_name").agg(agg_dict).reset_index()
                 # Filter out apps with 0 ad requests to prevent false 0% fill rates in rankings
                 by_app = by_app[by_app["ad_server_ad_requests"] > 0].copy()
-                by_app["fill_rate"] = (by_app["ad_server_impressions"] / by_app["ad_server_ad_requests"] * 100)
+                
+                if "matched_requests" in by_app.columns:
+                    by_app["fill_rate"] = (by_app["matched_requests"] / by_app["ad_server_ad_requests"] * 100)
+                    total_matched = int(df["matched_requests"].sum())
+                    total_req = int(df["ad_server_ad_requests"].sum())
+                    result["average_fill_rate"] = (total_matched / total_req * 100) if total_req > 0 else 0
+                else:
+                    by_app["fill_rate"] = (by_app["ad_server_impressions"] / by_app["ad_server_ad_requests"] * 100)
+                    total_imp = int(df["ad_server_impressions"].sum())
+                    total_req = int(df["ad_server_ad_requests"].sum())
+                    result["average_fill_rate"] = (total_imp / total_req * 100) if total_req > 0 else 0
+                
                 by_app = by_app.sort_values("fill_rate", ascending=False)
-                total_imp = int(df["ad_server_impressions"].sum())
-                total_req = int(df["ad_server_ad_requests"].sum())
-                result["average_fill_rate"] = (total_imp / total_req * 100) if total_req > 0 else 0
                 result["by_app"] = by_app.to_dict(orient="records")
             else:
                 result["average_fill_rate"] = 0
