@@ -3961,8 +3961,9 @@ def _compute_website_trend(df: pd.DataFrame, start: date, end: date, interval: s
         clicks = int(row["ad_server_clicks"])
         rev = float(row["ad_server_cpm_and_cpc_revenue"])
         
+        matched = int(row.get("matched_requests", row.get("total_responses_served", imp)))
         ctr = (clicks / imp * 100) if imp > 0 else 0
-        fill_rate = round((imp / req * 100), 2) if req > 0 else 0
+        fill_rate = round((matched / req * 100), 2) if req > 0 else 0
         ecpm = (rev / imp * 1000) if imp > 0 else 0
         
         trend_list.append({
@@ -3998,9 +3999,10 @@ def compute_executive_summary(df: pd.DataFrame, start: date, end: date) -> dict:
     imp = int(df["ad_server_impressions"].sum())
     clicks = int(df["ad_server_clicks"].sum())
     ad_requests = int(df["ad_server_ad_requests"].sum())
+    matched_requests = int(df["matched_requests"].sum()) if "matched_requests" in df.columns else int(df["total_responses_served"].sum()) if "total_responses_served" in df.columns else imp
     ecpm = (rev / imp * 1000) if imp > 0 else 0
     ctr = (clicks / imp * 100) if imp > 0 else 0
-    fill_rate = (imp / ad_requests * 100) if ad_requests > 0 else 0
+    fill_rate = (matched_requests / ad_requests * 100) if ad_requests > 0 else 0
 
     app_summary = df.groupby("ad_unit_name")["ad_server_cpm_and_cpc_revenue"].sum()
     app_count = len(app_summary)

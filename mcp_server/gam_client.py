@@ -303,6 +303,11 @@ class GAMClient:
                 "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",
                 "TOTAL_LINE_ITEM_LEVEL_WITHOUT_CPD_AVERAGE_ECPM",
                 "TOTAL_LINE_ITEM_LEVEL_CTR",
+                "TOTAL_AD_REQUESTS",
+                "TOTAL_RESPONSES_SERVED",
+                "TOTAL_UNMATCHED_AD_REQUESTS",
+                "TOTAL_FILL_RATE",
+                "TOTAL_CODE_SERVED_COUNT",
                 "TOTAL_ACTIVE_VIEW_ELIGIBLE_IMPRESSIONS",
                 "TOTAL_ACTIVE_VIEW_MEASURABLE_IMPRESSIONS",
                 "TOTAL_ACTIVE_VIEW_VIEWABLE_IMPRESSIONS",
@@ -1366,13 +1371,27 @@ class GAMClient:
             asyncio.set_event_loop(loop)
         
         if loop.is_running():
-            # If already running in loop, call run_report directly
-            csv_path = self.run_report(start_date, end_date, extra_dims=extra_dims, separate_report=separate_report, omit_ad_units=omit_ad_units)
-            df = pd.read_csv(csv_path, compression='gzip')
-            df.columns = [c.lower() for c in df.columns]
-            return df
+            # If already running in loop, we must run the async operations synchronously
+            # But wait, we cannot call loop.run_until_complete inside a running loop!
+            # Since get_live_data_sync is called from a synchronous thread, this branch is usually not hit,
+            # but if it is, we need to manually create a new loop or just use asyncio.run (which fails if loop is running).
+            # The best way is to use a thread if we are in a running loop.
+            import threading
+            result = []
+            def _run():
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    df = new_loop.run_until_complete(self.get_live_data(start_date, end_date, force_refresh, demand_channel, extra_dims, separate_report, omit_ad_units))
+                    result.append(df)
+                finally:
+                    new_loop.close()
+            t = threading.Thread(target=_run)
+            t.start()
+            t.join()
+            return result[0]
         else:
-            return loop.run_until_complete(self.get_live_data(start_date, end_date, force_refresh=force_refresh, demand_channel=demand_channel, extra_dims=extra_dims, separate_report=separate_report, omit_ad_units=omit_ad_units))
+            return loop.run_until_complete(self.get_live_data(start_date, end_date, force_refresh, demand_channel, extra_dims, separate_report, omit_ad_units))
 
     # ── PHASE 6: YIELD & PROGRAMMATIC INTELLIGENCE ─────────────────────────────
 
