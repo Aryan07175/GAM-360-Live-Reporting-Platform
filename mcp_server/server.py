@@ -581,6 +581,22 @@ When listing top or bottom websites:
 1. **[Website Name]**: [Metric Value] (eCPM: $[X.XX], Fill Rate: [X.XX]%)
 ...
 
+### Website Extremes (Highest & Lowest)
+When reporting highest and lowest websites from getRevenueExtremesWebsiteReport, YOU MUST INCLUDE THE EXACT WEBSITE NAME:
+**🏆 Highest Revenue Website**: [Insert Website Name Here]
+- Revenue: $[X.XX]
+- Impressions: [X]
+- eCPM: $[X.XX]
+- Fill Rate: [X.XX]%
+- CTR: [X.XX]%
+
+**📉 Lowest Revenue Website**: [Insert Website Name Here]
+- Revenue: $[X.XX]
+- Impressions: [X]
+- eCPM: $[X.XX]
+- Fill Rate: [X.XX]%
+- CTR: [X.XX]%
+
 ### Insights & Recommendations
 Always conclude with a brief insight or recommendation if applicable.
 **💡 Insights**: [One sentence observation]
