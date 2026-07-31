@@ -274,47 +274,57 @@ def execute_query_data(df: pd.DataFrame, operation: str, dimension: str = None,
 
         col = METRIC_MAP.get(metric, "ad_server_cpm_and_cpc_revenue") if metric else "ad_server_cpm_and_cpc_revenue"
         dim_col = DIM_MAP.get(dimension, "ad_unit_name") if dimension else None
+        
+        is_computed = metric in ["fill_rate", "ecpm", "ctr"]
 
-        if operation == "sum":
+        def _compute_col(df_agg):
+            if metric == "fill_rate":
+                return (df_agg["ad_server_impressions"] / df_agg["ad_server_ad_requests"] * 100).where(df_agg["ad_server_ad_requests"] > 0, 0)
+            elif metric == "ecpm":
+                return (df_agg["ad_server_cpm_and_cpc_revenue"] / df_agg["ad_server_impressions"] * 1000).where(df_agg["ad_server_impressions"] > 0, 0)
+            elif metric == "ctr":
+                return (df_agg["ad_server_clicks"] / df_agg["ad_server_impressions"] * 100).where(df_agg["ad_server_impressions"] > 0, 0)
+            return df_agg[col]
+
+        if operation in ["sum", "mean", "max", "min", "top_n", "bottom_n"]:
             if dim_col and dim_col in work_df.columns:
-                result = work_df.groupby(dim_col)[col].sum().reset_index()
-                result = result.sort_values(col, ascending=False)
+                if is_computed:
+                    result = work_df.groupby(dim_col).agg({
+                        "ad_server_impressions": "sum",
+                        "ad_server_cpm_and_cpc_revenue": "sum",
+                        "ad_server_clicks": "sum",
+                        "ad_server_ad_requests": "sum",
+                    }).reset_index()
+                    result[metric] = _compute_col(result)
+                    sort_col = metric
+                else:
+                    if operation == "mean":
+                        result = work_df.groupby(dim_col)[col].mean().reset_index()
+                    else:
+                        result = work_df.groupby(dim_col)[col].sum().reset_index()
+                    sort_col = col
+
+                if operation in ["sum", "mean", "max", "top_n"]:
+                    result = result.sort_values(sort_col, ascending=False)
+                elif operation in ["min", "bottom_n"]:
+                    result = result.sort_values(sort_col, ascending=True)
+
+                if operation in ["max", "min"]:
+                    return {"result": result.iloc[0].to_dict() if not result.empty else {}}
                 return {"result": result.head(limit).to_dict(orient="records")}
-            return {"result": float(work_df[col].sum())}
-
-        elif operation == "mean":
-            if dim_col and dim_col in work_df.columns:
-                result = work_df.groupby(dim_col)[col].mean().reset_index()
-                return {"result": result.head(limit).to_dict(orient="records")}
-            return {"result": float(work_df[col].mean())}
-
-        elif operation == "max":
-            if dim_col and dim_col in work_df.columns:
-                result = work_df.groupby(dim_col)[col].sum().reset_index()
-                idx = result[col].idxmax()
-                return {"result": result.loc[idx].to_dict()}
-            return {"result": float(work_df[col].max())}
-
-        elif operation == "min":
-            if dim_col and dim_col in work_df.columns:
-                result = work_df.groupby(dim_col)[col].sum().reset_index()
-                idx = result[col].idxmin()
-                return {"result": result.loc[idx].to_dict()}
-            return {"result": float(work_df[col].min())}
-
-        elif operation == "top_n":
-            if dim_col and dim_col in work_df.columns:
-                result = work_df.groupby(dim_col)[col].sum().reset_index()
-                result = result.sort_values(col, ascending=False).head(limit)
-                return {"result": result.to_dict(orient="records")}
-            return {"result": f"Need a dimension (app or date) for top_n."}
-
-        elif operation == "bottom_n":
-            if dim_col and dim_col in work_df.columns:
-                result = work_df.groupby(dim_col)[col].sum().reset_index()
-                result = result.sort_values(col, ascending=True).head(limit)
-                return {"result": result.to_dict(orient="records")}
-            return {"result": f"Need a dimension (app or date) for bottom_n."}
+            else:
+                if is_computed:
+                    totals = pd.DataFrame([work_df.sum(numeric_only=True)])
+                    return {"result": float(_compute_col(totals).iloc[0])}
+                else:
+                    if operation == "mean":
+                        return {"result": float(work_df[col].mean())}
+                    elif operation == "max":
+                        return {"result": float(work_df[col].max())}
+                    elif operation == "min":
+                        return {"result": float(work_df[col].min())}
+                    else:
+                        return {"result": float(work_df[col].sum())}
 
         elif operation == "compare":
             if dim_col and dim_col in work_df.columns:
@@ -4323,6 +4333,14 @@ DATE_SCHEMA = {
     },
 }
 
+DATE_APP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        **DATE_SCHEMA["properties"],
+        "app_name": {"type": "string", "description": "Optional app or website name to filter the results by. Required if asking for a specific website."}
+    }
+}
+
 
 @app.list_tools()
 async def list_tools() -> list[types.Tool]:
@@ -4363,7 +4381,8 @@ async def list_tools() -> list[types.Tool]:
                 "Fetches the top (highest) and bottom (lowest) revenue websites for ALL standard time windows: "
                 "today, yesterday, 7 days, 15 days, 30 days, 45 days, 60 days, 90 days, and 6 months — in a single call. "
                 "USE THIS when the user asks for highest and lowest website revenue across multiple time periods. "
-                "Returns a comparison table showing which websites consistently overperform and underperform."
+                "Returns a comparison table showing which websites consistently overperform and underperform. "
+                "CRITICAL: When generating your response, you MUST EXPLICITLY STATE the 'highest_website_name' and 'lowest_website_name' for EVERY period!"
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
@@ -4379,12 +4398,12 @@ async def list_tools() -> list[types.Tool]:
             ),
             inputSchema=DATE_SCHEMA,
         ),
-        types.Tool(name="getImpressions", description="Total and per-app impression data.", inputSchema=DATE_SCHEMA),
-        types.Tool(name="getClicks", description="Total and per-app click data.", inputSchema=DATE_SCHEMA),
-        types.Tool(name="getCTR", description="Click-through rate analysis by app.", inputSchema=DATE_SCHEMA),
-        types.Tool(name="geteCPM", description="eCPM analysis by app.", inputSchema=DATE_SCHEMA),
-        types.Tool(name="getFillRate", description="Fill rate analysis by app.", inputSchema=DATE_SCHEMA),
-        types.Tool(name="getAdRequests", description="Ad request volume by app.", inputSchema=DATE_SCHEMA),
+        types.Tool(name="getImpressions", description="Total and per-app impression data.", inputSchema=DATE_APP_SCHEMA),
+        types.Tool(name="getClicks", description="Total and per-app click data.", inputSchema=DATE_APP_SCHEMA),
+        types.Tool(name="getCTR", description="Click-through rate analysis by app.", inputSchema=DATE_APP_SCHEMA),
+        types.Tool(name="geteCPM", description="eCPM analysis by app.", inputSchema=DATE_APP_SCHEMA),
+        types.Tool(name="getFillRate", description="Fill rate analysis by app.", inputSchema=DATE_APP_SCHEMA),
+        types.Tool(name="getAdRequests", description="Ad request volume by app.", inputSchema=DATE_APP_SCHEMA),
         types.Tool(name="getPerformanceRanking", description="Apps ranked by composite performance score.", inputSchema=DATE_SCHEMA),
         types.Tool(name="getAnomalies", description="Detect revenue and impression anomalies by comparing to previous period.", inputSchema={
             **DATE_SCHEMA,
