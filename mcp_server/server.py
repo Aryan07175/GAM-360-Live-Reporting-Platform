@@ -5502,25 +5502,13 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
 
         elif name == "getTopWebsites":
             limit = int(arguments.get("limit", 10))
-            if not df.empty:
-                df_copy = df.copy()
-                df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
-                ws = df_copy.groupby("website")["ad_server_cpm_and_cpc_revenue"].sum().reset_index()
-                ws = ws.sort_values("ad_server_cpm_and_cpc_revenue", ascending=False).head(limit)
-                result["websites"] = ws.to_dict(orient="records")
-            else:
-                result["websites"] = []
+            metric = arguments.get("metric", "revenue")
+            result.update(_compute_top_websites(df, start_date, end_date, metric=metric, limit=limit))
 
         elif name == "getBottomWebsites":
             limit = int(arguments.get("limit", 10))
-            if not df.empty:
-                df_copy = df.copy()
-                df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
-                ws = df_copy.groupby("website")["ad_server_cpm_and_cpc_revenue"].sum().reset_index()
-                ws = ws.sort_values("ad_server_cpm_and_cpc_revenue", ascending=True).head(limit)
-                result["websites"] = ws.to_dict(orient="records")
-            else:
-                result["websites"] = []
+            metric = arguments.get("metric", "revenue")
+            result.update(_compute_bottom_websites(df, start_date, end_date, metric=metric, limit=limit))
 
         elif name == "getWebsiteInventory":
             result.update(_compute_website_inventory(df, start_date, end_date))
