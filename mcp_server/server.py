@@ -5267,6 +5267,10 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 
         if name == "getDaiAnalytics":
+            start_date, end_date = _resolve_chat_dates(
+                str(arguments.get("start_date", "")),
+                str(arguments.get("end_date", ""))
+            )
             res = await asyncio.to_thread(
                 gam.get_dai_analytics,
                 start_date,
@@ -5295,6 +5299,10 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             return [types.TextContent(type="text", text=json.dumps(res, indent=2))]
 
         if name == "getVideoAnalytics":
+            start_date, end_date = _resolve_chat_dates(
+                str(arguments.get("start_date", "")),
+                str(arguments.get("end_date", ""))
+            )
             res = await asyncio.to_thread(
                 gam.get_video_analytics,
                 start_date,
