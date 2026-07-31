@@ -131,6 +131,16 @@ _server_start_time: float = time.time()
 def _cache_key(start_date: str, end_date: str, demand_channel: str = "all") -> str:
     return f"{start_date}_{end_date}_{demand_channel}"
 
+def _clean_expired_cache(ttl_minutes: int = 15):
+    """Remove cache entries older than ttl_minutes"""
+    now = datetime.now()
+    expired_keys = [
+        k for k, v in _session_cache.items() 
+        if (now - v["stored_at"]).total_seconds() > (ttl_minutes * 60)
+    ]
+    for k in expired_keys:
+        del _session_cache[k]
+
 
 def build_data_summary(df: pd.DataFrame, start: date, end: date) -> dict:
     """
@@ -3374,6 +3384,7 @@ async def handle_chat(request):
         demand     = date_range.get("demandChannel", "all")
         cache_key  = _cache_key(start_str, end_str, demand)
 
+        _clean_expired_cache(ttl_minutes=5) # 5 min TTL
         cached = _session_cache.get(cache_key)
         if not cached and _session_cache:
             cache_key = list(_session_cache.keys())[-1]
