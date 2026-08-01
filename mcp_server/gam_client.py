@@ -2296,7 +2296,7 @@ class GAMClient:
                     matched = v
                     break
 
-        fill_rate  = _pct(imp, req)
+        fill_rate  = _pct(matched, req)
         match_rate = _pct(matched, req)
         ecpm_val   = _ecpm(rev, imp)
         ctr_val    = _ctr(clicks, imp)
@@ -2431,7 +2431,7 @@ class GAMClient:
                 "impressions": imp,
                 "clicks": clks,
                 "requests": req,
-                "fill_rate": _pct(imp, req),
+                "fill_rate": _pct(matched, req),
                 "ecpm": _ecpm(rev, imp),
                 "ctr": _ctr(clks, imp),
                 "match_rate": _pct(matched, req),
@@ -2523,9 +2523,14 @@ class GAMClient:
                     if col in grp.columns:
                         v = int(grp[col].sum())
                         if v > 0: req = v; break
+                matched = 0
+                for col in ["matched_requests", "total_responses_served", "programmatic_responses_served"]:
+                    if col in grp.columns:
+                        v = int(grp[col].sum())
+                        if v > 0: matched = v; break
                 entity_metrics = {
                     "revenue_usd": rev, "impressions": imp,
-                    "fill_rate_pct": _pct(imp, req),
+                    "fill_rate_pct": _pct(matched, req),
                     "match_rate_pct": 0, "ctr_pct": _ctr(clks, imp),
                     "ad_requests": req,
                 }
@@ -2542,9 +2547,15 @@ class GAMClient:
                 v = int(df[col].sum())
                 if v > 0: req_total = v; break
 
+        matched_total = 0
+        for col in ["matched_requests", "total_responses_served", "programmatic_responses_served"]:
+            if col in df.columns:
+                v = int(df[col].sum())
+                if v > 0: matched_total = v; break
+
         network_anomalies = _detect_entity_anomalies({
             "revenue_usd": rev_total, "impressions": imp_total,
-            "fill_rate_pct": _pct(imp_total, req_total),
+            "fill_rate_pct": _pct(matched_total, req_total),
             "match_rate_pct": 0, "ctr_pct": _ctr(clk_total, imp_total),
             "ad_requests": req_total,
         }, label="Network-wide")
@@ -2592,7 +2603,13 @@ class GAMClient:
                 v = int(df[col].sum())
                 if v > 0: req_total = v; break
 
-        fill_rate = _pct(imp_total, req_total)
+        matched_total = 0
+        for col in ["matched_requests", "total_responses_served", "programmatic_responses_served"]:
+            if col in df.columns:
+                v = int(df[col].sum())
+                if v > 0: matched_total = v; break
+
+        fill_rate = _pct(matched_total, req_total)
         ecpm_val  = _ecpm(rev_total, imp_total)
         ctr_val   = _ctr(clk_total, imp_total)
         unfilled  = req_total - imp_total if req_total > imp_total else 0
