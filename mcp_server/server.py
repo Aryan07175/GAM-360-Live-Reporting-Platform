@@ -295,7 +295,13 @@ def execute_query_data(df: pd.DataFrame, operation: str, dimension: str = None,
 
         def _compute_col(df_agg):
             if metric == "fill_rate":
-                return (df_agg["ad_server_impressions"] / df_agg["ad_server_ad_requests"] * 100).where(df_agg["ad_server_ad_requests"] > 0, 0)
+                # Correct formula: matched_requests / canonical_ad_requests * 100
+                req = df_agg.get("canonical_ad_requests", df_agg.get("ad_server_ad_requests", None))
+                matched = df_agg.get("matched_requests", df_agg.get("ad_server_impressions", None))
+                if req is None or matched is None:
+                    return pd.Series([0.0] * len(df_agg))
+                result_series = (matched / req * 100).replace([np.inf, -np.inf], 0).fillna(0)
+                return result_series.clip(upper=100.0)
             elif metric == "ecpm":
                 return (df_agg["ad_server_cpm_and_cpc_revenue"] / df_agg["ad_server_impressions"] * 1000).where(df_agg["ad_server_impressions"] > 0, 0)
             elif metric == "ctr":
@@ -305,12 +311,18 @@ def execute_query_data(df: pd.DataFrame, operation: str, dimension: str = None,
         if operation in ["sum", "mean", "max", "min", "top_n", "bottom_n"]:
             if dim_col and dim_col in work_df.columns:
                 if is_computed:
-                    result = work_df.groupby(dim_col).agg({
+                    # Build agg dict — always include request/matched cols for fill_rate
+                    _agg = {
                         "ad_server_impressions": "sum",
                         "ad_server_cpm_and_cpc_revenue": "sum",
                         "ad_server_clicks": "sum",
                         "ad_server_ad_requests": "sum",
-                    }).reset_index()
+                    }
+                    if "canonical_ad_requests" in work_df.columns:
+                        _agg["canonical_ad_requests"] = "sum"
+                    if "matched_requests" in work_df.columns:
+                        _agg["matched_requests"] = "sum"
+                    result = work_df.groupby(dim_col).agg(_agg).reset_index()
                     result[metric] = _compute_col(result)
                     sort_col = metric
                 else:
@@ -344,14 +356,23 @@ def execute_query_data(df: pd.DataFrame, operation: str, dimension: str = None,
 
         elif operation == "compare":
             if dim_col and dim_col in work_df.columns:
-                result = work_df.groupby(dim_col).agg({
+                _cmp_agg = {
                     "ad_server_cpm_and_cpc_revenue": "sum",
                     "ad_server_impressions": "sum",
                     "ad_server_clicks": "sum",
                     "ad_server_ad_requests": "sum",
-                }).reset_index()
+                }
+                if "canonical_ad_requests" in work_df.columns:
+                    _cmp_agg["canonical_ad_requests"] = "sum"
+                if "matched_requests" in work_df.columns:
+                    _cmp_agg["matched_requests"] = "sum"
+                result = work_df.groupby(dim_col).agg(_cmp_agg).reset_index()
                 result["ecpm_usd"] = (result["ad_server_cpm_and_cpc_revenue"] / result["ad_server_impressions"] * 1000).where(result["ad_server_impressions"] > 0, 0)
-                result["fill_rate_pct"] = (result["ad_server_impressions"] / result["ad_server_ad_requests"] * 100).where(result["ad_server_ad_requests"] > 0, 0)
+                # fill_rate = matched_requests / canonical_ad_requests * 100
+                _req_col    = "canonical_ad_requests" if "canonical_ad_requests" in result.columns else "ad_server_ad_requests"
+                _matched_col = "matched_requests" if "matched_requests" in result.columns else "ad_server_impressions"
+                raw_fill = (result[_matched_col] / result[_req_col] * 100).replace([np.inf, -np.inf], 0).fillna(0)
+                result["fill_rate_pct"] = raw_fill.clip(upper=100.0)
                 result = result.sort_values("ad_server_cpm_and_cpc_revenue", ascending=False).head(limit)
                 return {"result": result.to_dict(orient="records")}
             return {"result": "Need a dimension for compare."}
@@ -4036,6 +4057,9 @@ def compute_revenue_by_app(df: pd.DataFrame) -> list[dict]:
         "ad_server_clicks": "sum",
         "ad_server_ad_requests": "sum",
     }
+    # Add canonical_ad_requests to agg if available
+    if "canonical_ad_requests" in df.columns:
+        agg_dict["canonical_ad_requests"] = "sum"
     if "matched_requests" in df.columns:
         agg_dict["matched_requests"] = "sum"
 
@@ -4045,12 +4069,11 @@ def compute_revenue_by_app(df: pd.DataFrame) -> list[dict]:
     # Safely recalculate derived metrics — replace inf AND nan (both produced by division by 0)
     summary["ad_server_ctr"] = (summary["ad_server_clicks"] / summary["ad_server_impressions"] * 100).replace([np.inf, -np.inf], 0).fillna(0)
     
-    if "matched_requests" in summary.columns:
-        summary["ad_server_fill_rate"] = (summary["matched_requests"] / summary["ad_server_ad_requests"] * 100).replace([np.inf, -np.inf], float('nan'))
-    else:
-        summary["ad_server_fill_rate"] = (summary["ad_server_impressions"] / summary["ad_server_ad_requests"] * 100).replace([np.inf, -np.inf], float('nan'))
-        
-    summary["ad_server_fill_rate"] = summary["ad_server_fill_rate"].where(summary["ad_server_fill_rate"].notna(), None)
+    # fill_rate = matched_requests / canonical_ad_requests * 100 (exact formula)
+    _req_col     = "canonical_ad_requests" if "canonical_ad_requests" in summary.columns else "ad_server_ad_requests"
+    _matched_col = "matched_requests" if "matched_requests" in summary.columns else "ad_server_impressions"
+    raw_fill = (summary[_matched_col] / summary[_req_col] * 100).replace([np.inf, -np.inf], float('nan'))
+    summary["ad_server_fill_rate"] = raw_fill.clip(upper=100.0).where(raw_fill.notna(), None)
     summary["ad_server_without_cpd_average_ecpm"] = (summary["ad_server_cpm_and_cpc_revenue"] / summary["ad_server_impressions"] * 1000).replace([np.inf, -np.inf], 0).fillna(0)
     
     summary = summary.sort_values(by="ad_server_cpm_and_cpc_revenue", ascending=False)
