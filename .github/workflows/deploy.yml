@@ -28,13 +28,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
+          cache: "npm"
           cache-dependency-path: docs/package-lock.json
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
-        with:
-          static_site_generator: next
 
       - name: Install dependencies
         run: npm ci
@@ -47,7 +45,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Path is relative to repo root; docs/out is where next export writes
+          # docs/out is the static export dir (relative to repo root)
           path: docs/out
 
   deploy:
