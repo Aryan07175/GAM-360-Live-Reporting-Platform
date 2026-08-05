@@ -4021,10 +4021,12 @@ def compute_executive_summary(df: pd.DataFrame, start: date, end: date) -> dict:
     imp = int(df["ad_server_impressions"].sum())
     clicks = int(df["ad_server_clicks"].sum())
     ad_requests = int(df["ad_server_ad_requests"].sum())
+    # Use canonical_ad_requests as fill rate denominator (same as compute_revenue_by_app)
+    canonical_req = int(df["canonical_ad_requests"].sum()) if "canonical_ad_requests" in df.columns else ad_requests
     matched_requests = int(df["matched_requests"].sum()) if "matched_requests" in df.columns else int(df["total_responses_served"].sum()) if "total_responses_served" in df.columns else imp
     ecpm = (rev / imp * 1000) if imp > 0 else 0
     ctr = (clicks / imp * 100) if imp > 0 else 0
-    fill_rate = (matched_requests / ad_requests * 100) if ad_requests > 0 else 0
+    fill_rate = (matched_requests / canonical_req * 100) if canonical_req > 0 else 0
 
     app_summary = df.groupby("ad_unit_name")["ad_server_cpm_and_cpc_revenue"].sum()
     app_count = len(app_summary)
@@ -4119,18 +4121,25 @@ def compute_performance_ranking(df: pd.DataFrame) -> list[dict]:
     """Rank apps by a composite performance score."""
     if df.empty:
         return []
-    summary = df.groupby(["ad_unit_name", "ad_unit_id"]).agg({
+    agg_dict = {
         "ad_server_cpm_and_cpc_revenue": "sum",
         "ad_server_impressions": "sum",
         "ad_server_clicks": "sum",
         "ad_server_ad_requests": "sum",
-    }).reset_index()
+    }
+    # Include canonical_ad_requests and matched_requests for correct fill rate
+    if "canonical_ad_requests" in df.columns:
+        agg_dict["canonical_ad_requests"] = "sum"
+    if "matched_requests" in df.columns:
+        agg_dict["matched_requests"] = "sum"
+    summary = df.groupby(["ad_unit_name", "ad_unit_id"]).agg(agg_dict).reset_index()
 
     # Derive rate metrics from totals — never average pre-computed rates.
-    summary["ad_server_fill_rate"] = (
-        (summary["ad_server_impressions"] / summary["ad_server_ad_requests"] * 100)
-        .where(summary["ad_server_ad_requests"] > 0, 0)
-    )
+    # fill_rate = matched_requests / canonical_ad_requests * 100 (exact formula, consistent with compute_revenue_by_app)
+    _req_col     = "canonical_ad_requests" if "canonical_ad_requests" in summary.columns else "ad_server_ad_requests"
+    _matched_col = "matched_requests" if "matched_requests" in summary.columns else "ad_server_impressions"
+    raw_fill = (summary[_matched_col] / summary[_req_col] * 100).replace([np.inf, -np.inf], 0).fillna(0)
+    summary["ad_server_fill_rate"] = raw_fill.clip(upper=100.0)
     summary["ad_server_ctr"] = (
         (summary["ad_server_clicks"] / summary["ad_server_impressions"] * 100)
         .where(summary["ad_server_impressions"] > 0, 0)
