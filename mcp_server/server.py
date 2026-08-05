@@ -3628,24 +3628,32 @@ def _resolve_dates(args: dict) -> tuple[date, date, int, int]:
 def compute_alerts(df: pd.DataFrame) -> list[dict]:
     if df.empty:
         return []
-        
-    summary = df.groupby(["ad_unit_name"]).agg({
+
+    agg_dict = {
         "ad_server_impressions": "sum",
         "ad_server_cpm_and_cpc_revenue": "sum",
         "ad_server_ad_requests": "sum",
-        "ad_server_clicks": "sum"
-    }).reset_index()
-    
+        "ad_server_clicks": "sum",
+    }
+    if "canonical_ad_requests" in df.columns:
+        agg_dict["canonical_ad_requests"] = "sum"
+    if "matched_requests" in df.columns:
+        agg_dict["matched_requests"] = "sum"
+
+    summary = df.groupby(["ad_unit_name"]).agg(agg_dict).reset_index()
+
     alerts = []
     for _, row in summary.iterrows():
         app_name = row["ad_unit_name"]
         imp = int(row["ad_server_impressions"])
         rev = float(row["ad_server_cpm_and_cpc_revenue"])
-        req = int(row["ad_server_ad_requests"])
         clicks = int(row["ad_server_clicks"])
-        
-        matched = int(row.get("matched_requests", row.get("total_responses_served", imp)))
-        fill_rate = (matched / req * 100) if req > 0 else 0
+
+        # Use canonical_ad_requests as denominator (consistent with compute_revenue_by_app)
+        canonical_req = int(row["canonical_ad_requests"]) if "canonical_ad_requests" in row.index else int(row["ad_server_ad_requests"])
+        req = canonical_req  # for threshold checks below
+        matched = int(row["matched_requests"]) if "matched_requests" in row.index else imp
+        fill_rate = (matched / canonical_req * 100) if canonical_req > 0 else 0
         ctr = (clicks / imp * 100) if imp > 0 else 0
         ecpm = (rev / imp * 1000) if imp > 0 else 0
         
@@ -3666,28 +3674,37 @@ def compute_alerts(df: pd.DataFrame) -> list[dict]:
 def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict:
     if df.empty:
         return {"result": "No websites were returned by Google Ad Manager."}
-    
+
     df_copy = df.copy()
     df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
-    
-    ws = df_copy.groupby("website").agg({
+
+    ws_agg = {
         "ad_server_ad_requests": "sum",
         "ad_server_impressions": "sum",
         "ad_server_clicks": "sum",
         "ad_server_cpm_and_cpc_revenue": "sum",
-    }).reset_index()
-    
+    }
+    if "canonical_ad_requests" in df_copy.columns:
+        ws_agg["canonical_ad_requests"] = "sum"
+    if "matched_requests" in df_copy.columns:
+        ws_agg["matched_requests"] = "sum"
+
+    ws = df_copy.groupby("website").agg(ws_agg).reset_index()
+
     websites_list = []
-    
+
     import hashlib
     for _, row in ws.iterrows():
         name = row["website"]
-        req = int(row["ad_server_ad_requests"])
+        ad_req = int(row["ad_server_ad_requests"])
+        canonical_req = int(row["canonical_ad_requests"]) if "canonical_ad_requests" in row.index else ad_req
         imp = int(row["ad_server_impressions"])
         clicks = int(row["ad_server_clicks"])
         rev = float(row["ad_server_cpm_and_cpc_revenue"])
-        matched = imp # fallback if matched_requests not present
-        
+        # Use matched_requests for fill rate numerator; never use impressions as proxy
+        matched = int(row["matched_requests"]) if "matched_requests" in row.index else None
+        req = canonical_req  # denominator for fill rate and status checks
+
         status = "Offline"
         if imp > 1000:
             status = "Working"
@@ -3697,9 +3714,13 @@ def _compute_website_inventory(df: pd.DataFrame, start: date, end: date) -> dict
             status = "Critical"
         elif req == 0:
             status = "Offline"
-            
+
         ctr = (clicks / imp * 100) if imp > 0 else 0.0
-        fill_rate = (matched / req * 100) if req > 0 else 0.0
+        # fill_rate = matched_requests / canonical_ad_requests * 100 (None if data unavailable)
+        if matched is not None and req > 0:
+            fill_rate = min(round(matched / req * 100, 2), 100.0)
+        else:
+            fill_rate = 0.0
         ecpm = (rev / imp * 1000) if imp > 0 else 0.0
         
         website_id = hashlib.md5(name.encode('utf-8')).hexdigest()[:8]
@@ -3752,40 +3773,52 @@ def _get_all_website_metrics(df: pd.DataFrame) -> list[dict]:
     """Helper to compute metrics for all websites before any sorting or trimming."""
     if df.empty:
         return []
-        
+
     df_copy = df.copy()
     df_copy["website"] = df_copy["ad_unit_name"].apply(_extract_domain)
-    
-    ws = df_copy.groupby("website").agg({
+
+    ws_agg = {
         "ad_server_ad_requests": "sum",
         "ad_server_impressions": "sum",
         "ad_server_clicks": "sum",
         "ad_server_cpm_and_cpc_revenue": "sum",
-    }).reset_index()
-    
+    }
+    if "canonical_ad_requests" in df_copy.columns:
+        ws_agg["canonical_ad_requests"] = "sum"
+    if "matched_requests" in df_copy.columns:
+        ws_agg["matched_requests"] = "sum"
+
+    ws = df_copy.groupby("website").agg(ws_agg).reset_index()
+
     websites_perf = []
     for _, row in ws.iterrows():
         name = row["website"]
-        req = int(row["ad_server_ad_requests"])
+        ad_req = int(row["ad_server_ad_requests"])
+        canonical_req = int(row["canonical_ad_requests"]) if "canonical_ad_requests" in row.index else ad_req
         imp = int(row["ad_server_impressions"])
-        matched = imp # fallback if matched_requests not present
+        # Use matched_requests for fill rate numerator; never use impressions as proxy
+        matched = int(row["matched_requests"]) if "matched_requests" in row.index else None
         clicks = int(row["ad_server_clicks"])
         rev = float(row["ad_server_cpm_and_cpc_revenue"])
-        
+
         ctr = (clicks / imp * 100) if imp > 0 else 0
-        fill_rate = round((matched / req * 100), 2) if req > 0 else 0
+        # fill_rate = matched_requests / canonical_ad_requests * 100
+        if matched is not None and canonical_req > 0:
+            fill_rate = min(round(matched / canonical_req * 100, 2), 100.0)
+        else:
+            fill_rate = 0.0
         ecpm = (rev / imp * 1000) if imp > 0 else 0
-        
+
         websites_perf.append({
             "website": name,
             "name": name,
             "domain": name,
-            "ad_requests": req,
-            "matched_requests": matched,
+            "ad_requests": canonical_req,
+            "matched_requests": matched if matched is not None else 0,
             "impressions": imp,
             "clicks": clicks,
             "ctr": round(ctr, 2),
-            "fill_rate": min(fill_rate, 100.0),
+            "fill_rate": fill_rate,
             "ecpm": round(ecpm, 4),
             "revenue": round(rev, 6)
         })
@@ -3968,33 +4001,44 @@ def _compute_website_trend(df: pd.DataFrame, start: date, end: date, interval: s
     else:
         df_copy["period"] = df_copy["date"]
         
-    trend = df_copy.groupby("period").agg({
+    trend_agg = {
         "ad_server_ad_requests": "sum",
         "ad_server_impressions": "sum",
         "ad_server_clicks": "sum",
         "ad_server_cpm_and_cpc_revenue": "sum",
-    }).reset_index().sort_values("period")
-    
+    }
+    if "canonical_ad_requests" in df_copy.columns:
+        trend_agg["canonical_ad_requests"] = "sum"
+    if "matched_requests" in df_copy.columns:
+        trend_agg["matched_requests"] = "sum"
+
+    trend = df_copy.groupby("period").agg(trend_agg).reset_index().sort_values("period")
+
     trend_list = []
     for _, row in trend.iterrows():
         p = row["period"].strftime("%Y-%m-%d")
-        req = int(row["ad_server_ad_requests"])
+        ad_req = int(row["ad_server_ad_requests"])
+        canonical_req = int(row["canonical_ad_requests"]) if "canonical_ad_requests" in row.index else ad_req
         imp = int(row["ad_server_impressions"])
         clicks = int(row["ad_server_clicks"])
         rev = float(row["ad_server_cpm_and_cpc_revenue"])
-        
-        matched = int(row.get("matched_requests", row.get("total_responses_served", imp)))
+
+        # fill_rate = matched_requests / canonical_ad_requests * 100
+        matched = int(row["matched_requests"]) if "matched_requests" in row.index else None
         ctr = (clicks / imp * 100) if imp > 0 else 0
-        fill_rate = round((matched / req * 100), 2) if req > 0 else 0
+        if matched is not None and canonical_req > 0:
+            fill_rate = min(round(matched / canonical_req * 100, 2), 100.0)
+        else:
+            fill_rate = 0.0
         ecpm = (rev / imp * 1000) if imp > 0 else 0
-        
+
         trend_list.append({
             "date": p,
-            "ad_requests": req,
+            "ad_requests": canonical_req,
             "impressions": imp,
             "clicks": clicks,
             "ctr": round(ctr, 2),
-            "fill_rate": min(fill_rate, 100.0),
+            "fill_rate": fill_rate,
             "ecpm": round(ecpm, 4),
             "revenue": round(rev, 6)
         })
