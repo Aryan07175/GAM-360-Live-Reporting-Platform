@@ -33,8 +33,18 @@ services:
         sync: false
       - key: AWS_REGION
         value: "us-east-1"
+      # Cross-region inference profile ID — must match bedrock_service.py default.
+      # Use the us.* prefix for cross-region routing (required for Haiku 4.5 in us-east-1).
       - key: BEDROCK_MODEL_ID
-        value: "anthropic.claude-3-5-sonnet-20241022-v2:0"
+        value: "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+      # Optional: Bearer token for IAM Identity Center / SSO auth (alternative to Access Key)
+      - key: AWS_BEARER_TOKEN_BEDROCK
+        sync: false
+      # HMAC secret used to sign and verify human-in-the-loop write-action tokens.
+      # MUST be set to a strong random secret in production — the insecure default
+      # in server.py ("gam360-write-secret-change-me") is only a development fallback.
+      - key: WRITE_ACTION_SECRET
+        sync: false
       - key: GMAIL_SENDER_EMAIL
         sync: false
       - key: GMAIL_APP_PASSWORD
