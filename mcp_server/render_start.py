@@ -54,6 +54,19 @@ def setup_credentials():
     os.environ.setdefault("GAM_CREDENTIALS_PATH", os.path.abspath(yaml_path))
     print(f"[render_start] GAM_CREDENTIALS_PATH = {os.environ['GAM_CREDENTIALS_PATH']}")
 
+    # 4. Security check: warn if WRITE_ACTION_SECRET is unset or is the insecure default
+    write_secret = os.environ.get("WRITE_ACTION_SECRET", "")
+    _insecure_default = "gam360-write-secret-change-me"
+    if not write_secret:
+        print("[render_start] SECURITY WARNING: WRITE_ACTION_SECRET is not set. "
+              "The server will fall back to an insecure hardcoded default. "
+              "Set WRITE_ACTION_SECRET to a strong random secret in Render environment variables.")
+    elif write_secret == _insecure_default:
+        print("[render_start] SECURITY WARNING: WRITE_ACTION_SECRET is using the insecure default value. "
+              "Replace it with a strong random secret in Render environment variables.")
+    else:
+        print("[render_start] WRITE_ACTION_SECRET is set.")
+
 
 if __name__ == "__main__":
     setup_credentials()
