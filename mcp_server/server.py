@@ -2429,7 +2429,6 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
             fill_rate = min(fill_rate, 100.0)  # cap; AI will note the anomaly
     else:
         fill_rate = None  # Genuinely unknown — AI must report N/A
-    fill_rate  = fill_rate
     match_rate = round((adx_imp  / total_req * 100),   4) if total_req > 0 else 0.0
 
     best_fill  = round(float(true_fill), 2) if (true_fill > 0 and true_fill <= 100) else fill_rate
