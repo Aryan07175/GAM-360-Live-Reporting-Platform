@@ -74,11 +74,11 @@ export async function fetchExecutiveSummary(
     let adRequests   = Number(res.total_ad_requests || 0);
     let fillRate     = Number(res.average_fill_rate || 0);
 
-    // Some GAM programmatic setups do not log AD_SERVER_AD_REQUESTS (returns 0).
-    // If we have live impressions but 0 requests, infer proportional requests to populate the UI.
+    // Some GAM programmatic-only setups do not log AD_SERVER_AD_REQUESTS (returns 0).
+    // Infer ad_requests for display purposes only — we do NOT fabricate fill rate.
     if (adRequests === 0 && imp > 0) {
-      adRequests = Math.round(imp / 0.982); // Assume ~98.2% fill for programmatic
-      fillRate = 98.2;
+      adRequests = Math.round(imp / 0.982); // Proportional estimate for display only
+      // NOTE: fillRate is left as-is from the backend — never hardcoded
     }
 
     // Calculate DAU based on inferred or actual ad requests to match backend logic
@@ -198,9 +198,10 @@ export async function fetchRevenueByApplication(
       let adReq = Number(a.ad_server_ad_requests || 0);
       let fillRate = Number(a.ad_server_fill_rate || 0);
 
+      // Infer ad_requests for display purposes only when GAM doesn't report it.
+      // Fill rate is never fabricated — use the backend value.
       if (adReq === 0 && imp > 0) {
         adReq = Math.round(imp / 0.982);
-        fillRate = 98.2;
       }
 
       return {
@@ -339,10 +340,8 @@ export async function fetchPerformanceRanking(
     return {
       rankings: (res.rankings || []).map((r: any) => {
         const imp = Number(r.ad_server_impressions || 0);
-        let fillRate = Number(r.ad_server_fill_rate || 0);
-        if (fillRate === 0 && imp > 0 && !r.ad_server_ad_requests) {
-          fillRate = 98.2;
-        }
+        const fillRate = Number(r.ad_server_fill_rate || 0);
+        // Fill rate from backend — never fabricated client-side
         return {
           rank: r.rank,
           ad_unit_name: r.ad_unit_name,
@@ -408,9 +407,9 @@ export async function fetchFullReport(
       let adReq = Number(a.ad_server_ad_requests || 0);
       let fillRate = Number(a.ad_server_fill_rate || 0);
 
+      // Infer ad_requests for display only; never fabricate fill rate.
       if (adReq === 0 && imp > 0) {
         adReq = Math.round(imp / 0.982);
-        fillRate = 98.2;
       }
 
       return {
@@ -459,9 +458,9 @@ export async function fetchFullReport(
         let adReq = Number(s.total_ad_requests ?? 0);
         let fillRate = Number(s.average_fill_rate ?? 0);
 
+        // Infer ad_requests for display only; never fabricate fill rate.
         if (adReq === 0 && imp > 0) {
           adReq = Math.round(imp / 0.982);
-          fillRate = 98.2;
         }
 
         const dau = Number(s.daily_active_users ?? (adReq > 0 ? Math.round(adReq / 5) : 0));
