@@ -345,15 +345,25 @@ def get_bottom_n(rows: list[dict], metric_col: str, n: int = 10) -> list[dict]:
     return sorted(valid, key=lambda r: r[metric_col])[:n]
 
 
-def log_payload_stats(label: str, result: dict, system_prompt: str = "") -> None:
-    """Log token/size stats for a Bedrock payload component."""
+def log_payload_stats(label: str, result: Any, system_prompt: str = "") -> None:
+    """Log token/size stats for a Bedrock payload component.
+
+    Accepts both dict and list results — some GAM client functions return lists
+    directly (e.g. get_audience_geography). A list has no .get("rows") so we
+    fall back to reporting its length instead.
+    """
     result_json = json.dumps(result, default=str)
     result_tokens = len(result_json) // CHARS_PER_TOKEN
     sys_tokens    = len(system_prompt) // CHARS_PER_TOKEN
 
+    if isinstance(result, list):
+        row_count = len(result)
+    else:
+        row_count = len(result.get("rows", [])) if isinstance(result, dict) else 0
+
     log.info(
         "[QueryEngine:%s] rows=%d result_tokens=%d sys_tokens=%d total_est=%d",
-        label, len(result.get("rows", [])), result_tokens, sys_tokens,
+        label, row_count, result_tokens, sys_tokens,
         result_tokens + sys_tokens,
     )
     if result_tokens + sys_tokens > 150_000:

@@ -3361,6 +3361,10 @@ def _make_tool_executor(cached_df):
                 raw_json = json.loads(api_results[0].text)
                 if isinstance(raw_json, dict) and raw_json.get("error"):
                     return raw_json
+                # Wrap bare lists so log_payload_stats and guard_payload_size
+                # always receive a dict (some tools return lists directly).
+                if isinstance(raw_json, list):
+                    raw_json = {"items": raw_json, "count": len(raw_json)}
                 log_payload_stats(tool_name, raw_json)
                 return guard_payload_size(raw_json, "results")
         except Exception as e:

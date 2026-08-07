@@ -1901,7 +1901,13 @@ async def stream_bedrock_response(
                     log.info("[Bedrock] Tool call (turn %d) — name=%s input=%s", turn + 1, tool_name, input_dict)
                     result = await tool_executor(tool_name, input_dict)
                     safe_result = json.loads(json.dumps(result, default=str))
-                    log.info("[Bedrock] Tool result — name=%s keys=%s", tool_name, list(safe_result.keys()))
+                    # safe_result may be a list (some GAM functions return lists directly)
+                    if isinstance(safe_result, dict):
+                        log.info("[Bedrock] Tool result — name=%s keys=%s", tool_name, list(safe_result.keys()))
+                    else:
+                        log.info("[Bedrock] Tool result — name=%s (list, len=%d)", tool_name, len(safe_result) if isinstance(safe_result, list) else -1)
+                        # Wrap list in a dict so Bedrock always receives a JSON object
+                        safe_result = {"items": safe_result, "count": len(safe_result) if isinstance(safe_result, list) else 0}
 
                     assistant_content.append({
                         "toolUse": {
