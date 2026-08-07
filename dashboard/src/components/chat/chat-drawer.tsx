@@ -102,6 +102,15 @@ export function ChatDrawer() {
                 : m
             )
           );
+        } else if (event.type === 'retrying') {
+          // Show a reconnecting notice in the bubble
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: `⟳ Backend starting up — reconnecting (${event.attempt}/${event.max})…` }
+                : m
+            )
+          );
         } else if (event.type === 'error') {
           setMessages((prev) =>
             prev.map((m) =>
