@@ -438,9 +438,20 @@ def build_chat_system_prompt(compact_summary: dict) -> str:
     last_year_cal_end   = today.replace(year=today.year - 1, month=12, day=31)
 
     import json as _json
-    summary_str = _json.dumps(compact_summary, indent=2, default=str)
 
-    return f"""You are **Ask GAM 360**, an AI analyst with LIVE access to Google Ad Manager data.
+    # ── Safely serialise compact_summary to a JSON string ─────────────────────
+    # IMPORTANT: This JSON string MUST NOT be embedded directly inside an
+    # f-string because its curly braces ({}) would be misinterpreted as
+    # Python format specifiers, raising "Invalid format specifier" errors.
+    # Instead we build the prompt in two f-string halves and concatenate them
+    # with the plain summary_str in the middle.
+    try:
+        summary_str = _json.dumps(compact_summary, indent=2, default=str)
+    except Exception:
+        summary_str = '{"error": "context unavailable"}'
+
+    # ── Part 1: static prompt text (f-string — contains only date variables) ──
+    _part1 = f"""You are **Ask GAM 360**, an AI analyst with LIVE access to Google Ad Manager data.
 You MUST answer EVERY question using LIVE Google Ad Manager data fetched at request time.
 NEVER use cached, mocked, static, demo, placeholder, or hardcoded data.
 NEVER invent or estimate numbers.
@@ -1642,8 +1653,10 @@ The assistant must seamlessly support BOTH:
 using the same live Google Ad Manager reporting engine.
 
 ## Current Dashboard Context (Reference only — DO NOT use to answer questions, ALWAYS use tools)
-{summary_str}
+"""
 
+    # ── Part 2: text after the summary injection ───────────────────────────────
+    _part2 = """
 ==================================================
 NETWORK CODE INTELLIGENCE  [NEW — ADDITIVE]
 ==================================================
@@ -2109,6 +2122,16 @@ If any of the above tools returns `{"_live_data_status": "unavailable"}`, you MU
 | Stop this line item | proposeAction | action_type=pause_line_item, entity_type=LINE_ITEM |
 
 """
+
+    # ── Concatenate: part1 + JSON summary (plain string) + part2 ─────────────
+    # This is the ONLY safe way to inject a JSON blob into the prompt without
+    # triggering Python f-string brace parsing on the JSON content.
+    try:
+        return _part1 + summary_str + _part2
+    except Exception as exc:
+        log.error("[Chat] Prompt assembly failed: %s", exc)
+        # Return a minimal but functional fallback prompt
+        return _part1 + '{"error": "context unavailable"}' + _part2
 
 
 # ─── Live GAM Query for Chat ─────────────────────────────────────────────────
