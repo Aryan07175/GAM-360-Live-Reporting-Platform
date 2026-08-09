@@ -1378,17 +1378,22 @@ class GAMClient:
             # The best way is to use a thread if we are in a running loop.
             import threading
             result = []
+            result_error = []
             def _run():
                 new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
                 try:
                     df = new_loop.run_until_complete(self.get_live_data(start_date, end_date, force_refresh, demand_channel, extra_dims, separate_report, omit_ad_units))
                     result.append(df)
+                except Exception as e:  # noqa: BLE001
+                    result_error.append(e)
                 finally:
                     new_loop.close()
             t = threading.Thread(target=_run)
             t.start()
             t.join()
+            if result_error:
+                raise result_error[0]
             return result[0]
         else:
             return loop.run_until_complete(self.get_live_data(start_date, end_date, force_refresh, demand_channel, extra_dims, separate_report, omit_ad_units))
@@ -3840,7 +3845,7 @@ class GAMClient:
                 "completes":           total_completes,
                 "completion_rate_pct": round(total_completes / total_starts * 100, 2) if total_starts > 0 else 0.0,
                 "errors":              total_errors,
-                "error_rate_pct":      round(total_errors / total_imps * 100, 2),
+                "error_rate_pct":      round(total_errors / total_imps * 100, 2) if total_imps > 0 else 0.0,
                 "revenue_usd":         round(total_rev, 2),
             },
             "analytics": results[:25],
