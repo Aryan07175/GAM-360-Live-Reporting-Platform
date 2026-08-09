@@ -1,10 +1,10 @@
+import logging
 import os
 import smtplib
 import ssl
 from email.message import EmailMessage
 from email.utils import formatdate
-import logging
-from typing import List, Dict, Any
+from typing import Any
 
 log = logging.getLogger("email_service")
 
@@ -42,7 +42,7 @@ def log_credential_status():
         )
 
 
-def _send_email(subject: str, html_content: str, to_emails: List[str], pdf_bytes: bytes = None, pdf_filename: str = None) -> Dict[str, Any]:
+def _send_email(subject: str, html_content: str, to_emails: list[str], pdf_bytes: bytes | None = None, pdf_filename: str | None = None) -> dict[str, Any]:
     if not to_emails:
         log.info("[EMAIL_SKIPPED] No recipients provided. Skipping email send.")
         return {"error": "No recipients", "status": "skipped"}
@@ -103,15 +103,15 @@ def _send_email(subject: str, html_content: str, to_emails: List[str], pdf_bytes
     except TimeoutError as e:
         log.error("[EMAIL_SEND_FAILED] SMTP connection timed out: %s", e)
         return {"error": f"Timeout: {e}", "status": "error"}
-    except Exception as e:
-        log.error("[EMAIL_SEND_FAILED] Unexpected error sending email: %s", e, exc_info=True)
-        return {"error": str(e), "status": "error"}
+    except Exception:
+        log.exception("[EMAIL_SEND_FAILED] Unexpected error sending email")
+        return {"error": "Unexpected error sending email", "status": "error"}
     finally:
         # Restore the original getaddrinfo
         socket.getaddrinfo = original_getaddrinfo
 
 
-def send_test_email(to_email: str) -> Dict[str, Any]:
+def send_test_email(to_email: str) -> dict[str, Any]:
     """Send a minimal diagnostic test email to verify SMTP config end-to-end."""
     html = """
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -129,7 +129,7 @@ def send_test_email(to_email: str) -> Dict[str, Any]:
     return _send_email("🔔 GAM 360 — Test Email", html, [to_email])
 
 
-def send_alert_email(alert: Dict[str, Any], to_emails: List[str], prefs: Dict[str, bool] = None) -> Dict[str, Any]:
+def send_alert_email(alert: dict[str, Any], to_emails: list[str], prefs: dict[str, bool] | None = None) -> dict[str, Any]:
     if not to_emails:
         return {"error": "No recipients", "status": "skipped"}
 
@@ -191,7 +191,7 @@ def send_alert_email(alert: Dict[str, Any], to_emails: List[str], prefs: Dict[st
     return _send_email(subject, html, to_emails)
 
 
-def send_daily_report_email(report_data: Dict[str, Any], to_emails: List[str]) -> Dict[str, Any]:
+def send_daily_report_email(report_data: dict[str, Any], to_emails: list[str]) -> dict[str, Any]:
     if not to_emails:
         return {"error": "No recipients", "status": "skipped"}
 
@@ -329,8 +329,9 @@ def send_daily_report_email(report_data: Dict[str, Any], to_emails: List[str]) -
 
     pdf_bytes = None
     try:
-        from xhtml2pdf import pisa
         import io
+
+        from xhtml2pdf import pisa
         
         # xhtml2pdf handles basic HTML but does better with a full document structure
         pdf_html = f"<html><head><meta charset='utf-8'></head><body style='background-color: #ffffff;'>{html.replace('color: #f3f4f6;', 'color: #333333;').replace('color: #ffffff;', 'color: #111111;').replace('background-color: #111827;', 'background-color: #ffffff;').replace('background-color: #1f2937;', 'background-color: #f9fafb;')}</body></html>"
@@ -339,7 +340,7 @@ def send_daily_report_email(report_data: Dict[str, Any], to_emails: List[str]) -
         pisa_status = pisa.CreatePDF(pdf_html, dest=pdf_buf)
         if not pisa_status.err:
             pdf_bytes = pdf_buf.getvalue()
-    except Exception as e:
-        log.error(f"[EMAIL_PDF_ERROR] Failed to generate PDF: {e}")
+    except Exception:
+        log.exception("[EMAIL_PDF_ERROR] Failed to generate PDF")
 
     return _send_email(subject, html, to_emails, pdf_bytes=pdf_bytes, pdf_filename=f"GAM_360_Report_{period}.pdf")

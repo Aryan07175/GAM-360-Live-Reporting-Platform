@@ -7,9 +7,10 @@ config/googleads.yaml and config/service_account.json files at boot time
 so the existing GAMClient code works unchanged.
 """
 
+import json
 import os
 import sys
-import json
+
 
 def setup_credentials():
     """Create credential files from environment variables for cloud deployment."""
@@ -78,7 +79,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", "8000"))
     uvicorn.run(
         "mcp_server.server:starlette_app",
         host="0.0.0.0",

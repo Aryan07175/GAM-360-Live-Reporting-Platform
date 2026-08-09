@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Any
 
 import pandas as pd
 
@@ -193,15 +192,9 @@ def compute_network_summary(
 
     # Active entities
     active_apps = 0
-    active_websites = 0
     if "ad_unit_name" in df.columns:
         ad_units = df["ad_unit_name"].unique()
         active_apps = len(ad_units)
-        # Rough heuristic: if name contains a dot it's likely a website domain
-        active_websites = sum(
-            1 for u in ad_units
-            if isinstance(u, str) and "." in u and not u.startswith("com.")
-        )
 
     health = compute_network_health({
         "fill_rate": fill_rate_val,
@@ -455,7 +448,6 @@ def compute_match_rate_analytics(
     elif dim_clean == "website":
         if "ad_unit_name" in df.columns:
             df = df.copy()
-            import re as _re
             def _dom(s):
                 if not isinstance(s, str):
                     return str(s)
@@ -652,7 +644,7 @@ def compute_anomalies_from_df(df: pd.DataFrame) -> list[dict]:
 
 def compute_automatic_insights(
     summary: dict,
-    child_networks: list[dict] = None,
+    child_networks: list[dict] | None = None,
 ) -> dict:
     """
     Generate structured insights from aggregated network metrics.

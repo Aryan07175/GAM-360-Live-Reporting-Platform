@@ -11,26 +11,26 @@ Performance Ranking, Anomalies, Recommendations, and Full Report.
 Plus: Ask GAM 360 — AI chat grounded in live dashboard data.
 """
 
-import json
-import math
-import hmac
-import logging
 import asyncio
+import hmac
+import json
+import logging
+import math
 import time
 from contextlib import asynccontextmanager
-from datetime import date, timedelta, datetime, timezone
+from datetime import UTC, date, datetime, timedelta
 
-from starlette.applications import Starlette
-from starlette.routing import Route
-from starlette.responses import JSONResponse, StreamingResponse
-from starlette.middleware import Middleware
-from starlette.middleware.cors import CORSMiddleware
+import numpy as np
+import pandas as pd
+import uvicorn
+from mcp import types
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
-from mcp import types
-import uvicorn
-import pandas as pd
-import numpy as np
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse, StreamingResponse
+from starlette.routing import Route
 
 
 def sanitize_for_json(obj):
@@ -56,48 +56,58 @@ def sanitize_for_json(obj):
         return bool(obj)
     return obj
 
-import sys
 import os
+import sys
+
 # Allow imports from the project root (fixes IDE warnings and CLI execution)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from mcp_server.email_service import (
+    log_credential_status,
+    send_alert_email,
+    send_daily_report_email,
+    send_test_email,
+)
 from mcp_server.gam_client import GAMClient
-from mcp_server.recipients_store import get_recipients, add_recipient, remove_recipient, get_preferences, update_preferences
-from mcp_server.email_service import send_alert_email, send_daily_report_email, send_test_email, log_credential_status
+from mcp_server.recipients_store import (
+    add_recipient,
+    get_preferences,
+    get_recipients,
+    remove_recipient,
+    update_preferences,
+)
 
 _last_alert_sent = {}  # title -> timestamp
 
 # AWS Bedrock service
 try:
     from mcp_server.services.bedrock_service import (
-        stream_bedrock_response,
         build_bedrock_messages,
-        reset_client,
+        stream_bedrock_response,
     )
     HAS_BEDROCK = True
 except ImportError:
     HAS_BEDROCK = False
 
 # Query Engine — analytics-first layer to keep Bedrock payloads small
-from mcp_server.services.query_engine import (
-    slim_rows,
-    slim_website_rows,
-    guard_payload_size,
-    compress_system_prompt,
-    log_payload_stats,
-    estimate_tokens,
-    MAX_ROWS_DEFAULT,
-    MAX_ROWS_TOP_N,
-)
-
 # Network Analytics Engine (additive — new features only)
 from mcp_server.services.network_analytics import (
-    compute_network_summary,
+    compare_entities,
+    compute_anomalies_from_df,
+    compute_automatic_insights,
     compute_child_network_analytics,
     compute_match_rate_analytics,
-    compute_automatic_insights,
-    compute_anomalies_from_df,
-    compare_entities,
+    compute_network_summary,
+)
+from mcp_server.services.query_engine import (
+    MAX_ROWS_DEFAULT,
+    MAX_ROWS_TOP_N,
+    compress_system_prompt,
+    estimate_tokens,
+    guard_payload_size,
+    log_payload_stats,
+    slim_rows,
+    slim_website_rows,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -133,7 +143,7 @@ def _cache_key(start_date: str, end_date: str, demand_channel: str = "all") -> s
 
 def _clean_expired_cache(ttl_minutes: int = 15):
     """Remove cache entries older than ttl_minutes"""
-    now = datetime.now()
+    now = datetime.now(tz=UTC)
     expired_keys = [
         k for k, v in _session_cache.items() 
         if (now - v["stored_at"]).total_seconds() > (ttl_minutes * 60)
@@ -241,8 +251,8 @@ def build_data_summary(df: pd.DataFrame, start: date, end: date) -> dict:
     }
 
 
-def execute_query_data(df: pd.DataFrame, operation: str, dimension: str = None,
-                       metric: str = None, filters: dict = None, limit: int = 10) -> dict:
+def execute_query_data(df: pd.DataFrame, operation: str, dimension: str | None = None,
+                       metric: str | None = None, filters: dict | None = None, limit: int = 10) -> dict:
     """
     Execute whitelisted Pandas aggregations against the cached DataFrame.
     This is the single tool given to Claude — never arbitrary code execution.
@@ -275,10 +285,10 @@ def execute_query_data(df: pd.DataFrame, operation: str, dimension: str = None,
 
         # Apply filters
         if filters:
-            if "app_name" in filters and filters["app_name"]:
+            if filters.get("app_name"):
                 name_filter = filters["app_name"].lower()
                 work_df = work_df[work_df["ad_unit_name"].str.lower().str.contains(name_filter, na=False)]
-            if "date" in filters and filters["date"]:
+            if filters.get("date"):
                 work_df = work_df[work_df["date"] == filters["date"]]
             if "min_revenue" in filters:
                 grouped = work_df.groupby("ad_unit_name")["ad_server_cpm_and_cpc_revenue"].sum()
@@ -386,7 +396,7 @@ def execute_query_data(df: pd.DataFrame, operation: str, dimension: str = None,
             return {"result": f"Unknown operation: {operation}. Use sum, mean, max, min, top_n, bottom_n, compare, or count."}
 
     except Exception as e:
-        log.exception(f"query_data failed: {e}")
+        log.exception("query_data failed")
         return {"error": str(e)}
 
 def _check_suspicious_variance(items: list[dict]) -> dict:
@@ -421,7 +431,7 @@ def build_chat_system_prompt(compact_summary: dict) -> str:
     Build the system prompt with today's date injected so the model can
     compute exact calendar dates for any relative phrase the user types.
     """
-    today = date.today()
+    today = date.today()  # noqa: DTZ011
     yesterday = today - timedelta(days=1)
     past7   = today - timedelta(days=7)
     past30  = today - timedelta(days=30)
@@ -447,7 +457,7 @@ def build_chat_system_prompt(compact_summary: dict) -> str:
     # with the plain summary_str in the middle.
     try:
         summary_str = _json.dumps(compact_summary, indent=2, default=str)
-    except Exception:
+    except (TypeError, ValueError):
         summary_str = '{"error": "context unavailable"}'
 
     # ── Part 1: static prompt text (f-string — contains only date variables) ──
@@ -2128,7 +2138,7 @@ If any of the above tools returns `{"_live_data_status": "unavailable"}`, you MU
     # triggering Python f-string brace parsing on the JSON content.
     try:
         return _part1 + summary_str + _part2
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         log.error("[Chat] Prompt assembly failed: %s", exc)
         # Return a minimal but functional fallback prompt
         return _part1 + '{"error": "context unavailable"}' + _part2
@@ -2151,7 +2161,7 @@ def _resolve_chat_dates(start_raw: str, end_raw: str) -> tuple[date, date]:
       'last N days' historically used exclusive (today - 6 = 7 rows incl. today).
       We standardise both to today - N for simplicity.
     """
-    today = date.today()
+    today = date.today()  # noqa: DTZ011
     yesterday = today - timedelta(days=1)
 
     # Relativedelta-style month arithmetic without dateutil
@@ -2214,7 +2224,7 @@ def _resolve_chat_dates(start_raw: str, end_raw: str) -> tuple[date, date]:
         key = _normalise(raw)
         if key in presets:
             return presets[key][0]  # fallback: return start
-        return datetime.strptime(raw, "%Y-%m-%d").date()
+        return datetime.strptime(raw, "%Y-%m-%d").date()  # noqa: DTZ007
 
     start_key = _normalise(start_raw)
     if start_key in presets:
@@ -2238,7 +2248,7 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
     """
     from mcp_server.gam_client import DIMENSION_MAP, DIMENSIONS_NEED_SEPARATE_REPORT
 
-    today = date.today()
+    today = date.today()  # noqa: DTZ011
     ytd_start = today.replace(month=1, day=1)
 
     # ── Apply YTD default when no dates provided ─────────────────────────────
@@ -2256,7 +2266,7 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
 
     try:
         start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return {"error": f"Invalid date format: {e}. Use YYYY-MM-DD."}
 
     # ── Map channel → demand_channel for gam_client ──────────────────────────
@@ -2296,7 +2306,7 @@ async def execute_query_gam_data(input_dict: dict) -> dict:
             start_date, end_date, False, demand_channel,
             extra_dims or None, separate_report,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         log.error("[Chat:query_gam_data] GAM fetch failed: %s", e)
         return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
 
@@ -2936,7 +2946,7 @@ def _make_tool_executor(cached_df):
                 result = {"count": len(res), "active_only": active_only_flag, "ad_units": res}
                 log_payload_stats("getAdUnitHierarchy", result)
                 return guard_payload_size(result, "ad_units")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error("[Chat:getAdUnitHierarchy] failed: %s", e)
                 return {"error": f"Failed to fetch ad unit hierarchy: {e}"}
 
@@ -2956,7 +2966,7 @@ def _make_tool_executor(cached_df):
                 result = {"count": len(res), "active_only": active_only_flag, "placements": res}
                 log_payload_stats("getPlacements", result)
                 return guard_payload_size(result, "placements")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error("[Chat:getPlacements] failed: %s", e)
                 return {"error": f"Failed to fetch placements: {e}"}
 
@@ -2971,7 +2981,7 @@ def _make_tool_executor(cached_df):
             start_raw = input_dict.get("start_date", "").strip()
             end_raw   = input_dict.get("end_date",   "").strip()
 
-            today = date.today()
+            today = date.today()  # noqa: DTZ011
             yesterday = today - timedelta(days=1)
 
             # Default: yesterday (single day) — avoids fetching months of data on free-tier
@@ -2983,7 +2993,7 @@ def _make_tool_executor(cached_df):
 
             try:
                 start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 return {"error": f"Invalid date format: {e}. Use YYYY-MM-DD."}
 
             # Safety cap: never fetch more than 30 days at once (free-tier memory limit)
@@ -2997,7 +3007,7 @@ def _make_tool_executor(cached_df):
                 df = await gam.get_live_data_multi_day(
                     start_date, end_date, force_refresh=True, demand_channel="all"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error(f"[Chat:{tool_name}] GAM fetch failed: {e}")
                 return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
 
@@ -3022,7 +3032,7 @@ def _make_tool_executor(cached_df):
 
         # ── getRevenueExtremesWebsiteReport: multi-period top and bottom website analysis ────
         if tool_name == "getRevenueExtremesWebsiteReport":
-            today = date.today()
+            today = date.today()  # noqa: DTZ011
             yesterday = today - timedelta(days=1)
             periods = [
                 ("today", today, today),
@@ -3054,7 +3064,7 @@ def _make_tool_executor(cached_df):
                         "highest_websites": top_websites[:5],
                         "lowest_websites": bottom_websites[:5],
                     })
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     log.warning("[Chat:getRevenueExtremesWebsiteReport] period %s failed: %s", label, e)
                     period_results.append({
                         "period": label,
@@ -3091,7 +3101,7 @@ def _make_tool_executor(cached_df):
                 meta = gam.get_network_metadata()
                 log_payload_stats("getNetworkMetadata", meta)
                 return meta
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error("[Chat:getNetworkMetadata] GAM fetch failed: %s", e)
                 return {"error": f"Failed to fetch network metadata: {e}"}
 
@@ -3100,7 +3110,7 @@ def _make_tool_executor(cached_df):
             end_raw    = input_dict.get("end_date",   "").strip()
             inc_insights = input_dict.get("include_insights", True)
 
-            today = date.today()
+            today = date.today()  # noqa: DTZ011
             if not start_raw:
                 start_raw = today.replace(month=1, day=1).isoformat()
             if not end_raw:
@@ -3108,14 +3118,14 @@ def _make_tool_executor(cached_df):
 
             try:
                 start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 return {"error": f"Invalid date format: {e}"}
 
             try:
                 df = await gam.get_live_data_multi_day(
                     start_date, end_date, force_refresh=True, demand_channel="all"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error("[Chat:getNetworkSummary] GAM fetch failed: %s", e)
                 return {"error": f"Failed to fetch data from Google Ad Manager: {e}"}
 
@@ -3137,7 +3147,7 @@ def _make_tool_executor(cached_df):
             limit     = min(int(input_dict.get("limit", 15)), 25)
             filter_nc = input_dict.get("filter_network", "")
 
-            today = date.today()
+            today = date.today()  # noqa: DTZ011
             if not start_raw:
                 start_raw = today.replace(month=1, day=1).isoformat()
             if not end_raw:
@@ -3145,7 +3155,7 @@ def _make_tool_executor(cached_df):
 
             try:
                 start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 return {"error": f"Invalid date format: {e}"}
 
             # Safety cap
@@ -3161,7 +3171,7 @@ def _make_tool_executor(cached_df):
                     extra_dims=["CHILD_NETWORK_CODE"],
                     omit_ad_units=True,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 err_msg = str(e).lower()
                 # If the account doesn't have MCM, GAM throws a dimension error.
                 # Catch it and retry without the child network dimension so we can
@@ -3174,7 +3184,7 @@ def _make_tool_executor(cached_df):
                             force_refresh=True,
                             demand_channel="all",
                         )
-                    except Exception as fallback_e:
+                    except Exception as fallback_e:  # noqa: BLE001
                         log.error("[Chat:getChildNetworkAnalytics] GAM fallback fetch failed: %s", fallback_e)
                         return {"error": f"Failed to fetch fallback data from Google Ad Manager: {fallback_e}"}
                 else:
@@ -3207,7 +3217,7 @@ def _make_tool_executor(cached_df):
             filter_name = input_dict.get("filter_name", "")
             limit       = int(input_dict.get("limit", 15))
 
-            today = date.today()
+            today = date.today()  # noqa: DTZ011
             if not start_raw:
                 start_raw = today.replace(month=1, day=1).isoformat()
             if not end_raw:
@@ -3215,7 +3225,7 @@ def _make_tool_executor(cached_df):
 
             try:
                 start_date, end_date = _resolve_chat_dates(start_raw, end_raw)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 return {"error": f"Invalid date format: {e}"}
 
             # For child_network dimension, add CHILD_NETWORK_CODE dim
@@ -3228,7 +3238,7 @@ def _make_tool_executor(cached_df):
                     demand_channel="all",
                     extra_dims=extra_dims,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 err_msg = str(e).lower()
                 if extra_dims and ("dimension" in err_msg or "permission" in err_msg or "child" in err_msg or "illegal" in err_msg or "invalid" in err_msg):
                     log.warning("[Chat:getMatchRateAnalytics] MCM dimension failed, retrying without it: %s", e)
@@ -3240,7 +3250,7 @@ def _make_tool_executor(cached_df):
                         )
                         # Switch dimension to 'app' so we fallback gracefully instead of erroring
                         dimension = "app"
-                    except Exception as fallback_e:
+                    except Exception as fallback_e:  # noqa: BLE001
                         log.error("[Chat:getMatchRateAnalytics] GAM fallback fetch failed: %s", fallback_e)
                         return {"error": f"Failed to fetch data from Google Ad Manager: {fallback_e}"}
                 else:
@@ -3265,7 +3275,7 @@ def _make_tool_executor(cached_df):
                 result = await asyncio.to_thread(gam.get_labels, limit, name_filter, active_only)
                 log_payload_stats("getLabels", result)
                 return guard_payload_size(result, "labels")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error("[Chat:getLabels] failed: %s", e)
                 return {"error": f"Failed to fetch labels: {e}"}
 
@@ -3277,7 +3287,7 @@ def _make_tool_executor(cached_df):
                 result = await asyncio.to_thread(gam.get_custom_targeting, key_filter, value_filter, limit)
                 log_payload_stats("getCustomTargeting", result)
                 return guard_payload_size(result, "keys")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error("[Chat:getCustomTargeting] failed: %s", e)
                 return {"error": f"Failed to fetch custom targeting: {e}"}
 
@@ -3289,7 +3299,7 @@ def _make_tool_executor(cached_df):
                 result = await asyncio.to_thread(gam.get_ad_rules, limit, name_filter, active_only)
                 log_payload_stats("getAdRules", result)
                 return guard_payload_size(result, "rules")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error("[Chat:getAdRules] failed: %s", e)
                 return {"error": f"Failed to fetch ad rules: {e}"}
 
@@ -3299,81 +3309,81 @@ def _make_tool_executor(cached_df):
             start_raw = input_dict.get("start_date", "").strip()
             end_raw   = input_dict.get("end_date",   "").strip()
             # Default to past 7 days if Bedrock doesn't supply dates
-            _today = date.today()
+            _today = date.today()  # noqa: DTZ011
             if not start_raw:
                 start_raw = (_today - timedelta(days=7)).isoformat()
             if not end_raw:
                 end_raw = _today.isoformat()
             try:
                 s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 return {"error": f"Invalid date format: {exc}"}
             try:
                 result = await asyncio.to_thread(gam.get_kpi_health_score, s_date, e_date)
                 log_payload_stats("getKPIHealthScore", result)
                 return guard_payload_size(result, "kpi_scores")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error("[Chat:getKPIHealthScore] failed: %s", e)
                 return {"error": f"Failed to compute KPI Health Score: {e}"}
 
         if tool_name == "getExecutiveBriefing":
             start_raw = input_dict.get("start_date", "").strip()
             end_raw   = input_dict.get("end_date",   "").strip()
-            _today = date.today()
+            _today = date.today()  # noqa: DTZ011
             if not start_raw:
                 start_raw = (_today - timedelta(days=7)).isoformat()
             if not end_raw:
                 end_raw = _today.isoformat()
             try:
                 s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 return {"error": f"Invalid date format: {exc}"}
             compare_days = int(input_dict.get("compare_days", 7))
             try:
                 result = await asyncio.to_thread(gam.get_executive_briefing, s_date, e_date, compare_days)
                 log_payload_stats("getExecutiveBriefing", result)
                 return guard_payload_size(result, "current_period")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error("[Chat:getExecutiveBriefing] failed: %s", e)
                 return {"error": f"Failed to generate executive briefing: {e}"}
 
         if tool_name == "getAnomalyReport":
             start_raw = input_dict.get("start_date", "").strip()
             end_raw   = input_dict.get("end_date",   "").strip()
-            _today = date.today()
+            _today = date.today()  # noqa: DTZ011
             if not start_raw:
                 start_raw = (_today - timedelta(days=7)).isoformat()
             if not end_raw:
                 end_raw = _today.isoformat()
             try:
                 s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 return {"error": f"Invalid date format: {exc}"}
             try:
                 result = await asyncio.to_thread(gam.get_anomaly_report, s_date, e_date)
                 log_payload_stats("getAnomalyReport", result)
                 return guard_payload_size(result, "critical_anomalies")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error("[Chat:getAnomalyReport] failed: %s", e)
                 return {"error": f"Failed to run anomaly report: {e}"}
 
         if tool_name == "getOptimizationOpportunities":
             start_raw = input_dict.get("start_date", "").strip()
             end_raw   = input_dict.get("end_date",   "").strip()
-            _today = date.today()
+            _today = date.today()  # noqa: DTZ011
             if not start_raw:
                 start_raw = (_today - timedelta(days=7)).isoformat()
             if not end_raw:
                 end_raw = _today.isoformat()
             try:
                 s_date, e_date = _resolve_chat_dates(start_raw, end_raw)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 return {"error": f"Invalid date format: {exc}"}
             try:
                 result = await asyncio.to_thread(gam.get_optimization_opportunities, s_date, e_date)
                 log_payload_stats("getOptimizationOpportunities", result)
                 return guard_payload_size(result, "opportunities")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.error("[Chat:getOptimizationOpportunities] failed: %s", e)
                 return {"error": f"Failed to generate optimization opportunities: {e}"}
 
@@ -3390,7 +3400,7 @@ def _make_tool_executor(cached_df):
                     raw_json = {"items": raw_json, "count": len(raw_json)}
                 log_payload_stats(tool_name, raw_json)
                 return guard_payload_size(raw_json, "results")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             log.warning("[Chat:%s] fallback execute_tool_logic threw error: %s", tool_name, e)
 
         return {"error": f"Unknown tool: {tool_name}"}
@@ -3494,7 +3504,8 @@ async def handle_chat(request):
         # Return a graceful error instead of crashing the Uvicorn process.
         log.error("[Chat] MemoryError: GAM query exceeded available RAM. "
                   "Tell user to narrow date range.")
-        import gc as _gc; _gc.collect()
+        import gc as _gc
+        _gc.collect()
         return JSONResponse(
             {"error": (
                 "The requested query is too large to process on this instance. "
@@ -3506,7 +3517,7 @@ async def handle_chat(request):
         )
 
     except Exception as e:
-        log.exception("[Chat] Request error: %s", e)
+        log.exception("[Chat] Request error")
         return JSONResponse(
             {"error": str(e)},
             status_code=500,
@@ -3607,7 +3618,7 @@ def _resolve_dates(args: dict) -> tuple[date, date, int, int]:
     start_raw = args.get("startDate", args.get("date", "yesterday"))
     end_raw = args.get("endDate", start_raw)
 
-    today = date.today()
+    today = date.today()  # noqa: DTZ011
     yesterday = today - timedelta(days=1)
 
     presets = {
@@ -3630,7 +3641,7 @@ def _resolve_dates(args: dict) -> tuple[date, date, int, int]:
                 return yesterday
             if raw == "today":
                 return today
-            return datetime.strptime(raw, "%Y-%m-%d").date()
+            return datetime.strptime(raw, "%Y-%m-%d").date()  # noqa: DTZ007
         d_start, d_end = parse_date(start_raw), parse_date(end_raw)
         
     start_time = args.get("startTime", "00:00")
@@ -3638,12 +3649,12 @@ def _resolve_dates(args: dict) -> tuple[date, date, int, int]:
     
     try:
         start_hour = int(start_time.split(":")[0])
-    except Exception:
+    except Exception:  # noqa: BLE001
         start_hour = 0
         
     try:
         end_hour = int(end_time.split(":")[0])
-    except Exception:
+    except Exception:  # noqa: BLE001
         end_hour = 23
         
     return d_start, d_end, start_hour, end_hour
@@ -3851,7 +3862,7 @@ def _get_all_website_metrics(df: pd.DataFrame) -> list[dict]:
     return websites_perf
 
 
-def _compute_website_performance(df: pd.DataFrame, start: date, end: date, domains: list[str] = None) -> dict:
+def _compute_website_performance(df: pd.DataFrame, start: date, end: date, domains: list[str] | None = None) -> dict:
     if df.empty:
         return {"result": "Website inventory is available but performance metrics could not be retrieved."}
     
@@ -5546,9 +5557,8 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
         df = await gam.get_live_data_multi_day(start_date, end_date, force_refresh, demand_channel)
         
         # Filter by hour if hour dimension is present and hour bounds are restrictive
-        if "hour" in df.columns and not df.empty:
-            if start_hour > 0 or end_hour < 23:
-                df = df[(df["hour"] >= start_hour) & (df["hour"] <= end_hour)]
+        if "hour" in df.columns and not df.empty and (start_hour > 0 or end_hour < 23):
+            df = df[(df["hour"] >= start_hour) & (df["hour"] <= end_hour)]
 
         # ── Cache DataFrame + data summary for Ask GAM 360 chat ──
         if not df.empty:
@@ -5557,7 +5567,7 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             _session_cache[cache_key] = {
                 "df": df.copy(),
                 "summary": summary,
-                "stored_at": datetime.now(),
+                "stored_at": datetime.now(tz=UTC),
                 "start": str(start_date),
                 "end": str(end_date),
             }
@@ -5603,8 +5613,8 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
                             result = await asyncio.to_thread(send_alert_email, a, emails, p)
                             if result.get("status") != "success":
                                 log.error("[EMAIL_SEND_FAILED] Alert email failed: %s", result)
-                        except Exception as exc:
-                            log.error("[EMAIL_SEND_FAILED] Exception sending alert email: %s", exc, exc_info=True)
+                        except Exception:
+                            log.exception("[EMAIL_SEND_FAILED] Exception sending alert email")
 
                     asyncio.create_task(_send_and_log())
 
@@ -5627,7 +5637,7 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
 
         result = {
             "status": "ok",
-            "fetched_at": datetime.now().isoformat(),
+            "fetched_at": datetime.now(tz=UTC).isoformat(),
             "startDate": str(start_date),
             "endDate": str(end_date),
             "startTime": f"{start_hour:02d}:00",
@@ -5798,7 +5808,7 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             prev_start = prev_end - timedelta(days=period_days - 1)
             try:
                 df_previous = await gam.get_live_data_multi_day(prev_start, prev_end, force_refresh)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.warning(f"Could not fetch previous period for anomaly detection: {e}")
                 df_previous = pd.DataFrame()
             threshold = float(arguments.get("threshold_pct", 20.0))
@@ -5814,7 +5824,7 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             try:
                 df_previous = await gam.get_live_data_multi_day(prev_start, prev_end, force_refresh)
                 anomalies = compute_anomalies(df, df_previous)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 anomalies = []
             result["recommendations"] = generate_recommendations(summary, apps, anomalies)
 
@@ -5833,7 +5843,7 @@ async def execute_tool_logic(name: str, arguments: dict) -> list[types.TextConte
             try:
                 df_previous = await gam.get_live_data_multi_day(prev_start, prev_end, force_refresh)
                 anomalies = compute_anomalies(df, df_previous)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 anomalies = []
 
             recommendations = generate_recommendations(summary, apps, anomalies)
@@ -5905,7 +5915,7 @@ async def handle_api_tool(request):
             "Access-Control-Allow-Origin": "*",
         })
     except Exception as e:
-        log.exception(f"REST /api/tool error: {e}")
+        log.exception("REST /api/tool error")
         return JSONResponse(
             {"error": str(e), "status": "error"},
             status_code=500,
@@ -5931,7 +5941,7 @@ async def daily_report_loop():
                 continue
 
             log.info("[EMAIL_DAILY] Generating daily report for %d recipient(s)...", len(to_emails))
-            today = date.today()
+            today = date.today()  # noqa: DTZ011
             yesterday = today - timedelta(days=1)
 
             df = await gam.get_live_data_multi_day(yesterday, yesterday, force_refresh=True)
@@ -5956,15 +5966,15 @@ async def daily_report_loop():
                         log.info("[EMAIL_DAILY] Daily report sent successfully to %s", emails)
                     else:
                         log.error("[EMAIL_SEND_FAILED] Daily report email failed: %s", result)
-                except Exception as exc:
-                    log.error("[EMAIL_SEND_FAILED] Exception in daily report email: %s", exc, exc_info=True)
+                except Exception:
+                    log.exception("[EMAIL_SEND_FAILED] Exception in daily report email")
 
             asyncio.create_task(_send_daily())
 
         except asyncio.CancelledError:
             break
-        except Exception as e:
-            log.error("[EMAIL_DAILY] Unexpected error in daily report loop: %s", e, exc_info=True)
+        except Exception:
+            log.exception("[EMAIL_DAILY] Unexpected error in daily report loop")
             await asyncio.sleep(60)
 
 async def handle_api_recipients(request):
@@ -5993,7 +6003,7 @@ async def handle_api_recipients(request):
                     raise ValueError("Email is required")
                 new_rec = add_recipient(email, label)
                 return JSONResponse(new_rec, headers={"Access-Control-Allow-Origin": "*"})
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             return JSONResponse({"error": str(e)}, status_code=400, headers={"Access-Control-Allow-Origin": "*"})
 
 async def handle_api_recipients_delete(request):
@@ -6043,7 +6053,7 @@ async def handle_api_test_email(request):
         return JSONResponse(result, status_code=status_code, headers={"Access-Control-Allow-Origin": "*"})
 
     except Exception as e:
-        log.error("[TEST_EMAIL] Exception: %s", e, exc_info=True)
+        log.exception("[TEST_EMAIL] Exception")
         return JSONResponse(
             {"status": "error", "error": str(e)},
             status_code=500,
@@ -6074,9 +6084,9 @@ async def handle_execute_action(request):
           "token_payload": { <the exact payload dict from propose_action() > }
         }
     """
-    import sqlite3
     import hashlib
     import json as _json
+    import sqlite3
     import time as _time
 
     CORS_HEADERS = {
@@ -6126,7 +6136,7 @@ async def handle_execute_action(request):
             )
             con.commit()
             con.close()
-        except Exception as audit_err:
+        except Exception as audit_err:  # noqa: BLE001
             log.error("[AUDIT] Failed to write audit record: %s", audit_err)
 
     remote_addr = request.headers.get(
@@ -6136,7 +6146,7 @@ async def handle_execute_action(request):
 
     try:
         body = await request.json()
-    except Exception:
+    except Exception:  # noqa: BLE001
         return JSONResponse(
             {"error": "Invalid JSON body", "status": "error"},
             status_code=400, headers=CORS_HEADERS,
@@ -6215,7 +6225,7 @@ async def handle_execute_action(request):
 
     except Exception as e:
         _audit(action_type, entity_type, entity_id, "ERROR", str(e), remote_addr)
-        log.exception("[EXECUTE_ACTION] Error executing write: %s", e)
+        log.exception("[EXECUTE_ACTION] Error executing write")
         return JSONResponse(
             {"error": str(e), "status": "error"},
             status_code=500, headers=CORS_HEADERS,
@@ -6305,6 +6315,6 @@ starlette_app = Starlette(
 )
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", "8000"))
     uvicorn.run(starlette_app, host="0.0.0.0", port=port)
 

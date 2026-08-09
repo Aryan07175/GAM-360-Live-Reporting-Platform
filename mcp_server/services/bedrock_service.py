@@ -21,10 +21,11 @@ import json
 import logging
 import os
 import time
-import urllib.request
 import urllib.error
 import urllib.parse
-from typing import AsyncGenerator, Callable, Awaitable
+import urllib.request
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from datetime import UTC
 
 log = logging.getLogger("bedrock_service")
 
@@ -1594,11 +1595,11 @@ def _call_bedrock(payload: dict) -> dict:
     if access_key and secret_key:
         # Build SigV4 signed request using Python stdlib (no boto3 required for signing)
         try:
-            import hmac
             import hashlib
-            from datetime import datetime as _dt, timezone as _tz
+            import hmac
+            from datetime import datetime as _dt
 
-            now = _dt.now(_tz.utc)
+            now = _dt.now(UTC)
             amz_date = now.strftime("%Y%m%dT%H%M%SZ")
             date_stamp = now.strftime("%Y%m%d")
             service = "bedrock"
@@ -1622,14 +1623,7 @@ def _call_bedrock(payload: dict) -> dict:
             canonical_headers = "".join(f"{k}:{canonical_headers_dict[k]}\n" for k in sorted_header_names)
             signed_headers = ";".join(sorted_header_names)
 
-            canonical_request = "\n".join([
-                "POST",
-                canonical_uri,
-                "",  # canonical query string (empty)
-                canonical_headers,
-                signed_headers,
-                payload_hash,
-            ])
+            canonical_request = f"POST\n{canonical_uri}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
 
             algorithm = "AWS4-HMAC-SHA256"
             credential_scope = f"{date_stamp}/{region}/{service}/aws4_request"
@@ -1646,7 +1640,7 @@ def _call_bedrock(payload: dict) -> dict:
             signing_key = _sign(
                 _sign(
                     _sign(
-                        _sign(f"AWS4{secret_key}".encode("utf-8"), date_stamp),
+                        _sign(f"AWS4{secret_key}".encode(), date_stamp),
                         region,
                     ),
                     service,
@@ -1957,7 +1951,7 @@ async def stream_bedrock_response(
             return
 
         except Exception as exc:
-            log.exception("[Bedrock] Unexpected error attempt=%d: %s", attempt, exc)
+            log.exception("[Bedrock] Unexpected error attempt=%d", attempt)
             if attempt < max_retries:
                 backoff = base_backoff * (2 ** (attempt - 1))
                 await asyncio.sleep(backoff)

@@ -7,15 +7,16 @@ Request-scoped deduplication (30s window) prevents duplicate concurrent
 requests for the same date range during a single page load's Promise.all().
 """
 
-import os
-import io
+import asyncio
 import gc
 import gzip
-import asyncio
+import io
 import logging
+import os
 import urllib.request
-from datetime import date, datetime, timezone, timedelta
-from typing import Optional, Callable, List, Dict, Any
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
+
 import pandas as pd
 from googleads import ad_manager, errors
 
@@ -197,12 +198,12 @@ class RequestDeduplicator:
             self._locks[key] = asyncio.Lock()
         return self._locks[key]
 
-    def get_if_fresh(self, key: str) -> Optional[pd.DataFrame]:
+    def get_if_fresh(self, key: str) -> pd.DataFrame | None:
         """Return result only if it was fetched within the TTL window."""
         entry = self._results.get(key)
         if entry:
             df, fetched_at = entry
-            age = (datetime.now(timezone.utc) - fetched_at).total_seconds()
+            age = (datetime.now(UTC) - fetched_at).total_seconds()
             if age < self.ttl:
                 return df
             else:
@@ -210,7 +211,7 @@ class RequestDeduplicator:
         return None
 
     def store(self, key: str, df: pd.DataFrame):
-        self._results[key] = (df, datetime.now(timezone.utc))
+        self._results[key] = (df, datetime.now(UTC))
 
     def clear(self):
         """Force-clear all deduplication entries."""
@@ -219,7 +220,7 @@ class RequestDeduplicator:
 
     async def cleanup(self):
         """Remove expired entries."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expired = [
             k for k, (_, t) in self._results.items()
             if (now - t).total_seconds() >= self.ttl
@@ -228,16 +229,15 @@ class RequestDeduplicator:
             del self._results[k]
         # Cleanup unused locks
         for k in list(self._locks.keys()):
-            if k not in self._results and k not in self._inflight:
-                if not self._locks[k].locked():
-                    del self._locks[k]
+            if k not in self._results and k not in self._inflight and not self._locks[k].locked():
+                del self._locks[k]
 
 
 _dedup = RequestDeduplicator()
 
 
 class GAMClient:
-    def __init__(self, network_code: str = None):
+    def __init__(self, network_code: str | None = None):
         creds = os.getenv("GAM_CREDENTIALS_PATH", "config/googleads.yaml")
         self.client = ad_manager.AdManagerClient.LoadFromStorage(creds)
         nc = network_code or os.getenv("GAM_NETWORK_CODE")
@@ -256,7 +256,7 @@ class GAMClient:
         self,
         start: date,
         end: date,
-        extra_dims: List[str] = None,
+        extra_dims: list[str] | None = None,
         separate_report: bool = False,
         omit_ad_units: bool = False,
     ) -> int:
@@ -362,9 +362,9 @@ class GAMClient:
     async def wait_for_report(self, job_id: int, poll_interval: int = 3) -> bool:
         """Poll GAM until report is ready. Non-blocking via asyncio.sleep."""
         report_service = self._report_service()
-        start_time = datetime.now()
+        start_time = datetime.now()  # noqa: DTZ005
         while True:
-            elapsed = (datetime.now() - start_time).total_seconds()
+            elapsed = (datetime.now() - start_time).total_seconds()  # noqa: DTZ005
             if elapsed > REQUEST_TIMEOUT:
                 log.error(f"Report job {job_id} timed out after {REQUEST_TIMEOUT}s")
                 raise TimeoutError(f"GAM report generation timed out after {REQUEST_TIMEOUT} seconds")
@@ -592,7 +592,7 @@ class GAMClient:
 
     async def get_live_data(
         self, start: date, end: date, force_refresh: bool = False,
-        demand_channel: str = "all", extra_dims: List[str] = None,
+        demand_channel: str = "all", extra_dims: list[str] | None = None,
         separate_report: bool = False, omit_ad_units: bool = False,
     ) -> pd.DataFrame:
         """
@@ -642,7 +642,7 @@ class GAMClient:
 
     async def get_live_data_multi_day(
         self, start: date, end: date, force_refresh: bool = False,
-        demand_channel: str = "all", extra_dims: List[str] = None,
+        demand_channel: str = "all", extra_dims: list[str] | None = None,
         separate_report: bool = False, omit_ad_units: bool = False,
     ) -> pd.DataFrame:
         """
@@ -681,7 +681,7 @@ class GAMClient:
                     except Exception as e_in:
                         if attempt == retries - 1:
                             log.error(f"Chunk {s} to {e} failed after {retries} attempts: {e_in}")
-                            raise e_in
+                            raise
                         log.warning(f"Chunk {s} to {e} failed (attempt {attempt+1}/{retries}). Retrying... Error: {e_in}")
                         await asyncio.sleep(2 ** attempt)
 
@@ -703,10 +703,10 @@ class GAMClient:
     def get_ad_units(
         self,
         limit: int = 500,
-        name_filter: str = None,
-        parent_id: str = None,
+        name_filter: str | None = None,
+        parent_id: str | None = None,
         active_only: bool = True
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch Ad Units from InventoryService."""
         inv_service = self.client.GetService("InventoryService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
@@ -742,9 +742,9 @@ class GAMClient:
     def get_placements(
         self,
         limit: int = 500,
-        name_filter: str = None,
+        name_filter: str | None = None,
         active_only: bool = True
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch Placements from PlacementService."""
         place_service = self.client.GetService("PlacementService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
@@ -773,9 +773,9 @@ class GAMClient:
     def get_custom_targeting_keys(
         self,
         limit: int = 500,
-        name_filter: str = None,
+        name_filter: str | None = None,
         active_only: bool = True
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch Custom Targeting Keys from CustomTargetingService."""
         ct_service = self.client.GetService("CustomTargetingService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
@@ -811,7 +811,7 @@ class GAMClient:
         return f"{getattr(d, 'year', 0):04d}-{getattr(d, 'month', 0):02d}-{getattr(d, 'day', 0):02d} {getattr(dt, 'hour', 0):02d}:{getattr(dt, 'minute', 0):02d} ({getattr(dt, 'timeZoneId', '')})"
 
     @staticmethod
-    def _extract_raw_date(dt: Any) -> Optional[str]:
+    def _extract_raw_date(dt: Any) -> str | None:
         """Extract a YYYY-MM-DD string from a GAM DateTime object, or None if unavailable.
         Used by get_delivery_progress for time-aware pacing calculations."""
         if not dt or not hasattr(dt, "date") or not getattr(dt, "date", None):
@@ -827,10 +827,10 @@ class GAMClient:
     def get_orders(
         self,
         limit: int = 100,
-        name_filter: str = None,
-        status_filter: str = None,
-        advertiser_id: str = None
-    ) -> List[Dict[str, Any]]:
+        name_filter: str | None = None,
+        status_filter: str | None = None,
+        advertiser_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch Orders from OrderService."""
         ord_service = self.client.GetService("OrderService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
@@ -871,11 +871,11 @@ class GAMClient:
     def get_line_items(
         self,
         limit: int = 100,
-        name_filter: str = None,
-        order_id: str = None,
-        status_filter: str = None,
-        type_filter: str = None
-    ) -> List[Dict[str, Any]]:
+        name_filter: str | None = None,
+        order_id: str | None = None,
+        status_filter: str | None = None,
+        type_filter: str | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch Line Items from LineItemService."""
         li_service = self.client.GetService("LineItemService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
@@ -931,9 +931,9 @@ class GAMClient:
     def get_delivery_progress(
         self,
         limit: int = 50,
-        order_id: str = None,
+        order_id: str | None = None,
         status_filter: str = "DELIVERING"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Compute time-aware Delivery Progress and Pacing Diagnostics for Line Items.
 
         Pacing is evaluated relative to how far the line item is through its flight,
@@ -941,7 +941,7 @@ class GAMClient:
         a 30-day flight that has delivered 8% of goal is ON TRACK (expected ~10%).
         """
         line_items = self.get_line_items(limit=limit, order_id=order_id, status_filter=status_filter)
-        today = date.today()
+        today = date.today()  # noqa: DTZ011
         diagnostics = []
         for li in line_items:
             contracted = li["contracted_units_bought"]
@@ -956,8 +956,8 @@ class GAMClient:
                 # ── Time-aware pacing ─────────────────────────────────────────
                 # Compute how far through the flight we are, then check if
                 # actual delivery is lagging behind the expected linear rate.
-                flight_elapsed_pct: Optional[float] = None
-                expected_delivery_pct: Optional[float] = None
+                flight_elapsed_pct: float | None = None
+                expected_delivery_pct: float | None = None
                 try:
                     if start_raw and end_raw:
                         start_dt = date.fromisoformat(start_raw)
@@ -1026,11 +1026,11 @@ class GAMClient:
     def get_creatives(
         self,
         limit: int = 100,
-        name_filter: str = None,
-        advertiser_id: str = None,
-        type_filter: str = None,
-        size_filter: str = None
-    ) -> List[Dict[str, Any]]:
+        name_filter: str | None = None,
+        advertiser_id: str | None = None,
+        type_filter: str | None = None,
+        size_filter: str | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch live Google Ad Manager Creatives via CreativeService."""
         creative_service = self.client.GetService("CreativeService", version=API_VERSION)
         statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
@@ -1089,10 +1089,10 @@ class GAMClient:
     def get_creative_templates(
         self,
         limit: int = 50,
-        name_filter: str = None,
-        type_filter: str = None,
-        status_filter: str = None
-    ) -> List[Dict[str, Any]]:
+        name_filter: str | None = None,
+        type_filter: str | None = None,
+        status_filter: str | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch Google Ad Manager Creative Templates via CreativeTemplateService."""
         template_service = self.client.GetService("CreativeTemplateService", version=API_VERSION)
         statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
@@ -1132,8 +1132,8 @@ class GAMClient:
     def get_creative_diagnostics(
         self,
         limit: int = 100,
-        advertiser_id: str = None
-    ) -> Dict[str, Any]:
+        advertiser_id: str | None = None
+    ) -> dict[str, Any]:
         """Compute Live Creative Inventory Health and Format Distribution Diagnostics."""
         creatives = self.get_creatives(limit=limit, advertiser_id=advertiser_id)
         type_counts = {}
@@ -1175,10 +1175,10 @@ class GAMClient:
     def get_companies(
         self,
         limit: int = 100,
-        name_filter: str = None,
-        type_filter: str = None,
-        credit_status_filter: str = None
-    ) -> List[Dict[str, Any]]:
+        name_filter: str | None = None,
+        type_filter: str | None = None,
+        credit_status_filter: str | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch live Google Ad Manager Companies (Advertisers, Agencies, Ad Networks, Child Publishers)."""
         company_service = self.client.GetService("CompanyService", version=API_VERSION)
         statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
@@ -1216,9 +1216,9 @@ class GAMClient:
     def get_contacts(
         self,
         limit: int = 50,
-        name_filter: str = None,
-        company_id: str = None
-    ) -> List[Dict[str, Any]]:
+        name_filter: str | None = None,
+        company_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch Google Ad Manager Commercial Contacts via ContactService."""
         contact_service = self.client.GetService("ContactService", version=API_VERSION)
         statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
@@ -1253,7 +1253,7 @@ class GAMClient:
     def get_advertiser_analytics(
         self,
         limit: int = 200
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Compute Commercial Customer Portfolio Analytics across Advertisers and Agencies."""
         companies = self.get_companies(limit=limit)
         type_counts = {}
@@ -1298,7 +1298,7 @@ class GAMClient:
         end_date: datetime.date,
         limit: int = 20,
         metric: str = "revenue"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Rank Advertisers across the network by live Revenue or Impressions."""
         # Use run_report synchronously via thread in async or directly here
         df = self.get_live_data_sync(start_date, end_date, extra_dims=["ADVERTISER_NAME"], separate_report=True)
@@ -1358,7 +1358,7 @@ class GAMClient:
         end_date: datetime.date,
         force_refresh: bool = False,
         demand_channel: str = "all",
-        extra_dims: List[str] = None,
+        extra_dims: list[str] | None = None,
         separate_report: bool = False,
         omit_ad_units: bool = False,
     ) -> pd.DataFrame:
@@ -1398,10 +1398,10 @@ class GAMClient:
     def get_yield_groups(
         self,
         limit: int = 50,
-        name_filter: str = None,
-        type_filter: str = None,
-        format_filter: str = None
-    ) -> List[Dict[str, Any]]:
+        name_filter: str | None = None,
+        type_filter: str | None = None,
+        format_filter: str | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch Open Bidding and Mediation Yield Groups via YieldGroupService."""
         yg_service = self.client.GetService("YieldGroupService", version=API_VERSION)
         statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
@@ -1451,9 +1451,9 @@ class GAMClient:
     def get_pricing_rules(
         self,
         limit: int = 50,
-        name_filter: str = None,
-        status_filter: str = None
-    ) -> List[Dict[str, Any]]:
+        name_filter: str | None = None,
+        status_filter: str | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch Unified Pricing Rules and Ad Rules via AdRuleService."""
         rule_service = self.client.GetService("AdRuleService", version=API_VERSION)
         statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
@@ -1488,10 +1488,10 @@ class GAMClient:
     def get_programmatic_deals(
         self,
         limit: int = 50,
-        name_filter: str = None,
-        deal_type: str = None,
-        status_filter: str = None
-    ) -> List[Dict[str, Any]]:
+        name_filter: str | None = None,
+        deal_type: str | None = None,
+        status_filter: str | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch Programmatic Guaranteed, Preferred Deals, and Private Auctions via ProposalLineItemService."""
         pli_service = self.client.GetService("ProposalLineItemService", version=API_VERSION)
         statement_builder = ad_manager.StatementBuilder(version=API_VERSION)
@@ -1532,7 +1532,7 @@ class GAMClient:
         start_date: datetime.date,
         end_date: datetime.date,
         breakdown: str = "demand_channel"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Analyze Monetization and Yield across Demand Channels, Yield Groups, or Programmatic Channels."""
         dim_map = {
             "demand_channel": "DEMAND_CHANNEL_NAME",
@@ -1590,12 +1590,12 @@ class GAMClient:
         ad_unit_id: str,
         units: int = 100000,  # renamed from target_impressions to match server.py call site
         days: int = 7
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Predict inventory availability and capacity for a target ad unit via ForecastService."""
         forecast_service = self.client.GetService("ForecastService", version=API_VERSION)
 
         # Use UTC to be timezone-agnostic across all publishers
-        now = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=2)
+        now = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=2)
         end = now + timedelta(days=int(days))
 
         prospective_line_item = {
@@ -1656,7 +1656,7 @@ class GAMClient:
     def get_line_item_delivery_forecast(
         self,
         line_item_id: int
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Predict delivery progress and under-delivery risk for an existing line item."""
         li_service = self.client.GetService("LineItemService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION).Where(f"id = {line_item_id}")
@@ -1689,7 +1689,7 @@ class GAMClient:
                     pred = int(getattr(f_list[0], "predictedDeliveryUnits", 0))
                     forecast_data["predicted_delivery_units"] = pred
                     forecast_data["under_delivery_risk"] = pred < goal_units if goal_units > 0 else False
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.warning(f"Could not retrieve SOAP delivery forecast for {line_item_id}: {e}")
 
         under_risk = forecast_data.get("under_delivery_risk", False)
@@ -1713,10 +1713,10 @@ class GAMClient:
     def get_capacity_planning_report(
         self,
         limit: int = 10
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Analyze network-wide inventory capacity across top ad units over a 30-day projection horizon."""
         # Bug 5 fix: use a 7-day baseline (ending 2 days ago) for more stable daily averages
-        end_d = date.today() - timedelta(days=2)
+        end_d = date.today() - timedelta(days=2)  # noqa: DTZ011
         start_d = end_d - timedelta(days=6)  # 7 days inclusive
 
         df = self.get_live_data_sync(start_d, end_d, extra_dims=["AD_UNIT_NAME"], separate_report=False)
@@ -1766,10 +1766,10 @@ class GAMClient:
         self,
         min_unfilled_rate_pct: float = 20.0,
         limit: int = 10
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Identify revenue optimization and yield improvement opportunities across network ad units."""
         # Bug 5 fix: use a 7-day baseline (ending 2 days ago) for more stable opportunity detection
-        end_d = date.today() - timedelta(days=2)
+        end_d = date.today() - timedelta(days=2)  # noqa: DTZ011
         start_d = end_d - timedelta(days=6)  # 7 days inclusive
         
         df = self.get_live_data_sync(start_d, end_d, extra_dims=["AD_UNIT_NAME"], separate_report=False)
@@ -1827,7 +1827,7 @@ class GAMClient:
 
     # ─── PHASE 8: AUDIENCE & TRAFFIC INTELLIGENCE ─────────────────────────────
 
-    def get_audience_geography(self, start_date: date, end_date: date, level: str = "country", limit: int = 25) -> List[Dict[str, Any]]:
+    def get_audience_geography(self, start_date: date, end_date: date, level: str = "country", limit: int = 25) -> list[dict[str, Any]]:
         """
         Analyze audience geographical distribution by country, state (region), or city.
         """
@@ -1875,7 +1875,7 @@ class GAMClient:
             })
         return results
 
-    def get_audience_technology(self, start_date: date, end_date: date, dimension: str = "device", limit: int = 25) -> List[Dict[str, Any]]:
+    def get_audience_technology(self, start_date: date, end_date: date, dimension: str = "device", limit: int = 25) -> list[dict[str, Any]]:
         """
         Analyze audience technology breakdown by device category, browser, or operating system.
         """
@@ -1924,7 +1924,7 @@ class GAMClient:
             })
         return results
 
-    def get_mobile_app_traffic(self, start_date: date, end_date: date, limit: int = 25) -> List[Dict[str, Any]]:
+    def get_mobile_app_traffic(self, start_date: date, end_date: date, limit: int = 25) -> list[dict[str, Any]]:
         """
         Analyze traffic and monetization across mobile apps.
         """
@@ -1964,7 +1964,7 @@ class GAMClient:
             })
         return results
 
-    def get_traffic_sources(self, start_date: date, end_date: date, source_type: str = "domain", limit: int = 25) -> List[Dict[str, Any]]:
+    def get_traffic_sources(self, start_date: date, end_date: date, source_type: str = "domain", limit: int = 25) -> list[dict[str, Any]]:
         """
         Analyze traffic sources by domain, referrer URL, or traffic source channel.
         """
@@ -2015,7 +2015,7 @@ class GAMClient:
 
     # ─── PHASE 9: NETWORK INTELLIGENCE ────────────────────────────────────────
 
-    def get_network_metadata(self) -> Dict[str, Any]:
+    def get_network_metadata(self) -> dict[str, Any]:
         """
         Retrieve live network configuration, properties, timezone, currency, and root ad unit from GAM.
         """
@@ -2034,11 +2034,15 @@ class GAMClient:
             "is_test": bool(net.get("isTest", False))
         }
 
-    def get_network_summary(self, start_date: date, end_date: date, include_insights: bool = True) -> Dict[str, Any]:
+    def get_network_summary(self, start_date: date, end_date: date, include_insights: bool = True) -> dict[str, Any]:
         """
         Analyze high-level network health, core KPIs, fill rate, eCPM, and automatic insights.
         """
-        from mcp_server.services.network_analytics import compute_network_summary, compute_anomalies_from_df, compute_automatic_insights
+        from mcp_server.services.network_analytics import (
+            compute_anomalies_from_df,
+            compute_automatic_insights,
+            compute_network_summary,
+        )
         df = self.get_live_data_sync(start_date, end_date, force_refresh=True, demand_channel="all")
         summary = compute_network_summary(df, self.network_code, start_date, end_date)
         if include_insights:
@@ -2048,18 +2052,20 @@ class GAMClient:
             summary["insights"] = insights
         return summary
 
-    def get_child_network_analytics(self, start_date: date, end_date: date, metric: str = "revenue", limit: int = 15, filter_network: str = "") -> Dict[str, Any]:
+    def get_child_network_analytics(self, start_date: date, end_date: date, metric: str = "revenue", limit: int = 15, filter_network: str = "") -> dict[str, Any]:
         """
         Analyze monetization and performance across child publishers and MCM partners.
         """
-        from mcp_server.services.network_analytics import compute_child_network_analytics
+        from mcp_server.services.network_analytics import (
+            compute_child_network_analytics,
+        )
         try:
             df = self.get_live_data_sync(start_date, end_date, force_refresh=True, demand_channel="all", extra_dims=["CHILD_NETWORK_CODE"], omit_ad_units=True)
-        except Exception:
+        except Exception:  # noqa: BLE001
             df = self.get_live_data_sync(start_date, end_date, force_refresh=True, demand_channel="all")
         return compute_child_network_analytics(df, start_date, end_date, metric=metric, limit=limit, filter_network=filter_network)
 
-    def get_match_rate_analytics(self, start_date: date, end_date: date, dimension: str = "device", limit: int = 15) -> Dict[str, Any]:
+    def get_match_rate_analytics(self, start_date: date, end_date: date, dimension: str = "device", limit: int = 15) -> dict[str, Any]:
         """
         Analyze ad request fill rates and match rates broken down by dimension.
         """
@@ -2075,7 +2081,7 @@ class GAMClient:
         target_dim = dim_map.get(dimension.lower().strip(), "DEVICE_CATEGORY_NAME")
         try:
             df = self.get_live_data_sync(start_date, end_date, force_refresh=True, demand_channel="all", extra_dims=[target_dim], omit_ad_units=True)
-        except Exception:
+        except Exception:  # noqa: BLE001
             df = self.get_live_data_sync(start_date, end_date, force_refresh=True, demand_channel="all")
         return compute_match_rate_analytics(df, dimension, start_date, end_date, limit=limit)
 
@@ -2084,13 +2090,13 @@ class GAMClient:
     def get_labels(
         self,
         limit: int = 100,
-        name_filter: str = None,
+        name_filter: str | None = None,
         active_only: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Fetch Labels (Competitive Exclusions, Roadblocks, Frequency Caps) from LabelService."""
         label_service = self.client.GetService("LabelService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
-        conditions: List[str] = []
+        conditions: list[str] = []
         if active_only:
             conditions.append("isActive = :active")
             sb.WithBindVariable("active", True)
@@ -2117,7 +2123,7 @@ class GAMClient:
                 "types": types_list,
             })
         # Summarise label types
-        type_counts: Dict[str, int] = {}
+        type_counts: dict[str, int] = {}
         for r in results:
             for t in r["types"]:
                 type_counts[t] = type_counts.get(t, 0) + 1
@@ -2130,25 +2136,25 @@ class GAMClient:
 
     def get_custom_targeting(
         self,
-        key_filter: str = None,
-        value_filter: str = None,
+        key_filter: str | None = None,
+        value_filter: str | None = None,
         limit: int = 50,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Fetch Custom Targeting Keys and their Values (enriched view) from CustomTargetingService."""
         ct_service = self.client.GetService("CustomTargetingService", version=API_VERSION)
         import zeep
 
         # ── Keys ──────────────────────────────────────────────────────────────
         key_sb = ad_manager.StatementBuilder(version=API_VERSION)
-        key_conditions: List[str] = ["status = :status"]
+        key_conditions: list[str] = ["status = :status"]
         key_sb.WithBindVariable("status", "ACTIVE")
         if key_filter:
             key_conditions.append("name LIKE :kname")
             key_sb.WithBindVariable("kname", f"%{key_filter}%")
         key_sb.Where(" AND ".join(key_conditions)).Limit(int(limit))
         key_res = ct_service.getCustomTargetingKeysByStatement(key_sb.ToStatement())
-        keys: List[Dict[str, Any]] = []
-        key_id_map: Dict[str, str] = {}
+        keys: list[dict[str, Any]] = []
+        key_id_map: dict[str, str] = {}
         for k in getattr(key_res, "results", []) or []:
             kd = zeep.helpers.serialize_object(k)
             kid = str(kd.get("id", ""))
@@ -2165,7 +2171,7 @@ class GAMClient:
 
         # ── Values ────────────────────────────────────────────────────────────
         val_sb = ad_manager.StatementBuilder(version=API_VERSION)
-        val_conditions: List[str] = ["status = :vstatus"]
+        val_conditions: list[str] = ["status = :vstatus"]
         val_sb.WithBindVariable("vstatus", "ACTIVE")
         if value_filter:
             val_conditions.append("name LIKE :vname")
@@ -2173,7 +2179,7 @@ class GAMClient:
         val_sb.Where(" AND ".join(val_conditions)).Limit(int(limit) * 10)
         val_res = ct_service.getCustomTargetingValuesByStatement(val_sb.ToStatement())
         # Group values by key
-        values_by_key: Dict[str, List[Dict[str, Any]]] = {}
+        values_by_key: dict[str, list[dict[str, Any]]] = {}
         for v in getattr(val_res, "results", []) or []:
             vd = zeep.helpers.serialize_object(v)
             key_id = str(vd.get("customTargetingKeyId", ""))
@@ -2186,7 +2192,7 @@ class GAMClient:
             })
 
         # Enrich keys with their values
-        enriched: List[Dict[str, Any]] = []
+        enriched: list[dict[str, Any]] = []
         for k in keys:
             k["values"] = values_by_key.get(k["id"], [])
             k["value_count"] = len(k["values"])
@@ -2202,15 +2208,15 @@ class GAMClient:
     def get_ad_rules(
         self,
         limit: int = 50,
-        name_filter: str = None,
+        name_filter: str | None = None,
         active_only: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Fetch Ad Rules (Frequency Caps, Roadblocks, Competitive Exclusions) from AdRuleService."""
         rule_service = self.client.GetService("AdRuleService", version=API_VERSION)
         import zeep
 
         sb = ad_manager.StatementBuilder(version=API_VERSION)
-        conditions: List[str] = []
+        conditions: list[str] = []
         if active_only:
             conditions.append("status = :status")
             sb.WithBindVariable("status", "ACTIVE")
@@ -2222,7 +2228,7 @@ class GAMClient:
         sb.Limit(int(limit))
         res = rule_service.getAdRulesByStatement(sb.ToStatement())
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for rule in getattr(res, "results", []) or []:
             rd = zeep.helpers.serialize_object(rule)
             # Frequency cap details
@@ -2264,13 +2270,16 @@ class GAMClient:
         self,
         start_date: date,
         end_date: date,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Compute a composite KPI Health Score across all key metrics.
         Returns a 0–100 health score with per-dimension scores and action items.
         """
         from mcp_server.services.network_analytics import (
-            compute_network_health, _pct, _ecpm, _ctr,
+            _ctr,
+            _ecpm,
+            _pct,
+            compute_network_health,
         )
 
         df = self.get_live_data_sync(start_date, end_date, force_refresh=True)
@@ -2347,7 +2356,7 @@ class GAMClient:
         composite = round(sum(scores.values()) / len(scores))
 
         # Action items
-        actions: List[str] = []
+        actions: list[str] = []
         if fill_rate < 50:
             actions.append("Fill rate is low — increase demand partner competition or lower floor prices.")
         if ecpm_val < 0.5:
@@ -2390,13 +2399,16 @@ class GAMClient:
         start_date: date,
         end_date: date,
         compare_days: int = 7,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate a full executive briefing with period-over-period comparison,
         anomalies, top performers, and strategic recommendations.
         """
         from mcp_server.services.network_analytics import (
-            _pct, _ecpm, _ctr, _detect_entity_anomalies,
+            _ctr,
+            _detect_entity_anomalies,
+            _ecpm,
+            _pct,
         )
 
         # Current period
@@ -2406,10 +2418,10 @@ class GAMClient:
         comp_start = comp_end - timedelta(days=compare_days - 1)
         try:
             df_prev = self.get_live_data_sync(comp_start, comp_end, force_refresh=True)
-        except Exception:
+        except Exception:  # noqa: BLE001
             df_prev = None
 
-        def _summarise(frame) -> Dict[str, Any]:
+        def _summarise(frame) -> dict[str, Any]:
             if frame is None or frame.empty:
                 return {"revenue": 0, "impressions": 0, "clicks": 0,
                         "fill_rate": 0, "ecpm": 0, "ctr": 0, "requests": 0, "match_rate": 0}
@@ -2447,7 +2459,7 @@ class GAMClient:
         changes = {k: _chg(curr[k], prev[k]) for k in curr}
 
         # Top performers (by ad unit / app)
-        top_performers: List[Dict] = []
+        top_performers: list[dict] = []
         if not df.empty and "ad_unit_name" in df.columns:
             grp = df.groupby("ad_unit_name", as_index=False).agg(
                 revenue=("ad_server_cpm_and_cpc_revenue", "sum"),
@@ -2469,7 +2481,7 @@ class GAMClient:
         )
 
         # Recommendations
-        recs: List[str] = []
+        recs: list[str] = []
         if changes.get("revenue", 0) < -10:
             recs.append("Revenue declined significantly — investigate top performers for delivery issues.")
         if curr["fill_rate"] < 50:
@@ -2490,27 +2502,29 @@ class GAMClient:
             "top_performers": top_performers,
             "anomalies": anomalies,
             "strategic_recommendations": recs,
-            "briefing_generated_at": str(date.today()),
+            "briefing_generated_at": str(date.today()),  # noqa: DTZ011
         }
 
     def get_anomaly_report(
         self,
         start_date: date,
         end_date: date,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Deep anomaly detection across revenue, fill rate, CTR, and traffic.
         Scans each ad unit/app individually and flags issues.
         """
         from mcp_server.services.network_analytics import (
-            _pct, _ecpm, _ctr, _detect_entity_anomalies,
+            _ctr,
+            _detect_entity_anomalies,
+            _pct,
         )
 
         df = self.get_live_data_sync(start_date, end_date, force_refresh=True)
         if df.empty:
             return {"error": "No data for the requested period.", "anomalies": []}
 
-        all_anomalies: List[Dict] = []
+        all_anomalies: list[dict] = []
         entity_col = "ad_unit_name" if "ad_unit_name" in df.columns else None
 
         if entity_col:
@@ -2581,18 +2595,18 @@ class GAMClient:
         self,
         start_date: date,
         end_date: date,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         AI-powered optimization opportunity scan across fill rate, eCPM, CTR,
         and revenue. Returns prioritised action items for the revenue team.
         """
-        from mcp_server.services.network_analytics import _pct, _ecpm, _ctr
+        from mcp_server.services.network_analytics import _ctr, _ecpm, _pct
 
         df = self.get_live_data_sync(start_date, end_date, force_refresh=True)
         if df.empty:
             return {"error": "No data for the requested period.", "opportunities": []}
 
-        opportunities: List[Dict] = []
+        opportunities: list[dict] = []
 
         rev_total = float(df["ad_server_cpm_and_cpc_revenue"].sum())
         imp_total = int(df["ad_server_impressions"].sum())
@@ -2703,10 +2717,10 @@ class GAMClient:
     def get_line_item_creative_associations(
         self,
         limit: int = 200,
-        line_item_id: str = None,
-        creative_id: str = None,
-        status_filter: str = None,
-    ) -> Dict[str, Any]:
+        line_item_id: str | None = None,
+        creative_id: str | None = None,
+        status_filter: str | None = None,
+    ) -> dict[str, Any]:
         """Fetch Line Item – Creative Associations (LICAs) from LineItemCreativeAssociationService.
 
         Answers questions like:
@@ -2718,7 +2732,7 @@ class GAMClient:
             "LineItemCreativeAssociationService", version=API_VERSION
         )
         sb = ad_manager.StatementBuilder(version=API_VERSION)
-        conditions: List[str] = []
+        conditions: list[str] = []
         if line_item_id:
             conditions.append("lineItemId = :liid")
             sb.WithBindVariable("liid", int(line_item_id))
@@ -2744,7 +2758,7 @@ class GAMClient:
         )
         res = lica_service.getLineItemCreativeAssociationsByStatement(sb.ToStatement())
 
-        associations: List[Dict[str, Any]] = []
+        associations: list[dict[str, Any]] = []
         for lica in getattr(res, "results", []) or []:
             start_dt_obj = getattr(lica, "startDateTime", None)
             end_dt_obj = getattr(lica, "endDateTime", None)
@@ -2760,7 +2774,7 @@ class GAMClient:
             })
 
         # Build per-line-item summary: how many creatives per line item
-        li_creative_count: Dict[str, int] = {}
+        li_creative_count: dict[str, int] = {}
         for a in associations:
             li_id = a["line_item_id"]
             li_creative_count[li_id] = li_creative_count.get(li_id, 0) + 1
@@ -2780,7 +2794,7 @@ class GAMClient:
         self,
         limit: int = 100,
         status_filter: str = "DELIVERING",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Find active line items that have NO creative associations.
 
         Answers: 'Which line items are running without creatives attached?'
@@ -2801,7 +2815,7 @@ class GAMClient:
             }
 
         # Fetch LICA records for those line items
-        all_li_ids = {li["id"] for li in line_items}
+        _ = {li["id"] for li in line_items}  # all_li_ids unused but kept for reference
         lica_service = self.client.GetService(
             "LineItemCreativeAssociationService", version=API_VERSION
         )
@@ -2856,10 +2870,10 @@ class GAMClient:
     def get_audience_segments(
         self,
         limit: int = 100,
-        name_filter: str = None,
-        type_filter: str = None,
-        status_filter: str = None,
-    ) -> Dict[str, Any]:
+        name_filter: str | None = None,
+        type_filter: str | None = None,
+        status_filter: str | None = None,
+    ) -> dict[str, Any]:
         """Fetch first-party and third-party Audience Segments from AudienceSegmentService.
 
         Answers questions like:
@@ -2873,7 +2887,7 @@ class GAMClient:
             "AudienceSegmentService", version=API_VERSION
         )
         sb = ad_manager.StatementBuilder(version=API_VERSION)
-        conditions: List[str] = []
+        conditions: list[str] = []
         if status_filter:
             conditions.append("status = :st")
             sb.WithBindVariable("st", status_filter.upper())
@@ -2895,7 +2909,7 @@ class GAMClient:
         )
         res = seg_service.getAudienceSegmentsByStatement(sb.ToStatement())
 
-        segments: List[Dict[str, Any]] = []
+        segments: list[dict[str, Any]] = []
         for seg in getattr(res, "results", []) or []:
             sd = zeep.helpers.serialize_object(seg)
             segments.append({
@@ -2944,10 +2958,10 @@ class GAMClient:
     def get_network_users(
         self,
         limit: int = 100,
-        name_filter: str = None,
-        role_filter: str = None,
+        name_filter: str | None = None,
+        role_filter: str | None = None,
         active_only: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Fetch network users and their roles from UserService.
 
         Answers questions like:
@@ -2959,7 +2973,7 @@ class GAMClient:
         import zeep
         user_service = self.client.GetService("UserService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
-        conditions: List[str] = []
+        conditions: list[str] = []
         if active_only:
             conditions.append("isActive = :active")
             sb.WithBindVariable("active", True)
@@ -2978,7 +2992,7 @@ class GAMClient:
         )
         res = user_service.getUsersByStatement(sb.ToStatement())
 
-        users: List[Dict[str, Any]] = []
+        users: list[dict[str, Any]] = []
         for u in getattr(res, "results", []) or []:
             ud = zeep.helpers.serialize_object(u)
             role_name = str(ud.get("roleName", "") or "")
@@ -3025,7 +3039,7 @@ class GAMClient:
         start_date: date,
         end_date: date,
         limit: int = 25,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Analyze which Custom Targeting Key-Values drive the most impressions and revenue.
 
         Runs a live GAM report grouped by CUSTOM_TARGETING_VALUE_ID dimension.
@@ -3073,7 +3087,7 @@ class GAMClient:
             "ad_server_clicks" if "ad_server_clicks" in df.columns else None
         )
 
-        agg_map: Dict[str, str] = {rev_col: "sum", imp_col: "sum"}
+        agg_map: dict[str, str] = {rev_col: "sum", imp_col: "sum"}
         if clk_col and clk_col in df.columns:
             agg_map[clk_col] = "sum"
 
@@ -3083,7 +3097,7 @@ class GAMClient:
         total_imp = float(grouped[imp_col].sum())
         total_rev = float(grouped[rev_col].sum())
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for rank, row in enumerate(grouped.head(int(limit)).to_dict("records"), 1):
             imp = int(row.get(imp_col, 0))
             rev = float(row.get(rev_col, 0.0))
@@ -3126,9 +3140,9 @@ class GAMClient:
     def get_unified_pricing_rules(
         self,
         limit: int = 100,
-        name_filter: str = None,
-        status_filter: str = None,
-    ) -> Dict[str, Any]:
+        name_filter: str | None = None,
+        status_filter: str | None = None,
+    ) -> dict[str, Any]:
         """Fetch Unified Pricing Rules (UPRs) from UnifiedPricingRuleService.
 
         UPRs are the modern floor pricing mechanism in Google Ad Manager 360.
@@ -3151,7 +3165,7 @@ class GAMClient:
             "UnifiedPricingRuleService", version=API_VERSION
         )
         sb = ad_manager.StatementBuilder(version=API_VERSION)
-        conditions: List[str] = []
+        conditions: list[str] = []
 
         if status_filter:
             conditions.append("status = :st")
@@ -3171,7 +3185,7 @@ class GAMClient:
         )
         res = upr_service.getUnifiedPricingRulesByStatement(sb.ToStatement())
 
-        rules: List[Dict[str, Any]] = []
+        rules: list[dict[str, Any]] = []
         for upr in getattr(res, "results", []) or []:
             raw = zeep.helpers.serialize_object(upr)
 
@@ -3184,7 +3198,7 @@ class GAMClient:
 
             # ── Targeting summary (human-readable, no math) ───────────────────
             targeting = raw.get("targeting") or {}
-            targeting_summary: List[str] = []
+            targeting_summary: list[str] = []
 
             # Inventory targeting
             inv_tgt = targeting.get("inventoryTargeting") or {}
@@ -3306,10 +3320,10 @@ class GAMClient:
         ad_unit_id: str,
         units: int = 100_000,
         days: int = 7,
-        contending_line_item_ids: List[str] = None,
+        contending_line_item_ids: list[str] | None = None,
         line_item_type: str = "STANDARD",
         priority: int = 8,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Model the impact of adding a new line item on existing campaigns.
 
         Calls ForecastService.getAvailabilityForecast with a prospective line item
@@ -3336,7 +3350,7 @@ class GAMClient:
         )
 
         # Start 2 days from now (GAM forecast requirement: start must be future)
-        now = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=2)
+        now = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=2)
         end = now + timedelta(days=int(days))
 
         prospective_line_item = {
@@ -3371,7 +3385,7 @@ class GAMClient:
         }
 
         # ForecastOptions — pass contending IDs if specified, else GAM auto-detects
-        forecast_options: Dict[str, Any] = {}
+        forecast_options: dict[str, Any] = {}
         if contending_line_item_ids:
             forecast_options["contendingLineItemIds"] = [
                 int(lid) for lid in contending_line_item_ids
@@ -3401,7 +3415,7 @@ class GAMClient:
         # ── Contending campaigns ──────────────────────────────────────────────
         # GAM returns ContendingLineItem: lineItemId, name, contention (0–1 float)
         raw_contending = getattr(res, "contendingLineItems", []) or []
-        contending_data: List[Dict[str, Any]] = []
+        contending_data: list[dict[str, Any]] = []
         for cli in raw_contending:
             cli_id         = str(getattr(cli, "lineItemId", "") or "")
             cli_name       = str(getattr(cli, "name", "") or "")
@@ -3500,7 +3514,7 @@ class GAMClient:
         start_date: date,
         end_date: date,
         breakdown_dimension: str = "VIDEO_POSITION_NAME",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Deep analytics for video viewership, drop-off, and pod performance.
         
         Fetches Video metrics using ReportService and processes them in Pandas.
@@ -3510,8 +3524,8 @@ class GAMClient:
             breakdown_dimension: VIDEO_POSITION_NAME (default), CONTENT_NAME, or VIDEO_AD_TYPE
         """
         import asyncio
-        import io
         import gzip
+        import io
         import urllib.request
         
         report_service = self._report_service()
@@ -3543,7 +3557,7 @@ class GAMClient:
             log.info(f"Request made: Service: \"ReportService\" Method: \"runReportJob\" (Video Analytics, dim={dim})")
             report_job = report_service.runReportJob(report_job)
             job_id = report_job["id"]
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             log.error("Failed to run video analytics report: %s", e)
             return {"error": f"GAM API Error: {e}"}
 
@@ -3573,8 +3587,9 @@ class GAMClient:
             raw = raw.decode("utf-8")
             df = pd.read_csv(io.StringIO(raw))
             del raw
-            import gc; gc.collect()
-        except Exception as e:
+            import gc
+            gc.collect()
+        except Exception as e:  # noqa: BLE001
             return {"error": f"Failed to download video report: {e}"}
 
         # Standardize columns
@@ -3670,7 +3685,7 @@ class GAMClient:
         start_date: date,
         end_date: date,
         breakdown_dimension: str = "VIDEO_CONTENT_NAME",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Dynamic Ad Insertion (DAI) analytics — stream type, content, and error breakdown.
 
         Runs a ReportService job with DAI-specific dimensions and metrics, then
@@ -3685,10 +3700,10 @@ class GAMClient:
         Args:
             breakdown_dimension: VIDEO_CONTENT_NAME (default), STREAM_TYPE, VIDEO_AD_TYPE
         """
-        import io
-        import gzip
-        import urllib.request
         import asyncio
+        import gzip
+        import io
+        import urllib.request
 
         report_service = self._report_service()
 
@@ -3722,7 +3737,7 @@ class GAMClient:
             )
             report_job = report_service.runReportJob(report_job)
             job_id = report_job["id"]
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             log.error("Failed to run DAI analytics report: %s", e)
             return {"_live_data_status": "unavailable", "_message": f"GAM API Error: {e}"}
 
@@ -3752,8 +3767,9 @@ class GAMClient:
             raw = raw.decode("utf-8")
             df = pd.read_csv(io.StringIO(raw))
             del raw
-            import gc; gc.collect()
-        except Exception as e:
+            import gc
+            gc.collect()
+        except Exception as e:  # noqa: BLE001
             return {"_live_data_status": "unavailable", "_message": f"Failed to download DAI report: {e}"}
 
         df.columns = [
@@ -3778,7 +3794,7 @@ class GAMClient:
         def _safe_float(series: pd.Series) -> float:
             return float(series.fillna(0).astype("float64").sum())
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for name, grp in df.groupby(dim_col):
             imps     = _safe_int(grp.get("ad_server_impressions",   pd.Series(dtype=float)))
             starts   = _safe_int(grp.get("video_viewership_start",   pd.Series(dtype=float)))
@@ -3836,10 +3852,10 @@ class GAMClient:
 
     def get_change_history(
         self,
-        entity_type: str = None,
-        entity_id: str = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
         limit: int = 50,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Fetch audit trail for changes made to GAM entities via ChangeHistoryService.
 
         Answers:
@@ -3859,7 +3875,7 @@ class GAMClient:
         ch_service = self.client.GetService("ChangeHistoryService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
 
-        conditions: List[str] = []
+        conditions: list[str] = []
         if entity_type:
             et = str(entity_type).upper().strip()
             conditions.append("entityType = :et")
@@ -3879,7 +3895,7 @@ class GAMClient:
         )
         response = ch_service.getChangeHistoryByStatement(sb.ToStatement())
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for item in getattr(response, "results", []) or []:
             rd = serialize_object(item)
             # Parse datetime from GAM's nested DateTime structure
@@ -3945,10 +3961,10 @@ class GAMClient:
     def get_orders_with_team(
         self,
         limit: int = 50,
-        name_filter: str = None,
-        status_filter: str = None,
-        advertiser_id: str = None,
-    ) -> Dict[str, Any]:
+        name_filter: str | None = None,
+        status_filter: str | None = None,
+        advertiser_id: str | None = None,
+    ) -> dict[str, Any]:
         """Fetch Orders with full CRM/team ownership data (salesperson, trafficker).
 
         Uses the same OrderService as get_orders() but additionally extracts
@@ -3965,7 +3981,7 @@ class GAMClient:
         ord_service = self.client.GetService("OrderService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
 
-        conditions: List[str] = []
+        conditions: list[str] = []
         if status_filter:
             conditions.append("status = :status")
             sb.WithBindVariable("status", status_filter.upper())
@@ -3987,7 +4003,7 @@ class GAMClient:
         )
         res = ord_service.getOrdersByStatement(sb.ToStatement())
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for o in getattr(res, "results", []):
             budget_obj = getattr(o, "totalBudget", None)
             budget_amt = getattr(budget_obj, "microAmount", 0) / 1_000_000.0 if budget_obj else 0.0
@@ -4029,14 +4045,14 @@ class GAMClient:
         df_o = pd.DataFrame(results)
 
         # Revenue by salesperson_id (best proxy without resolving user names)
-        sp_summary: List[Dict] = []
+        sp_summary: list[dict] = []
         if "salesperson_id" in df_o.columns:
             sp_counts = df_o["salesperson_id"].value_counts().head(10)
             for sp_id, cnt in sp_counts.items():
                 sp_summary.append({"salesperson_id": sp_id, "order_count": int(cnt)})
 
         # Active orders by trafficker
-        tr_summary: List[Dict] = []
+        tr_summary: list[dict] = []
         if "trafficker_id" in df_o.columns:
             tr_counts = df_o["trafficker_id"].value_counts().head(10)
             for tr_id, cnt in tr_counts.items():
@@ -4069,8 +4085,8 @@ class GAMClient:
     def get_creative_sets(
         self,
         limit: int = 50,
-        name_filter: str = None,
-    ) -> Dict[str, Any]:
+        name_filter: str | None = None,
+    ) -> dict[str, Any]:
         """List Creative Sets (companion ad groupings) via CreativeSetService.
 
         Answers:
@@ -4095,7 +4111,7 @@ class GAMClient:
         )
         res = cs_service.getCreativeSetsByStatement(sb.ToStatement())
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for item in getattr(res, "results", []) or []:
             rd = serialize_object(item)
             companion_ids = rd.get("companionCreativeIds") or []
@@ -4119,8 +4135,8 @@ class GAMClient:
     def get_teams(
         self,
         limit: int = 50,
-        name_filter: str = None,
-    ) -> Dict[str, Any]:
+        name_filter: str | None = None,
+    ) -> dict[str, Any]:
         """List Teams and their managed inventory/users via TeamService.
 
         Answers:
@@ -4145,7 +4161,7 @@ class GAMClient:
         )
         res = team_service.getTeamsByStatement(sb.ToStatement())
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for item in getattr(res, "results", []) or []:
             rd = serialize_object(item)
             records.append({
@@ -4166,8 +4182,8 @@ class GAMClient:
     def get_ad_unit_formats(
         self,
         limit: int = 100,
-        environment_filter: str = None,
-    ) -> Dict[str, Any]:
+        environment_filter: str | None = None,
+    ) -> dict[str, Any]:
         """List ad units with environment type (BROWSER, VIDEO_PLAYER, etc.) for format filtering.
 
         Distinct from getAdUnits (general inventory listing). This tool focuses
@@ -4194,7 +4210,7 @@ class GAMClient:
         )
         res = inv_service.getAdUnitsByStatement(sb.ToStatement())
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for u in getattr(res, "results", []) or []:
             env_type = str(getattr(u, "environmentType", "") or "")
             records.append({
@@ -4226,7 +4242,7 @@ class GAMClient:
         ad_unit_id: str,
         days: int = 7,
         line_item_type: str = "STANDARD",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Estimate unique user reach for a prospective line item via ForecastService.getReachForecast.
 
         Distinct from getInventoryAvailabilityForecast (which returns impression units)
@@ -4238,7 +4254,7 @@ class GAMClient:
         """
         forecast_service = self.client.GetService("ForecastService", version=API_VERSION)
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=2)
+        now = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=2)
         end = now + timedelta(days=int(days))
 
         prospective = {
@@ -4280,7 +4296,7 @@ class GAMClient:
         )
         try:
             res = forecast_service.getReachForecast(prospective, {})
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             log.error("getReachForecast failed: %s", e)
             return {"_live_data_status": "unavailable", "_message": f"Reach forecast error: {e}"}
 
@@ -4311,9 +4327,9 @@ class GAMClient:
     def get_custom_fields(
         self,
         limit: int = 50,
-        entity_type_filter: str = None,
+        entity_type_filter: str | None = None,
         active_only: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """List Custom Field definitions via CustomFieldService.
 
         NOTE: Custom Fields are DIFFERENT from Custom Targeting Keys (CustomTargetingService).
@@ -4329,7 +4345,7 @@ class GAMClient:
 
         cf_service = self.client.GetService("CustomFieldService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
-        conditions: List[str] = []
+        conditions: list[str] = []
         if active_only:
             conditions.append("isActive = :active")
             sb.WithBindVariable("active", True)
@@ -4348,7 +4364,7 @@ class GAMClient:
         )
         res = cf_service.getCustomFieldsByStatement(sb.ToStatement())
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for item in getattr(res, "results", []) or []:
             rd = serialize_object(item)
             records.append({
@@ -4382,9 +4398,9 @@ class GAMClient:
     def get_proposals(
         self,
         limit: int = 50,
-        status_filter: str = None,
-        name_filter: str = None,
-    ) -> Dict[str, Any]:
+        status_filter: str | None = None,
+        name_filter: str | None = None,
+    ) -> dict[str, Any]:
         """Fetch Proposals and their approval workflow status via ProposalService.
 
         Distinct from ProposalLineItemService (which is already implemented).
@@ -4398,7 +4414,7 @@ class GAMClient:
         """
         prop_service = self.client.GetService("ProposalService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
-        conditions: List[str] = []
+        conditions: list[str] = []
         if status_filter:
             conditions.append("status = :status")
             sb.WithBindVariable("status", str(status_filter).upper())
@@ -4417,7 +4433,7 @@ class GAMClient:
         )
         res = prop_service.getProposalsByStatement(sb.ToStatement())
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for p in getattr(res, "results", []) or []:
             records.append({
                 "id":           str(getattr(p, "id", "")),
@@ -4447,7 +4463,7 @@ class GAMClient:
         self,
         limit: int = 50,
         min_requests: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Fetch auto-detected Suggested Ad Units via SuggestedAdUnitService.
 
         Suggested Ad Units are ad unit slots that have received real ad requests
@@ -4475,7 +4491,7 @@ class GAMClient:
         )
         res = su_service.getSuggestedAdUnitsByStatement(sb.ToStatement())
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for item in getattr(res, "results", []) or []:
             path = getattr(item, "path", None) or []
             if not isinstance(path, list):
@@ -4505,10 +4521,10 @@ class GAMClient:
 
     def get_line_items_by_label(
         self,
-        label_id: str = None,
-        label_name_filter: str = None,
+        label_id: str | None = None,
+        label_name_filter: str | None = None,
         limit: int = 50,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Find line items that have specific labels applied (via LineItemService).
 
         The existing getLabels() lists label definitions but cannot answer
@@ -4536,7 +4552,7 @@ class GAMClient:
         res = li_service.getLineItemsByStatement(sb.ToStatement())
 
         # Filter to only line items that have applied labels
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for li in getattr(res, "results", []) or []:
             applied = getattr(li, "appliedLabels", None) or []
             if not isinstance(applied, list):
@@ -4566,7 +4582,7 @@ class GAMClient:
                 "applied_label_count": len(applied_label_data),
             })
 
-        label_id_counts: Dict[str, int] = {}
+        label_id_counts: dict[str, int] = {}
         for r in records:
             for lbl in r["applied_labels"]:
                 lid = lbl["label_id"]
@@ -4587,8 +4603,8 @@ class GAMClient:
     def get_native_styles(
         self,
         limit: int = 50,
-        name_filter: str = None,
-    ) -> Dict[str, Any]:
+        name_filter: str | None = None,
+    ) -> dict[str, Any]:
         """List Native Ad Style definitions via NativeStyleService.
 
         IMPORTANT: NativeStyleService is SEPARATE from CreativeTemplateService.
@@ -4617,7 +4633,7 @@ class GAMClient:
         )
         res = ns_service.getNativeStylesByStatement(sb.ToStatement())
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for item in getattr(res, "results", []) or []:
             rd = serialize_object(item)
             records.append({
@@ -4639,9 +4655,9 @@ class GAMClient:
     def get_video_content(
         self,
         limit: int = 50,
-        name_filter: str = None,
-        status_filter: str = None,
-    ) -> Dict[str, Any]:
+        name_filter: str | None = None,
+        status_filter: str | None = None,
+    ) -> dict[str, Any]:
         """List video content entities and bundles via ContentService and ContentBundleService.
 
         Answers:
@@ -4654,7 +4670,7 @@ class GAMClient:
 
         content_service = self.client.GetService("ContentService", version=API_VERSION)
         sb = ad_manager.StatementBuilder(version=API_VERSION)
-        conditions: List[str] = []
+        conditions: list[str] = []
         if status_filter:
             conditions.append("status = :status")
             sb.WithBindVariable("status", str(status_filter).upper())
@@ -4673,7 +4689,7 @@ class GAMClient:
         )
         content_res = content_service.getContentByStatement(sb.ToStatement())
 
-        content_records: List[Dict[str, Any]] = []
+        content_records: list[dict[str, Any]] = []
         for item in getattr(content_res, "results", []) or []:
             rd = serialize_object(item)
             content_records.append({
@@ -4695,7 +4711,7 @@ class GAMClient:
                 API_VERSION,
             )
             bundle_res = bundle_service.getContentBundlesByStatement(sb2.ToStatement())
-            bundle_records: List[Dict[str, Any]] = []
+            bundle_records: list[dict[str, Any]] = []
             for item in getattr(bundle_res, "results", []) or []:
                 rd = serialize_object(item)
                 bundle_records.append({
@@ -4703,7 +4719,7 @@ class GAMClient:
                     "name":   str(rd.get("name", "") or ""),
                     "status": str(rd.get("status", "") or ""),
                 })
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             log.warning("ContentBundleService call failed (may not be enabled): %s", e)
             bundle_records = []
 
@@ -4719,8 +4735,8 @@ class GAMClient:
     def get_sites(
         self,
         limit: int = 50,
-        approval_status_filter: str = None,
-    ) -> Dict[str, Any]:
+        approval_status_filter: str | None = None,
+    ) -> dict[str, Any]:
         """List sites and their approval status via SiteService (primarily for MCM networks).
 
         Answers:
@@ -4749,7 +4765,7 @@ class GAMClient:
         )
         res = site_service.getSitesByStatement(sb.ToStatement())
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for item in getattr(res, "results", []) or []:
             rd = serialize_object(item)
             disapproval_reasons = rd.get("disapprovalReasons") or []
@@ -4794,7 +4810,7 @@ class GAMClient:
         prior_start: date,
         prior_end: date,
         metric: str = "revenue",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Root-cause decomposition: WHY did a metric change between two periods?
 
         Runs 3 targeted ReportService jobs (by ad unit, by advertiser, by device)
@@ -4811,10 +4827,10 @@ class GAMClient:
             prior_start / prior_end: the "comparison" baseline period
             metric: 'revenue' (default), 'impressions', or 'ecpm'
         """
-        import io
-        import gzip
-        import urllib.request
         import asyncio
+        import gzip
+        import io
+        import urllib.request
 
         METRIC_MAP = {
             "revenue":     "ad_server_cpm_and_cpc_revenue",
@@ -4880,12 +4896,12 @@ class GAMClient:
             ]
             return df
 
-        def _top_drivers(dim: str, dim_col_override: str = None) -> List[Dict[str, Any]]:
+        def _top_drivers(dim: str, dim_col_override: str | None = None) -> list[dict[str, Any]]:
             """Return top +/- contributors for a dimension."""
             try:
                 df_cur  = _run_report_sync(current_start, current_end,  dim)
                 df_pri  = _run_report_sync(prior_start,   prior_end,    dim)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.warning("Decomposition dim %s failed: %s", dim, e)
                 return []
 
@@ -4934,7 +4950,7 @@ class GAMClient:
             ("DEVICE_CATEGORY_NAME","by_device"),
         ]
 
-        decomposition: Dict[str, Any] = {}
+        decomposition: dict[str, Any] = {}
         for (dim, key) in dimensions:
             log.info("[RootCause] Running decomposition slice: dim=%s metric=%s", dim, metric_label)
             decomposition[key] = _top_drivers(dim)
@@ -5003,8 +5019,8 @@ class GAMClient:
         entity_type: str,
         entity_id: str,
         reason: str = "",
-        extra: Dict[str, Any] = None,
-    ) -> Dict[str, Any]:
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Build a human-in-the-loop confirmation payload for a proposed write action.
 
         THIS METHOD NEVER WRITES TO GAM. It fetches the current entity state from
@@ -5022,8 +5038,8 @@ class GAMClient:
         - 'Stop delivery on line item Y'
         """
         import hashlib
-        import time as _time
         import json as _json
+        import time as _time
 
         SUPPORTED_ACTIONS = {"pause_line_item", "resume_line_item"}
         action_type = str(action_type).lower().strip()
@@ -5037,11 +5053,11 @@ class GAMClient:
             }
 
         # Fetch the current entity state from GAM
-        entity_data: Dict[str, Any] = {}
+        entity_data: dict[str, Any] = {}
         try:
             if entity_type.upper() in {"LINE_ITEM", "LINEITEM"}:
                 li_service = self.client.GetService("LineItemService", version=API_VERSION)
-                sb = ad_manager.StatementBuilder(version=API_VERSION).Where(f"id = :id")
+                sb = ad_manager.StatementBuilder(version=API_VERSION).Where("id = :id")
                 sb.WithBindVariable("id", int(entity_id))
                 log.info(
                     "Request made: Service: \"LineItemService\" "
@@ -5071,7 +5087,7 @@ class GAMClient:
                     "_live_data_status": "error",
                     "_message": f"entity_type '{entity_type}' not yet supported for write proposals.",
                 }
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             return {
                 "_live_data_status": "error",
                 "_message": f"Failed to fetch entity state for proposal: {e}",
@@ -5124,7 +5140,7 @@ class GAMClient:
             ),
         }
 
-    def pause_line_item_write(self, entity_id: str) -> Dict[str, Any]:
+    def pause_line_item_write(self, entity_id: str) -> dict[str, Any]:
         """WRITE: Pause a line item via LineItemService.performLineItemAction.
 
         IMPORTANT: Called ONLY by /api/execute-action after token validation.
@@ -5151,7 +5167,7 @@ class GAMClient:
             "gam_response":   str(res),
         }
 
-    def resume_line_item_write(self, entity_id: str) -> Dict[str, Any]:
+    def resume_line_item_write(self, entity_id: str) -> dict[str, Any]:
         """WRITE: Resume a line item via LineItemService.performLineItemAction.
 
         IMPORTANT: Called ONLY by /api/execute-action after token validation.

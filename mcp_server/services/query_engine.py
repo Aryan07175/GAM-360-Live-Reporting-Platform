@@ -167,7 +167,7 @@ def estimate_tokens(payload: Any) -> int:
     """Estimate the token count of a Python object when serialized to JSON."""
     try:
         chars = len(json.dumps(payload, default=str))
-    except Exception:
+    except (TypeError, ValueError):
         chars = len(str(payload))
     return chars // CHARS_PER_TOKEN
 
@@ -199,10 +199,9 @@ def slim_rows(rows: list[dict], metric: str, *, max_rows: int = MAX_ROWS_DEFAULT
         for k, v in row.items():
             if k in _STRIP_ALWAYS:
                 continue
-            if relevant and k not in relevant:
-                if k not in ("ecpm_usd", "ctr_pct", "fill_rate_pct",
-                             "adx_match_rate_pct", "matched_requests"):
-                    continue
+            if relevant and k not in relevant and k not in ("ecpm_usd", "ctr_pct", "fill_rate_pct",
+                                                             "adx_match_rate_pct", "matched_requests"):
+                continue
             # Drop zero numeric values to save tokens
             if k != "name" and v == 0 and isinstance(v, (int, float)):
                 continue

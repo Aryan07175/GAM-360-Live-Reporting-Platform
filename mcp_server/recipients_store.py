@@ -27,12 +27,12 @@ HOW TO PERSIST RECIPIENTS ON RENDER (without a Persistent Disk):
   the RECIPIENTS_FILE env var to /data/recipients.json.
 """
 
-import os
 import json
-import uuid
-import re
 import logging
-from typing import List, Dict, Any
+import os
+import re
+import uuid
+from typing import Any
 
 log = logging.getLogger("recipients_store")
 
@@ -42,7 +42,7 @@ _CUSTOM_FILE = os.getenv("RECIPIENTS_FILE")
 _CONFIG_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config'))
 STORE_FILE = _CUSTOM_FILE or os.path.join(_CONFIG_DIR, 'recipients.json')
 
-DEFAULT_DATA: Dict[str, Any] = {
+DEFAULT_DATA: dict[str, Any] = {
     "recipients": [],
     "preferences": {
         "daily_report": True,
@@ -52,10 +52,10 @@ DEFAULT_DATA: Dict[str, Any] = {
 }
 
 # In-memory cache — the single source of truth at runtime
-_memory_store: Dict[str, Any] = {}
+_memory_store: dict[str, Any] = {}
 
 
-def _load_initial_data() -> Dict[str, Any]:
+def _load_initial_data() -> dict[str, Any]:
     """
     Load data at startup in priority order:
     1. RECIPIENTS_DATA env var (survives Render redeploys — set manually)
@@ -70,7 +70,7 @@ def _load_initial_data() -> Dict[str, Any]:
             log.info("[RECIPIENTS] Loaded from RECIPIENTS_DATA env var (%d recipients)",
                      len(data.get("recipients", [])))
             return _ensure_structure(data)
-        except Exception as e:
+        except (json.JSONDecodeError, ValueError) as e:
             log.error("[RECIPIENTS] Failed to parse RECIPIENTS_DATA env var: %s", e)
 
     # 2. Try local file
@@ -81,7 +81,7 @@ def _load_initial_data() -> Dict[str, Any]:
             log.info("[RECIPIENTS] Loaded from file %s (%d recipients)",
                      STORE_FILE, len(data.get("recipients", [])))
             return _ensure_structure(data)
-        except Exception as e:
+        except (OSError, json.JSONDecodeError) as e:
             log.error("[RECIPIENTS] Error reading %s: %s", STORE_FILE, e)
 
     log.warning(
@@ -91,7 +91,7 @@ def _load_initial_data() -> Dict[str, Any]:
     return DEFAULT_DATA.copy()
 
 
-def _ensure_structure(data: Dict[str, Any]) -> Dict[str, Any]:
+def _ensure_structure(data: dict[str, Any]) -> dict[str, Any]:
     if "recipients" not in data:
         data["recipients"] = []
     if "preferences" not in data:
@@ -99,7 +99,7 @@ def _ensure_structure(data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
-def _save_data(data: Dict[str, Any]):
+def _save_data(data: dict[str, Any]):
     """Save to local file (works locally). On Render ephemeral disk this is
     temporary — log a hint to update the RECIPIENTS_DATA env var."""
     os.makedirs(_CONFIG_DIR, exist_ok=True)
@@ -115,11 +115,11 @@ def _save_data(data: Dict[str, Any]):
                 "following JSON and set it as RECIPIENTS_DATA in Render env vars:\n%s",
                 json.dumps(data)
             )
-    except Exception as e:
+    except OSError as e:
         log.error("[RECIPIENTS] Error writing to %s: %s", STORE_FILE, e)
 
 
-def _get_data() -> Dict[str, Any]:
+def _get_data() -> dict[str, Any]:
     """Return current in-memory store (already loaded at startup)."""
     return _memory_store
 
@@ -130,14 +130,14 @@ _memory_store.update(_load_initial_data())
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def get_recipients() -> List[Dict[str, str]]:
+def get_recipients() -> list[dict[str, str]]:
     data = _get_data()
     recipients = data.get("recipients", [])
     log.debug("[RECIPIENTS] get_recipients() → %d recipient(s)", len(recipients))
     return recipients
 
 
-def add_recipient(email: str, label: str = "") -> Dict[str, str]:
+def add_recipient(email: str, label: str = "") -> dict[str, str]:
     email = email.strip().lower()
 
     if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
@@ -182,12 +182,12 @@ def remove_recipient(recipient_id: str) -> bool:
     return False
 
 
-def get_preferences() -> Dict[str, bool]:
+def get_preferences() -> dict[str, bool]:
     data = _get_data()
     return data.get("preferences", DEFAULT_DATA["preferences"])
 
 
-def update_preferences(prefs: Dict[str, bool]) -> Dict[str, bool]:
+def update_preferences(prefs: dict[str, bool]) -> dict[str, bool]:
     data = _get_data()
     current_prefs = data.get("preferences", DEFAULT_DATA["preferences"].copy())
 
