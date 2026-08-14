@@ -20,7 +20,7 @@ from typing import Any
 import pandas as pd
 from googleads import ad_manager, errors
 
-from mcp_server.utils import fmt_currency, fmt_number, safe_float
+from mcp_server.utils import fmt_currency, fmt_number, fmt_percent, safe_float
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("gam_client")
@@ -2641,7 +2641,7 @@ class GAMClient:
             opportunities.append({
                 "category": "Fill Rate",
                 "priority": "High",
-                "title": f"Fill Rate is {fill_rate:.1f}% — {unfilled:,} requests unfilled",
+                "title": f"Fill Rate is {fmt_percent(fill_rate, decimals=1)} — {fmt_number(unfilled)} requests unfilled",
                 "impact_estimate_usd": round(estimated_rev, 2),
                 "recommendation": "Enable additional demand partners via Open Bidding. Lower floor prices on low-competition inventory.",
                 "kpi_affected": ["fill_rate", "revenue", "impressions"],
@@ -2652,7 +2652,7 @@ class GAMClient:
             opportunities.append({
                 "category": "eCPM / Pricing",
                 "priority": "High",
-                "title": f"eCPM is only ${ecpm_val:.3f} — below market average",
+                "title": f"eCPM is only {fmt_currency(ecpm_val, decimals=3)} — below market average",
                 "impact_estimate_usd": None,
                 "recommendation": "Review Unified Pricing Rules. Increase price floor on premium placements (Native, Rewarded). Enable header bidding.",
                 "kpi_affected": ["ecpm", "revenue"],
@@ -2663,7 +2663,7 @@ class GAMClient:
             opportunities.append({
                 "category": "Creative / Placement",
                 "priority": "Medium",
-                "title": f"CTR is {ctr_val:.2f}% — user engagement is very low",
+                "title": f"CTR is {fmt_percent(ctr_val, decimals=2)} — user engagement is very low",
                 "impact_estimate_usd": None,
                 "recommendation": "Review ad placements for viewability. Refresh creative assets. A/B test placement positions.",
                 "kpi_affected": ["ctr", "clicks"],
@@ -2674,7 +2674,7 @@ class GAMClient:
             opportunities.append({
                 "category": "Monetization",
                 "priority": "High",
-                "title": f"High impressions ({imp_total:,}) but revenue is only ${rev_total:.2f}",
+                "title": f"High impressions ({fmt_number(imp_total)}) but revenue is only {fmt_currency(rev_total)}",
                 "impact_estimate_usd": None,
                 "recommendation": "Large impression volume not being fully monetized. Check demand channel configuration and Ad Exchange integration.",
                 "kpi_affected": ["revenue", "ecpm"],
@@ -2685,7 +2685,7 @@ class GAMClient:
             opportunities.append({
                 "category": "Traffic Quality",
                 "priority": "Critical",
-                "title": f"CTR is {ctr_val:.1f}% — possible invalid traffic",
+                "title": f"CTR is {fmt_percent(ctr_val, decimals=1)} — possible invalid traffic",
                 "impact_estimate_usd": None,
                 "recommendation": "Review for IVT using Google Ad Manager's Invalid Traffic report. Consider enabling Click Fraud detection.",
                 "kpi_affected": ["ctr", "revenue"],

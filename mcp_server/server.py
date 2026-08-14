@@ -76,7 +76,7 @@ from mcp_server.recipients_store import (
     remove_recipient,
     update_preferences,
 )
-from mcp_server.utils import coerce_numeric, fmt_currency, fmt_percent, safe_float
+from mcp_server.utils import coerce_numeric, fmt_currency, fmt_number, fmt_percent, safe_float
 
 _last_alert_sent = {}  # title -> timestamp
 
@@ -3757,10 +3757,10 @@ def compute_alerts(df: pd.DataFrame) -> list[dict]:
         if req > 500 and imp == 0:
             alerts.append({"title": f"Zero Fill Rate in {app_name}", "severity": "critical", "metric": "Fill Rate", "value": "0%"})
         elif req > 1000 and 0 < fill_rate < 30:
-            alerts.append({"title": f"Very low fill rate ({fill_rate:.1f}%) in {app_name}", "severity": "warning", "metric": "Fill Rate", "value": f"{fill_rate:.1f}%"})
+            alerts.append({"title": f"Very low fill rate ({fmt_percent(fill_rate, decimals=1)}) in {app_name}", "severity": "warning", "metric": "Fill Rate", "value": fmt_percent(fill_rate, decimals=1)})
             
         if imp > 1000 and ctr > 15:
-            alerts.append({"title": f"Suspiciously high CTR ({ctr:.1f}%) in {app_name}", "severity": "warning", "metric": "CTR", "value": f"{ctr:.1f}%"})
+            alerts.append({"title": f"Suspiciously high CTR ({fmt_percent(ctr, decimals=1)}) in {app_name}", "severity": "warning", "metric": "CTR", "value": fmt_percent(ctr, decimals=1)})
             
         if imp > 5000 and ecpm < 0.10 and ecpm > 0:
             # coerce ecpm via safe_float: Pandas can yield NaN here on empty rows
@@ -4222,6 +4222,8 @@ def compute_revenue_by_app(df: pd.DataFrame) -> list[dict]:
     summary["ad_server_without_cpd_average_ecpm"] = (summary["ad_server_cpm_and_cpc_revenue"] / summary["ad_server_impressions"] * 1000).replace([np.inf, -np.inf], 0).fillna(0)
     
     summary = summary.sort_values(by="ad_server_cpm_and_cpc_revenue", ascending=False)
+    # Replace all NaNs with None so they serialize cleanly, instead of returning np.nan
+    summary = summary.replace({np.nan: None})
     return summary.to_dict(orient="records")
 
 
@@ -4369,8 +4371,8 @@ def compute_anomalies(df_current: pd.DataFrame, df_previous: pd.DataFrame, thres
             "changePct": round(change_pct, 2),
             "severity": severity,
             "description": (
-                f"Revenue {direction} of {abs_pct:.1f}% for {app_name} "
-                f"(${prev:.4f} → ${curr:.4f})"
+                f"Revenue {direction} of {fmt_percent(abs_pct, decimals=1)} for {app_name} "
+                f"({fmt_currency(prev, decimals=4)} \u2192 {fmt_currency(curr, decimals=4)})"
             ),
         })
 
@@ -4414,8 +4416,8 @@ def compute_anomalies(df_current: pd.DataFrame, df_previous: pd.DataFrame, thres
             "changePct": round(change_pct, 2),
             "severity": severity,
             "description": (
-                f"Impressions {direction} of {abs_pct:.1f}% for {app_name} "
-                f"({int(prev):,} → {int(curr):,})"
+                f"Impressions {direction} of {fmt_percent(abs_pct, decimals=1)} for {app_name} "
+                f"({fmt_number(prev)} \u2192 {fmt_number(curr)})"
             ),
         })
 
@@ -4446,12 +4448,12 @@ def generate_recommendations(summary: dict, apps: list[dict], anomalies: list[di
                     "id": f"rec-{rec_id}", "category": "revenue",
                     "icon": "⚠️", "priority": "High",
                     "title": "Revenue Concentration Risk",
-                    "description": f"{apps[0]['ad_unit_name']} accounts for {top_pct:.1f}% of total revenue. Diversify monetization to reduce dependency."
+                    "description": f"{apps[0]['ad_unit_name']} accounts for {fmt_percent(top_pct, decimals=1)} of total revenue. Diversify monetization to reduce dependency."
                 })
                 rec_id += 1
 
     # Low fill rate apps
-    low_fill = [a for a in apps if a.get("ad_server_fill_rate", 0) < 50 and a.get("ad_server_ad_requests", 0) > 100]
+    low_fill = [a for a in apps if coerce_numeric(a.get("ad_server_fill_rate")) < 50 and coerce_numeric(a.get("ad_server_ad_requests")) > 100]
     if low_fill:
         names = ", ".join(a["ad_unit_name"] for a in low_fill[:3])
         recs.append({
@@ -4463,7 +4465,7 @@ def generate_recommendations(summary: dict, apps: list[dict], anomalies: list[di
         rec_id += 1
 
     # High CTR apps (potential for optimization)
-    high_ctr = [a for a in apps if a.get("ad_server_ctr", 0) > 5]
+    high_ctr = [a for a in apps if coerce_numeric(a.get("ad_server_ctr")) > 5]
     if high_ctr:
         recs.append({
             "id": f"rec-{rec_id}", "category": "recommendation",
@@ -4485,7 +4487,7 @@ def generate_recommendations(summary: dict, apps: list[dict], anomalies: list[di
         rec_id += 1
 
     # Zero revenue apps
-    zero_rev = [a for a in apps if a.get("ad_server_cpm_and_cpc_revenue", 0) == 0 and a.get("ad_server_impressions", 0) > 0]
+    zero_rev = [a for a in apps if coerce_numeric(a.get("ad_server_cpm_and_cpc_revenue")) == 0 and coerce_numeric(a.get("ad_server_impressions")) > 0]
     if zero_rev:
         recs.append({
             "id": f"rec-{rec_id}", "category": "performance",
@@ -4496,12 +4498,12 @@ def generate_recommendations(summary: dict, apps: list[dict], anomalies: list[di
         rec_id += 1
 
     # General health
-    if summary.get("average_fill_rate", 0) < 70:
+    if coerce_numeric(summary.get("average_fill_rate")) < 70:
         recs.append({
             "id": f"rec-{rec_id}", "category": "performance",
             "icon": "📊", "priority": "Medium",
             "title": "Network Fill Rate Below 70%",
-            "description": f"Current fill rate is {summary.get('average_fill_rate', 0):.1f}%. Add more demand partners or adjust targeting to improve fill."
+            "description": f"Current fill rate is {fmt_percent(coerce_numeric(summary.get('average_fill_rate')), decimals=1)}. Add more demand partners or adjust targeting to improve fill."
         })
         rec_id += 1
 
@@ -4520,7 +4522,7 @@ def generate_insights(summary: dict, apps: list[dict], trend: list[dict]) -> lis
         insights.append({
             "id": f"ins-{ins_id}", "category": "revenue", "icon": "💰",
             "title": "Revenue Overview",
-            "description": f"Total revenue of ${rev:.4f} from {imp:,} impressions across {summary.get('app_count', 0)} ad units."
+            "description": f"Total revenue of {fmt_currency(rev, decimals=4)} from {fmt_number(imp)} impressions across {summary.get('app_count', 0)} ad units."
         })
         ins_id += 1
 
@@ -4530,7 +4532,7 @@ def generate_insights(summary: dict, apps: list[dict], trend: list[dict]) -> lis
         insights.append({
             "id": f"ins-{ins_id}", "category": "performance", "icon": "📈",
             "title": "eCPM Analysis",
-            "description": f"Network average eCPM is ${ecpm:.4f}. {'Strong' if ecpm > 1 else 'Consider optimizing'} ad performance."
+            "description": f"Network average eCPM is {fmt_currency(ecpm, decimals=4)}. {'Strong' if coerce_numeric(ecpm) > 1 else 'Consider optimizing'} ad performance."
         })
         ins_id += 1
 
@@ -4542,7 +4544,7 @@ def generate_insights(summary: dict, apps: list[dict], trend: list[dict]) -> lis
         insights.append({
             "id": f"ins-{ins_id}", "category": "revenue", "icon": "🏆",
             "title": "Top Performer",
-            "description": f"{top['ad_unit_name']} leads with {top_pct:.1f}% of total revenue."
+            "description": f"{top['ad_unit_name']} leads with {fmt_percent(top_pct, decimals=1)} of total revenue."
         })
         ins_id += 1
 
@@ -4556,7 +4558,7 @@ def generate_insights(summary: dict, apps: list[dict], trend: list[dict]) -> lis
             insights.append({
                 "id": f"ins-{ins_id}", "category": "revenue", "icon": "📊",
                 "title": f"Revenue Trending {'Up' if change > 0 else 'Down'}",
-                "description": f"Revenue is {direction} {abs(change):.1f}% compared to the previous day."
+                "description": f"Revenue is {direction} {fmt_percent(abs(change), decimals=1)} compared to the previous day."
             })
             ins_id += 1
 

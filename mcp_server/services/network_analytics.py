@@ -97,10 +97,10 @@ def compute_network_health(metrics: dict) -> dict:
         score += 5
     elif fill_rate >= _HEALTH_CRITICAL["fill_rate"]:
         score -= 10
-        reasons.append(f"Fill rate critically low at {fill_rate:.1f}%.")
+        reasons.append(f"Fill rate critically low at {fmt_percent(fill_rate, decimals=1)}.")
     else:
         score -= 25
-        reasons.append(f"Fill rate at {fill_rate:.1f}% — near zero.")
+        reasons.append(f"Fill rate at {fmt_percent(fill_rate, decimals=1)} — near zero.")
 
     # Match rate component (max ±15)
     if match_rate > 0:
@@ -112,7 +112,7 @@ def compute_network_health(metrics: dict) -> dict:
             score += 2
         else:
             score -= 8
-            reasons.append(f"Match rate low at {match_rate:.1f}%.")
+            reasons.append(f"Match rate low at {fmt_percent(match_rate, decimals=1)}.")
 
     # Revenue / eCPM component (max ±5)
     if revenue > 0 and ecpm_val >= _HEALTH_EXCELLENT["ecpm_min"]:
@@ -137,7 +137,7 @@ def compute_network_health(metrics: dict) -> dict:
         status = "Offline"
 
     if not reasons:
-        reasons = [f"Fill rate: {fill_rate:.1f}%, Match rate: {match_rate:.1f}%, eCPM: ${ecpm_val:.4f}"]
+        reasons = [f"Fill rate: {fmt_percent(fill_rate, decimals=1)}, Match rate: {fmt_percent(match_rate, decimals=1)}, eCPM: {fmt_currency(ecpm_val, decimals=4)}"]
 
     return {
         "health_status": status,
@@ -582,19 +582,19 @@ def _detect_entity_anomalies(metrics: dict, label: str = "") -> list[dict]:
         anomalies.append({
             "type": "low_fill_rate",
             "severity": "warning",
-            "message": f"{prefix}Fill rate critically low at {fr:.1f}%.",
+            "message": f"{prefix}Fill rate critically low at {fmt_percent(fr, decimals=1)}.",
         })
     if 0 < mr < 20 and req > 1000:
         anomalies.append({
             "type": "low_match_rate",
             "severity": "warning",
-            "message": f"{prefix}Match rate very low at {mr:.1f}%.",
+            "message": f"{prefix}Match rate very low at {fmt_percent(mr, decimals=1)}.",
         })
     if ctr > 15 and imp > 1000:
         anomalies.append({
             "type": "ctr_spike",
             "severity": "warning",
-            "message": f"{prefix}CTR spike detected at {ctr:.1f}% — investigate for invalid traffic.",
+            "message": f"{prefix}CTR spike detected at {fmt_percent(ctr, decimals=1)} — investigate for invalid traffic.",
         })
 
     return anomalies
