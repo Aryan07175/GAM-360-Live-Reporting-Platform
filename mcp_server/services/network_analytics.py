@@ -24,6 +24,8 @@ from datetime import date
 
 import pandas as pd
 
+from mcp_server.utils import fmt_currency, fmt_percent
+
 log = logging.getLogger("network_analytics")
 
 
@@ -675,28 +677,28 @@ def compute_automatic_insights(
 
     # Strengths
     if fill_rate >= 90:
-        strengths.append(f"Excellent fill rate of {fill_rate:.1f}% — inventory is well-utilized.")
+        strengths.append(f"Excellent fill rate of {fmt_percent(fill_rate, decimals=1)} — inventory is well-utilized.")
     if match_rate >= 70:
-        strengths.append(f"Strong match rate of {match_rate:.1f}% — programmatic demand is healthy.")
+        strengths.append(f"Strong match rate of {fmt_percent(match_rate, decimals=1)} — programmatic demand is healthy.")
     if ecpm >= 1.0:
-        strengths.append(f"eCPM of ${ecpm:.2f} indicates premium inventory pricing.")
+        strengths.append(f"eCPM of {fmt_currency(ecpm)} indicates premium inventory pricing.")
     if health in ("Excellent", "Healthy"):
         strengths.append(f"Overall network health is {health}.")
 
     # Weaknesses
     if 0 < fill_rate < 60:
         weaknesses.append(
-            f"Fill rate at {fill_rate:.1f}% — significant inventory going unfilled. "
+            f"Fill rate at {fmt_percent(fill_rate, decimals=1)} — significant inventory going unfilled. "
             "Consider adding demand partners."
         )
     if 0 < match_rate < 40:
         weaknesses.append(
-            f"Match rate at {match_rate:.1f}% — programmatic demand is underperforming. "
+            f"Match rate at {fmt_percent(match_rate, decimals=1)} — programmatic demand is underperforming. "
             "Review bid floor settings."
         )
     if 0 < ecpm < 0.10 and impressions > 10000:
         weaknesses.append(
-            f"eCPM at ${ecpm:.4f} is extremely low for the traffic volume. "
+            f"eCPM at {fmt_currency(ecpm, decimals=4)} is extremely low for the traffic volume. "
             "Monetization is inefficient."
         )
 
@@ -741,8 +743,8 @@ def compute_automatic_insights(
         unfilled_estimate = (unfilled_req * ecpm) / 1000
         if unfilled_estimate > 1:
             revenue_opps.append(
-                f"Estimated revenue from unfilled inventory: ${unfilled_estimate:,.2f} "
-                f"(assuming current eCPM of ${ecpm:.2f})."
+                f"Estimated revenue from unfilled inventory: {fmt_currency(unfilled_estimate)} "
+                f"(assuming current eCPM of {fmt_currency(ecpm)})."
             )
 
     if match_rate < 80 and match_rate > 0:
