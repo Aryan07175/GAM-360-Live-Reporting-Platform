@@ -6,6 +6,8 @@ from email.message import EmailMessage
 from email.utils import formatdate
 from typing import Any
 
+from mcp_server.utils import coerce_numeric, fmt_currency, fmt_number, fmt_percent
+
 log = logging.getLogger("email_service")
 
 
@@ -200,12 +202,12 @@ def send_daily_report_email(report_data: dict[str, Any], to_emails: list[str]) -
 
     subject = f"📊 GAM 360 Live Executive Report: {period}"
 
-    # Extract metrics safely
-    rev = summary.get('total_revenue_usd', 0)
-    imp = summary.get('total_impressions', 0)
-    ecpm = summary.get('average_ecpm', 0)
-    ctr = summary.get('average_ctr', 0)
-    fill = summary.get('average_fill_rate', 0)
+    # Extract metrics safely — coerce_numeric guards against None / "unavailable"
+    rev = coerce_numeric(summary.get('total_revenue_usd'), 0.0)
+    imp = coerce_numeric(summary.get('total_impressions'), 0.0)
+    ecpm = coerce_numeric(summary.get('average_ecpm'), 0.0)
+    ctr = coerce_numeric(summary.get('average_ctr'), 0.0)
+    fill = coerce_numeric(summary.get('average_fill_rate'), 0.0)
 
     # Top apps table
     apps = report_data.get("top_apps", [])
@@ -214,11 +216,14 @@ def send_daily_report_email(report_data: dict[str, Any], to_emails: list[str]) -
         a_name = app.get("ad_unit_name", "")
         a_rev = app.get("ad_server_cpm_and_cpc_revenue", 0)
         a_imp = app.get("ad_server_impressions", 0)
+        # fmt_currency / fmt_number guard against None or "unavailable" reaching :,.2f
+        a_rev_str = fmt_currency(a_rev)
+        a_imp_str = fmt_number(a_imp)
         apps_rows += f"""
         <tr>
             <td style="padding: 10px; border-bottom: 1px solid #374151; color: #f3f4f6;">{idx+1}. {a_name}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #374151; text-align: right; color: #f3f4f6;">${a_rev:,.2f}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #374151; text-align: right; color: #9ca3af;">{a_imp:,}</td>
+            <td style="padding: 10px; border-bottom: 1px solid #374151; text-align: right; color: #f3f4f6;">{a_rev_str}</td>
+            <td style="padding: 10px; border-bottom: 1px solid #374151; text-align: right; color: #9ca3af;">{a_imp_str}</td>
         </tr>
         """
 
@@ -276,25 +281,25 @@ def send_daily_report_email(report_data: dict[str, Any], to_emails: list[str]) -
             <div style="display: flex; flex-wrap: wrap; margin-top: 15px;">
                 <div style="flex: 1; min-width: 120px; margin-bottom: 15px;">
                     <div style="color: #9ca3af; font-size: 12px; text-transform: uppercase;">Total Revenue</div>
-                    <div style="color: #10b981; font-size: 24px; font-weight: 600;">${rev:,.2f}</div>
+                    <div style="color: #10b981; font-size: 24px; font-weight: 600;">{fmt_currency(rev)}</div>
                 </div>
                 <div style="flex: 1; min-width: 120px; margin-bottom: 15px;">
                     <div style="color: #9ca3af; font-size: 12px; text-transform: uppercase;">Impressions</div>
-                    <div style="color: #f3f4f6; font-size: 24px; font-weight: 600;">{imp:,}</div>
+                    <div style="color: #f3f4f6; font-size: 24px; font-weight: 600;">{fmt_number(imp)}</div>
                 </div>
                 <div style="flex: 1; min-width: 120px; margin-bottom: 15px;">
                     <div style="color: #9ca3af; font-size: 12px; text-transform: uppercase;">Avg eCPM</div>
-                    <div style="color: #f3f4f6; font-size: 24px; font-weight: 600;">${ecpm:,.2f}</div>
+                    <div style="color: #f3f4f6; font-size: 24px; font-weight: 600;">{fmt_currency(ecpm)}</div>
                 </div>
             </div>
             <div style="display: flex; flex-wrap: wrap;">
                 <div style="flex: 1; min-width: 120px;">
                     <div style="color: #9ca3af; font-size: 12px; text-transform: uppercase;">Fill Rate</div>
-                    <div style="color: #f3f4f6; font-size: 18px;">{fill:,.1f}%</div>
+                    <div style="color: #f3f4f6; font-size: 18px;">{fmt_percent(fill, decimals=1)}</div>
                 </div>
                 <div style="flex: 1; min-width: 120px;">
                     <div style="color: #9ca3af; font-size: 12px; text-transform: uppercase;">CTR</div>
-                    <div style="color: #f3f4f6; font-size: 18px;">{ctr:,.2f}%</div>
+                    <div style="color: #f3f4f6; font-size: 18px;">{fmt_percent(ctr, decimals=2)}</div>
                 </div>
                 <div style="flex: 1; min-width: 120px;"></div>
             </div>
