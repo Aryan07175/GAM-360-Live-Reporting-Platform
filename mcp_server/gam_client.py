@@ -20,6 +20,8 @@ from typing import Any
 import pandas as pd
 from googleads import ad_manager, errors
 
+from mcp_server.utils import fmt_currency, fmt_number, safe_float
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("gam_client")
 
@@ -4975,12 +4977,19 @@ class GAMClient:
         if primary_driver:
             direction_word = "declined" if primary_driver["delta"] < 0 else "increased"
             pct_str = f"{abs(primary_driver['delta_pct']):.1f}%" if primary_driver.get("delta_pct") else "significantly"
+            # safe_float guards against NaN from empty Pandas sum (partial GAM report failure)
+            _total_delta = safe_float(total_delta) or 0.0
+            _total_delta_pct = safe_float(total_delta_pct)
+            _prior = safe_float(primary_driver['prior']) or 0.0
+            _current = safe_float(primary_driver['current']) or 0.0
+            _delta = safe_float(primary_driver['delta']) or 0.0
+            delta_pct_str = f"{abs(_total_delta_pct):.1f}% vs prior period" if _total_delta_pct is not None else "vs prior period"
             narrative = (
                 f"{metric_label.capitalize()} {direction_word} by "
-                f"{abs(total_delta):,.2f} ({abs(total_delta_pct):.1f}% vs prior period). "
+                f"{abs(_total_delta):,.2f} ({delta_pct_str}). "
                 f"Primary driver: '{primary_driver['name']}' {direction_word} {pct_str} "
-                f"(prior: {primary_driver['prior']:,.2f} → current: {primary_driver['current']:,.2f}, "
-                f"delta: {primary_driver['delta']:+,.2f})."
+                f"(prior: {_prior:,.2f} \u2192 current: {_current:,.2f}, "
+                f"delta: {_delta:+,.2f})."
             )
         else:
             narrative = f"No significant {metric_label} drivers found for this period."
