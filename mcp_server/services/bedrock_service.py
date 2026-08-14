@@ -1893,15 +1893,38 @@ async def stream_bedrock_response(
                     input_dict = t["input"]
 
                     log.info("[Bedrock] Tool call (turn %d) — name=%s input=%s", turn + 1, tool_name, input_dict)
-                    result = await tool_executor(tool_name, input_dict)
+
+                    # ── Tool call with self-repair on bad arguments ────────────
+                    # If the executor raises a validation-style error (bad enum,
+                    # missing arg, type mismatch), we send the error back to the
+                    # model as a toolResult with status='error' so it can retry
+                    # with corrected arguments instead of crashing the response.
+                    try:
+                        result = await tool_executor(tool_name, input_dict)
+                        tool_status = "success"
+                    except (KeyError, ValueError, TypeError) as tool_exc:
+                        log.warning(
+                            "[Bedrock] Tool call failed (turn %d) — name=%s error=%s",
+                            turn + 1, tool_name, tool_exc,
+                        )
+                        result = {
+                            "_tool_error": True,
+                            "_message": (
+                                f"Tool '{tool_name}' failed with argument error: {tool_exc}. "
+                                "Please check the tool schema and retry with corrected arguments."
+                            ),
+                        }
+                        tool_status = "error"
+
                     safe_result = json.loads(json.dumps(result, default=str))
                     # safe_result may be a list (some GAM functions return lists directly)
                     if isinstance(safe_result, dict):
-                        log.info("[Bedrock] Tool result — name=%s keys=%s", tool_name, list(safe_result.keys()))
+                        log.info("[Bedrock] Tool result — name=%s status=%s keys=%s", tool_name, tool_status, list(safe_result.keys()))
                     else:
-                        log.info("[Bedrock] Tool result — name=%s (list, len=%d)", tool_name, len(safe_result) if isinstance(safe_result, list) else -1)
+                        log.info("[Bedrock] Tool result — name=%s status=%s (list, len=%d)", tool_name, tool_status, len(safe_result) if isinstance(safe_result, list) else -1)
                         # Wrap list in a dict so Bedrock always receives a JSON object
                         safe_result = {"items": safe_result, "count": len(safe_result) if isinstance(safe_result, list) else 0}
+                        tool_status = "success"
 
                     assistant_content.append({
                         "toolUse": {
@@ -1914,7 +1937,7 @@ async def stream_bedrock_response(
                         "toolResult": {
                             "toolUseId": tool_use_id,
                             "content": [{"json": safe_result}],
-                            "status": "success",
+                            "status": tool_status,
                         }
                     })
 
