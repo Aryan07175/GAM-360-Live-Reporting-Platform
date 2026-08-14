@@ -76,6 +76,7 @@ from mcp_server.recipients_store import (
     remove_recipient,
     update_preferences,
 )
+from mcp_server.utils import coerce_numeric, fmt_currency, fmt_percent, safe_float
 
 _last_alert_sent = {}  # title -> timestamp
 
@@ -469,6 +470,28 @@ If the required data is unavailable, explain exactly which data could not be ret
 NEVER ask the user which API to use. Automatically choose the correct tool.
 NEVER fabricate narrative interpretations (e.g., "this is a positive signal", "indicates healthy demand") over ranked or comparative data. If numbers look suspicious (like identical values across a ranked list), you must state the numbers exactly as provided and flag the anomaly, never invent a reassuring explanation.
 If an app has 0 ad requests (meaning fill rate is mathematically 0% or N/A), you MUST clearly explain that this is because it is a programmatic-only app and GAM does not supply ad request data for it. Do NOT hallucinate past fill rates (like 98.2%) for these apps! If the fill rate is null or 0.0%, report it exactly as such.
+
+## KNOWLEDGE vs. LIVE DATA ROUTING
+
+**CRITICAL SPLIT RULE**: There are two categories of questions — answer each differently:
+
+### Category 1 — Conceptual / Definitional Questions (answer from your knowledge, NO tool call)
+These are questions about terminology, industry concepts, or how GAM works in general.
+Answer directly — do NOT call a data tool for these.
+Examples:
+- "What is fill rate?" / "What does eCPM mean?" / "How does Open Bidding work?"
+- "What is a good CTR for a news app?" / "What's a typical match rate?"
+- "Explain Ad Exchange vs AdSense" / "What is MCM?"
+- "What are unified pricing rules?" / "What is viewability?"
+
+### Category 2 — Live Account Data Questions (ALWAYS call a tool, NEVER answer from memory)
+These ask about THIS network's actual numbers. Always fetch live data before answering.
+Examples:
+- "What is our fill rate?" / "Show me our eCPM" / "What is our revenue?"
+- "Which app has the highest CTR?" / "Are any websites offline?"
+- "How did we perform yesterday?" / "Compare this week to last week"
+
+**The zero-hallucination guarantee only applies to Category 2 — numbers about this account MUST come from a live tool call.**
 
 ## INTELLIGENT TOOL ROUTING
 
@@ -3483,13 +3506,50 @@ async def handle_chat(request):
         log.info("[Chat] session=%s history_turns=%d message=%.80s...",
                  cache_key, len(trimmed_history) // 2, message)
 
-        # ── Stream via the Bedrock service ────────────────────────────────────
+        # ── Stream via the Bedrock service (with structured turn logging) ──────
+        _chat_t_start = time.monotonic()
+        _chat_tool_calls: list[str] = []
+
+        async def _logged_stream():
+            """Wrap stream_bedrock_response with structured per-turn logging."""
+            _success = True
+            _error_msg: str | None = None
+            try:
+                async for chunk in stream_bedrock_response(
+                    messages=bedrock_messages,
+                    system_prompt=system_prompt,
+                    tool_executor=_make_tool_executor(cached_df),
+                ):
+                    # Intercept tool-call SSE events to collect tool names for logging
+                    try:
+                        _chunk_data = json.loads(chunk.removeprefix("data: ").strip())
+                        if _chunk_data.get("type") == "tool_call":
+                            _chat_tool_calls.append(_chunk_data.get("name", "unknown"))
+                        elif _chunk_data.get("type") == "error":
+                            _success = False
+                            _error_msg = _chunk_data.get("content")
+                    except Exception:
+                        pass
+                    yield chunk
+            except Exception as _exc:
+                _success = False
+                _error_msg = str(_exc)
+                raise
+            finally:
+                _latency_ms = round((time.monotonic() - _chat_t_start) * 1000)
+                log.info(
+                    "[Chat][Turn] %s",
+                    json.dumps({
+                        "question": message[:200],
+                        "tools_called": _chat_tool_calls,
+                        "success": _success,
+                        "error": _error_msg,
+                        "latency_ms": _latency_ms,
+                    }),
+                )
+
         return StreamingResponse(
-            stream_bedrock_response(
-                messages=bedrock_messages,
-                system_prompt=system_prompt,
-                tool_executor=_make_tool_executor(cached_df),
-            ),
+            _logged_stream(),
             media_type="text/event-stream",
             headers={
                 "Access-Control-Allow-Origin": "*",
@@ -3703,7 +3763,9 @@ def compute_alerts(df: pd.DataFrame) -> list[dict]:
             alerts.append({"title": f"Suspiciously high CTR ({ctr:.1f}%) in {app_name}", "severity": "warning", "metric": "CTR", "value": f"{ctr:.1f}%"})
             
         if imp > 5000 and ecpm < 0.10 and ecpm > 0:
-            alerts.append({"title": f"Extremely low eCPM (${ecpm:.2f}) in {app_name}", "severity": "warning", "metric": "eCPM", "value": f"${ecpm:.2f}"})
+            # coerce ecpm via safe_float: Pandas can yield NaN here on empty rows
+            _ecpm = safe_float(ecpm) or 0.0
+            alerts.append({"title": f"Extremely low eCPM ({fmt_currency(_ecpm)}) in {app_name}", "severity": "warning", "metric": "eCPM", "value": fmt_currency(_ecpm)})
             
     return alerts
 
